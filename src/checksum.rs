@@ -68,7 +68,7 @@ pub trait Digest {
 /// * `shift(shift(s, shift_n(a)), shift_n(b)) == shift(s, shift_n(a+b))`
 /// * `add(shift(s, shift_n(n)), shift(r, shift_n(n))) == shift(add(s, r), n)`
 /// * `dig_byte(s, k) == dig_byte(0, k) + dig_byte(s, 0u8)` (consequently, `dig_byte(0, 0u8) == 0`)
-/// * for all sums `s`, `sum(finalize(s), negate(s))` is constant (finalize adds a constant value to the sum)
+/// * for all sums `s`, `add(finalize(s), negate(s))` is constant (finalize adds a constant value to the sum)
 /// * all methods without default implementations (including those from `Digest`) should run in constant time (assuming constant `Shift`, `Sum` types)
 ///
 /// Basically, it is a graded ring or something idk.
