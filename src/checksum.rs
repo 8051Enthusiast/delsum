@@ -162,9 +162,10 @@ pub trait LinearCheck: Digest {
         // (1)		    = ([n..m] + f - s + init*x^(m-n))*x^(k-m)
         // (6)		    = (init*[n..m] + f - s)*x^(k-m)
         // (7)		    = (finalize(init*[n..m]) - s)*x^(k-m)
-        // 		        = (s - s)*x^(k-m)
-        // (1)		    = (0)*x^(k-m)
-        // (3) (7)		= 0
+        // therefore
+        //                  (finalize(init*[n..m]) - s)*x^(k-m) == 0
+        // (3)          <=> finalize(init*[n..m]) - s           == 0
+        // (1)          <=> finalize(init*[n..m])               == s
 
 
         if u32::try_from(start_presums.len()).is_err() {
