@@ -108,7 +108,11 @@ impl<Sum: BitNum> Display for CRC<Sum> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.name {
             Some(n) => write!(f, "{}", n),
-            None => write!(f, "<CRC with width {} and generator {:#x}>", self.width, self.poly)
+            None => write!(
+                f,
+                "<CRC with width {} and generator {:#x}>",
+                self.width, self.poly
+            ),
         }
     }
 }
@@ -288,11 +292,28 @@ mod tests {
         assert_eq!(test_sum, crc.finalize(new_sum));
     }
     #[allow(dead_code)]
-    fn test_find<L: LinearCheck>(crc: &L, sum: L::Sum) {
+    fn test_find<L: LinearCheck>(crc: &L) {
+        let sum_1_9 = crc.digest(&b"123456789"[..]).unwrap();
+        let sum_9_1 = crc.digest(&b"987654321"[..]).unwrap();
         assert_eq!(
-            crc.find_checksum_segments(&b"a123456789X1235H123456789Y"[..], sum),
+            crate::checksum::find_checksum_segments(
+                crc,
+                &vec![Vec::from(&b"a123456789X1235H123456789Y"[..])],
+                &vec![sum_1_9.clone()]
+            ),
             vec![(vec![1], vec![10]), (vec![16], vec![25])]
         );
+        assert_eq!(
+            crate::checksum::find_checksum_segments(
+                crc,
+                &vec![
+                    Vec::from(&b"XX98765432123456789XX"[..]),
+                    Vec::from(&"XX12345678987654321XX"[..])
+                ],
+                &vec![sum_1_9, sum_9_1]
+            ),
+            vec![(vec![10], vec![19])]
+        )
     }
     #[test]
     fn cms_16() {
@@ -307,7 +328,7 @@ mod tests {
             .build()
             .unwrap();
         test_shifts(&crc);
-        test_find(&crc, 0xaee7);
+        test_find(&crc);
     }
     #[test]
     fn gsm_3() {
@@ -363,7 +384,7 @@ mod tests {
             .build()
             .unwrap();
         test_shifts(&crc);
-        test_find(&crc, 0xdaf);
+        test_find(&crc);
     }
     #[test]
     fn en13757_16() {
@@ -373,7 +394,7 @@ mod tests {
             .build()
             .unwrap();
         test_shifts(&crc);
-        test_find(&crc, 0xc2b7);
+        test_find(&crc);
     }
     #[test]
     fn mpt1327_15() {
@@ -383,7 +404,7 @@ mod tests {
             .build()
             .unwrap();
         test_shifts(&crc);
-        test_find(&crc, 0x2566);
+        test_find(&crc);
     }
     #[test]
     fn canfd_17() {
@@ -392,7 +413,7 @@ mod tests {
             .build()
             .unwrap();
         test_shifts(&crc);
-        test_find(&crc, 0x04f03);
+        test_find(&crc);
     }
     #[test]
     fn bzip2_32() {
@@ -403,7 +424,7 @@ mod tests {
             .build()
             .unwrap();
         test_shifts(&crc);
-        test_find(&crc, 0xfc891918);
+        test_find(&crc);
     }
     #[test]
     fn iscsi_32() {
@@ -416,7 +437,7 @@ mod tests {
             .build()
             .unwrap();
         test_shifts(&crc);
-        test_find(&crc, 0xe3069283);
+        test_find(&crc);
     }
     #[test]
     fn gsm_40() {
@@ -426,7 +447,7 @@ mod tests {
             .build()
             .unwrap();
         test_shifts(&crc);
-        test_find(&crc, 0xd4164fc646);
+        test_find(&crc);
     }
     #[test]
     fn xz_64() {
@@ -439,7 +460,7 @@ mod tests {
             .build()
             .unwrap();
         test_shifts(&crc);
-        test_find(&crc, 0x995dc9bbdf1939fa);
+        test_find(&crc);
     }
     #[test]
     fn darc_82() {
@@ -450,7 +471,7 @@ mod tests {
             .build()
             .unwrap();
         test_shifts(&crc);
-        test_find(&crc, 0x09ea83f625023801fd612);
+        test_find(&crc);
     }
     #[test]
     fn parity_1() {
@@ -476,6 +497,6 @@ mod tests {
             .build()
             .unwrap();
         test_shifts(&crc);
-        test_find(&crc, 0xbf05);
+        test_find(&crc);
     }
 }

@@ -95,89 +95,98 @@ pub trait LinearCheck: Digest {
         }
         shift
     }
-    #[doc(hidden)]
-    /// Returns an array of unfinalized checksums up to each byte
-    /// start: index of first byte to calculate checksums to (not including byte itself)
-    /// end: index of last byte to calculate checksums to (including byte itself)
-    fn presums(&self, bytes: &[u8], start: usize, end: usize) -> Vec<Self::Sum> {
-        if start >= end || end > bytes.len() {
-            panic!("Oh no you didn't!");
-        }
-        // get checksum state before first byte
-        let start_state = bytes[..start]
-            .iter()
-            .fold(self.init(), |s, b| self.dig_byte(s, *b));
-        // calculate checksums for each value in range and collect
-        // them into a vector
-        std::iter::once(start_state.clone())
-            .chain(bytes[start..end].iter().scan(start_state, |s, b| {
-                *s = self.dig_byte(s.clone(), *b);
-                Some(s.clone())
-            }))
-            .collect()
-    }
-    #[doc(hidden)]
-    fn normalize_presums(&self, presums: &mut Vec<Self::Sum>, pre_shift: Self::Shift) {
-        let mut shift = pre_shift;
-        for x in presums.iter_mut().rev() {
-            *x = self.shift(x.clone(), &shift);
-            shift = self.inc_shift(shift);
-        }
-    }
-    /// Given some bytes and a target sum, determines all segments in the bytes that have that
-    /// particular checksum.
-    ///
-    /// Each element of the return value contains a tuple consisting of an array of possible segment starts
-    /// and an array of possible segment ends. If there are multiple starts or ends, each possible combination
-    /// has the target checksum.
-    ///
-    /// This function has a high space usage per byte: for `n` bytes, it uses a total space of `n*(8 + 2*sizeof(Sum))` bytes.
-    /// The time is bounded by the runtime of the sort algorithm, which is around `n*log(n)`.
-    /// If Hashtables were used, it could be done in linear time, but they take too much space.
-    fn find_checksum_segments(&self, bytes: &[u8], sum: Self::Sum) -> Vec<(Vec<u32>, Vec<u32>)> {
-        // we calculate two presum arrays, one for the starting values and one for the end values
-        let mut start_presums = self.presums(bytes, 0, bytes.len());
-        let mut end_presums = start_presums.clone();
-        let neg_init = self.negate(self.init());
-        // from the startsums, we substract the init value of the checksum and then shift the sums to the length of the file
-        for x in start_presums.iter_mut() {
-            *x = self.add(x.clone(), &neg_init);
-        }
-        self.normalize_presums(&mut start_presums, self.init_shift());
-        // from the endsums, we finalize them and subtract the given final sum, and shift the sums to the length of the file
-        for x in end_presums.iter_mut() {
-            *x = self.add(self.finalize(x.clone()), &self.negate(sum.clone()));
-        }
-        self.normalize_presums(&mut end_presums, self.init_shift());
-        // This has the effect that, when substracting the n'th startsum from the m'th endsum, we get the checksum
-        // from n to m, minus the final sum (all shifted by (len-m)), which is 0 exactly when the checksum from n to m is equal to
-        // the final sum, which means that start_presums[n] = end_presums[m]
-        //
-        // we then sort an array of indices so equal elements are adjacent, allowing us to easily get the equal elements
-        // Anyway, here's some cryptic stuff i made up and have to put at least *somewhere* so i don't forget it
-        // 		        ([0..m] + f - s)*x^(k-m) - ([0..n] - init)*x^(k-n)
-        // (4)	        = ([0..m] + f - s)*x^(k-m) - ([0..n] - init)*x^(m-n)*x^(k-m)
-        // (1) (5)		= ([0..m] + f - s - [0..n]*x^(n-m) + init*x^(m-n))*x^(k-m)
-        // (2) (6)		= ([0..n]*x^(m-n) + [n..m] + f - s - [0 ..n]*x^(n-m) + init*x^(m-n))*x^(k-m)
-        // (1)		    = ([n..m] + f - s + init*x^(m-n))*x^(k-m)
-        // (6)		    = (init*[n..m] + f - s)*x^(k-m)
-        // (7)		    = (finalize(init*[n..m]) - s)*x^(k-m)
-        // therefore
-        //                  (finalize(init*[n..m]) - s)*x^(k-m) == 0
-        // (3)          <=> finalize(init*[n..m]) - s           == 0
-        // (1)          <=> finalize(init*[n..m])               == s
-
-
-        if u32::try_from(start_presums.len()).is_err() {
-            // only support 32-bit length files for now, since a usize for every byte would take a lot of space
-            panic!("File must be under 4GiB!");
-        }
-        let start_preset = PresumSet::new(vec![start_presums]);
-        let end_preset = PresumSet::new(vec![end_presums]);
-        start_preset.equal_pairs(&end_preset)
-    }
 }
 
+fn presums<L: LinearCheck>(
+    chk: &L,
+    bytes: &[u8],
+    sum: &L::Sum,
+    start: usize,
+    end: usize,
+) -> (Vec<L::Sum>, Vec<L::Sum>) {
+    if start >= end || end > bytes.len() {
+        panic!("Internal error: start not before end or end after eof");
+    }
+    // we calculate two presum arrays, one for the starting values and one for the end values
+    let start_state = bytes[..start]
+        .iter()
+        .fold(chk.init(), |s, b| chk.dig_byte(s, *b));
+    let mut start_presums: Vec<_> = std::iter::once(start_state.clone())
+        .chain(bytes[start..end].iter().scan(start_state, |s, b| {
+            *s = chk.dig_byte(s.clone(), *b);
+            Some(s.clone())
+        }))
+        .collect();
+    let mut end_presums = start_presums.clone();
+    let neg_init = chk.negate(chk.init());
+    // from the startsums, we substract the init value of the checksum and then shift the sums to the length of the file
+    for x in start_presums.iter_mut() {
+        *x = chk.add(x.clone(), &neg_init);
+    }
+    // from the endsums, we finalize them and subtract the given final sum, and shift the sums to the length of the file
+    for x in end_presums.iter_mut() {
+        *x = chk.add(chk.finalize(x.clone()), &chk.negate(sum.clone()));
+    }
+
+    let mut shift = chk.init_shift();
+    for (x, y) in start_presums
+        .iter_mut()
+        .rev()
+        .zip(end_presums.iter_mut().rev())
+    {
+        *x = chk.shift(x.clone(), &shift);
+        *y = chk.shift(y.clone(), &shift);
+        shift = chk.inc_shift(shift);
+    }
+    // This has the effect that, when substracting the n'th startsum from the m'th endsum, we get the checksum
+    // from n to m, minus the final sum (all shifted by (len-m)), which is 0 exactly when the checksum from n to m is equal to
+    // the final sum, which means that start_presums[n] = end_presums[m]
+    //
+    // we then sort an array of indices so equal elements are adjacent, allowing us to easily get the equal elements
+    // Anyway, here's some cryptic stuff i made up and have to put at least *somewhere* so i don't forget it
+    // 		        ([0..m] + f - s)*x^(k-m) - ([0..n] - init)*x^(k-n)
+    // (4)	        = ([0..m] + f - s)*x^(k-m) - ([0..n] - init)*x^(m-n)*x^(k-m)
+    // (1) (5)		= ([0..m] + f - s - [0..n]*x^(n-m) + init*x^(m-n))*x^(k-m)
+    // (2) (6)		= ([0..n]*x^(m-n) + [n..m] + f - s - [0 ..n]*x^(n-m) + init*x^(m-n))*x^(k-m)
+    // (1)		    = ([n..m] + f - s + init*x^(m-n))*x^(k-m)
+    // (6)		    = (init*[n..m] + f - s)*x^(k-m)
+    // (7)		    = (finalize(init*[n..m]) - s)*x^(k-m)
+    // therefore
+    //                  (finalize(init*[n..m]) - s)*x^(k-m) == 0
+    // (2) (3) (6)  <=> finalize(init*[n..m]) - s           == 0
+    // (1)          <=> finalize(init*[n..m])               == s
+    (start_presums, end_presums)
+}
+
+/// Given some bytes and a target sum, determines all segments in the bytes that have that
+/// particular checksum.
+///
+/// Each element of the return value contains a tuple consisting of an array of possible segment starts
+/// and an array of possible segment ends. If there are multiple starts or ends, each possible combination
+/// has the target checksum.
+///
+/// This function has a high space usage per byte: for `n` bytes, it uses a total space of `n*(8 + 2*sizeof(Sum))` bytes.
+/// The time is bounded by the runtime of the sort algorithm, which is around `n*log(n)`.
+/// If Hashtables were used, it could be done in linear time, but they take too much space.
+pub fn find_checksum_segments<L: LinearCheck>(
+    chk: &L,
+    bytes: &[Vec<u8>],
+    sum: &[L::Sum],
+) -> Vec<(Vec<u32>, Vec<u32>)> {
+    if u32::try_from(bytes[0].len()).is_err() {
+        // only support 32-bit length files for now, since a usize for every byte would take a lot of space
+        panic!("File must be under 4GiB!");
+    }
+    let (start_presums, end_presums) = bytes
+        .iter()
+        .zip(sum.iter())
+        .map(|(b, s)| presums(chk, b, &s, 0, b.len()))
+        .unzip();
+
+    let start_preset = PresumSet::new(start_presums);
+    let end_preset = PresumSet::new(end_presums);
+    start_preset.equal_pairs(&end_preset)
+}
 /// A struct for helping to sort and get duplicates of arrays of arrays.
 #[derive(Debug)]
 struct PresumSet<Sum: Clone + Eq + Ord + std::fmt::Debug> {
@@ -224,10 +233,10 @@ impl<Sum: Clone + Eq + Ord + std::fmt::Debug> PresumSet<Sum> {
             match Self::cmp_idx(&self.presum, apos, &other.presum, bpos) {
                 Ordering::Less => {
                     a_idx += 1;
-                },
+                }
                 Ordering::Greater => {
                     b_idx += 1;
-                },
+                }
                 Ordering::Equal => {
                     let mut n_a = 0;
                     // gets all runs of equal elements in a and b array
