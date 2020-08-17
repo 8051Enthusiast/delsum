@@ -6,7 +6,7 @@ edition = "2018"
 
 
 [lib]
-name = "mylib"
+name = "libdelsum"
 path = "src/lib.rs"
 
 [dependencies]

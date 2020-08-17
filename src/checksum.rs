@@ -61,19 +61,17 @@ pub trait Digest {
 /// the integer containing `n`. In this case, the value of of `x^{8n}` reduced by the generator is stored
 /// and the shift is applied using polynomial multiplication modulo the generator.
 ///
-/// Some assumptions are here (the `self`s are omitted for clarity):
-/// * `add(a,b)` forms an abeliean group with `negate(a)` as inverse
-/// * `shift(s, init_shift()) == s`
-/// * `shift(shift(s, shift_n(a)), shift_n(b)) == shift(s, shift_n(a+b))`
+/// The assumptions are here (the `self`s are omitted for clarity):
+/// * `add(a,b)` forms an abeliean group with `negate(a)` as inverse (hereafter, the sum value 0 will be equal to `add(init(), negate(init()))`)
+/// * `shift(s, shift_n(1)) == dig(s, 0u8)`
 /// * `shift(s, shift_n(1))` is bijective in the set of all valid `Sum` values
-/// * `dig_byte(s, 0u8) == shift(s, shift_n(1))`
-/// * for any possible value `s` of `Sum`, `sum(dig_byte(s, k), negate(dig_byte(init(), k)))` is independent of `s`
-///   (intuitively, `dig_byte` always changes the sum in the same linear way, regardless of position in the text or previous text)
-/// * there exists a `Shift` `a` such that for all sums `s`, `sum(finalize(s), negate(shift(s, a)))` is constant
-///   (intuitively, finalize is linear in some sense)
+/// * `shift(shift(s, shift_n(a)), shift_n(b)) == shift(s, shift_n(a+b))`
+/// * `add(shift(s, shift_n(n)), shift(r, shift_n(n))) == shift(add(s, r), n)`
+/// * `dig_byte(s, k) == dig_byte(0, k) + dig_byte(s, 0u8)` (consequently, `dig_byte(0, 0u8) == 0`)
+/// * for all sums `s`, `sum(finalize(s), negate(s))` is constant (finalize adds a constant value to the sum)
 /// * all methods without default implementations (including those from `Digest`) should run in constant time (assuming constant `Shift`, `Sum` types)
 ///
-/// I might have forgotten some assumptions, but this is the gist of it.
+/// Basically, it is a graded ring or something idk.
 pub trait LinearCheck: Digest {
     /// The Shift type (see trait documentation for more).
     type Shift: Clone;
@@ -156,6 +154,17 @@ pub trait LinearCheck: Digest {
         // the final sum, which means that start_presums[n] = end_presums[m]
         //
         // we then sort an array of indices so equal elements are adjacent, allowing us to easily get the equal elements
+        // Anyway, here's some cryptic stuff i made up and have to put at least *somewhere* so i don't forget it
+        // 		        ([0..m] + f - s)*x^(k-m) - ([0..n] - init)*x^(k-n)
+        // (4)	        = ([0..m] + f - s)*x^(k-m) - ([0..n] - init)*x^(m-n)*x^(k-m)
+        // (1) (5)		= ([0..m] + f - s - [0..n]*x^(n-m) + init*x^(m-n))*x^(k-m)
+        // (2) (6)		= ([0..n]*x^(m-n) + [n..m] + f - s - [0 ..n]*x^(n-m) + init*x^(m-n))*x^(k-m)
+        // (1)		    = ([n..m] + f - s + init*x^(m-n))*x^(k-m)
+        // (6)		    = (init*[n..m] + f - s)*x^(k-m)
+        // (7)		    = (finalize(init*[n..m]) - s)*x^(k-m)
+        // 		        = (s - s)*x^(k-m)
+        // (1)		    = (0)*x^(k-m)
+        // (3) (7)		= 0
 
 
         if u32::try_from(start_presums.len()).is_err() {
