@@ -171,28 +171,34 @@ impl<S: Modnum> LinearCheck for ModSum<S> {
 mod tests {
     use super::*;
     use crate::checksum::{RelativeIndex, Relativity};
+    use crate::checksum::tests::{test_shifts, test_prop};
     #[test]
     fn screw() {
-        ModSum::<u8>::with_options()
+        let s = ModSum::<u8>::with_options()
             .width(8)
             .check(0xdd)
             .build()
             .unwrap();
-
-        ModSum::<u16>::with_options()
+        test_shifts(&s);
+        test_prop(&s);
+        let s = ModSum::<u16>::with_options()
             .width(8)
             .check(0xdd)
             .build()
             .unwrap();
+        test_shifts(&s);
+        test_prop(&s);
     }
     #[test]
     fn this() {
-        ModSum::<u8>::with_options()
+        let s = ModSum::<u8>::with_options()
             .width(5)
             .modulo(17)
             .check(1)
             .build()
             .unwrap();
+        test_shifts(&s);
+        test_prop(&s);
     }
     #[test]
     fn checksum_type() {
@@ -203,6 +209,8 @@ mod tests {
             .check(0xde)
             .build()
             .unwrap();
+        test_shifts(&chk);
+        test_prop(&chk);
         // 0xff*0x101 = 0xffff
         let many_255: Vec<_> = std::iter::repeat(0xffu8).take(0x101).collect();
         assert_eq!(chk.digest(many_255.as_slice()).unwrap(), 0xff00);

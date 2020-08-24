@@ -342,7 +342,7 @@ impl<S: BitNum> LinearCheck for CRC<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::checksum::tests::{check_example, test_find, test_shifts};
+    use crate::checksum::tests::{check_example, test_find, test_shifts, test_prop};
     #[test]
     fn cms_16() {
         assert!(CRC::<u32>::with_options()
@@ -361,6 +361,7 @@ mod tests {
             .unwrap();
         test_shifts(&crc);
         test_find(&crc);
+        test_prop(&crc);
         check_example(&crc, 0x6bd6);
     }
     #[test]
@@ -373,6 +374,7 @@ mod tests {
             .build()
             .unwrap();
         test_shifts(&crc);
+        test_prop(&crc);
         check_example(&crc, 7);
         let crc = CRC::<u128>::with_options()
             .poly(0x3)
@@ -382,6 +384,7 @@ mod tests {
             .build()
             .unwrap();
         test_shifts(&crc);
+        test_prop(&crc);
         check_example(&crc, 7);
     }
     #[test]
@@ -396,6 +399,7 @@ mod tests {
             .build()
             .unwrap();
         test_shifts(&crc);
+        test_prop(&crc);
         check_example(&crc, 0x25);
         let crc = CRC::<u32>::with_options()
             .poly(0x4f)
@@ -407,6 +411,7 @@ mod tests {
             .build()
             .unwrap();
         test_shifts(&crc);
+        test_prop(&crc);
         check_example(&crc, 0x25);
     }
     #[test]
@@ -422,6 +427,7 @@ mod tests {
             .build()
             .unwrap();
         test_shifts(&crc);
+        test_prop(&crc);
         check_example(&crc, 0x17);
     }
     #[test]
@@ -435,6 +441,7 @@ mod tests {
             .unwrap();
         test_shifts(&crc);
         test_find(&crc);
+        test_prop(&crc);
         check_example(&crc, 0x35a);
     }
     #[test]
@@ -448,6 +455,7 @@ mod tests {
             .unwrap();
         test_shifts(&crc);
         test_find(&crc);
+        test_prop(&crc);
         check_example(&crc, 0x69e2);
     }
     #[test]
@@ -461,6 +469,7 @@ mod tests {
             .unwrap();
         test_shifts(&crc);
         test_find(&crc);
+        test_prop(&crc);
         check_example(&crc, 0x1993);
     }
     #[test]
@@ -473,6 +482,7 @@ mod tests {
             .unwrap();
         test_shifts(&crc);
         test_find(&crc);
+        test_prop(&crc);
         check_example(&crc, 0x00f396);
     }
     #[test]
@@ -487,6 +497,7 @@ mod tests {
             .unwrap();
         test_shifts(&crc);
         test_find(&crc);
+        test_prop(&crc);
         check_example(&crc, 0xe8c5033d);
     }
     #[test]
@@ -503,6 +514,7 @@ mod tests {
             .unwrap();
         test_shifts(&crc);
         test_find(&crc);
+        test_prop(&crc);
         check_example(&crc, 0x5a513507);
     }
     #[test]
@@ -516,6 +528,7 @@ mod tests {
             .unwrap();
         test_shifts(&crc);
         test_find(&crc);
+        test_prop(&crc);
         check_example(&crc, 0x4165335176)
     }
     #[test]
@@ -532,6 +545,7 @@ mod tests {
             .unwrap();
         test_shifts(&crc);
         test_find(&crc);
+        test_prop(&crc);
         check_example(&crc, 0xb03d0f148fcab729);
     }
     #[test]
@@ -546,6 +560,7 @@ mod tests {
             .unwrap();
         test_shifts(&crc);
         test_find(&crc);
+        test_prop(&crc);
         check_example(&crc, 0x030c57c0142280dfd62847)
     }
     #[test]
@@ -557,6 +572,7 @@ mod tests {
             .build()
             .unwrap();
         test_shifts(&crc);
+        test_prop(&crc);
         check_example(&crc, 0);
     }
     #[test]
@@ -569,6 +585,7 @@ mod tests {
             .build()
             .unwrap();
         test_shifts(&crc);
+        test_prop(&crc);
         check_example(&crc, 0x96);
     }
     #[test]
@@ -584,6 +601,7 @@ mod tests {
             .unwrap();
         test_shifts(&crc);
         test_find(&crc);
+        test_prop(&crc);
         check_example(&crc, 0x6b68);
     }
     #[test]
@@ -592,6 +610,7 @@ mod tests {
             .unwrap();
         test_shifts(&crc);
         test_find(&crc);
+        test_prop(&crc);
         check_example(&crc, 0xf15e);
     }
     #[test]
@@ -599,6 +618,7 @@ mod tests {
         let crc = CRC::<u16>::from_str("init=0x5ff\npoly=0x4465     width=15").unwrap();
         test_shifts(&crc);
         test_find(&crc);
+        test_prop(&crc);
         check_example(&crc, 0x2cfa);
         assert!(CRC::<u16>::from_str("init=0x5ff\npoly=0x4465     width=\"15").is_err());
         CRC::<u16>::from_str("  init=0533\n\t\npoly=0x4465     width=\"15\"   ").unwrap();

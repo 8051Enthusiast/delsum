@@ -343,11 +343,12 @@ impl std::fmt::Display for CheckBuilderErr {
         }
     }
 }
+#[allow(dead_code)]
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
     use crate::checksum::{RelativeIndex, Relativity};
-    #[allow(dead_code)]
+    use rand::Rng;
     static EXAMPLE_TEXT: &str = r#"Als Gregor Samsa eines Morgens aus unruhigen Träumen erwachte, fand er sich in
 seinem Bett zu einem ungeheueren Ungeziefer verwandelt. Er lag auf seinem
 panzerartig harten Rücken und sah, wenn er den Kopf ein wenig hob, seinen
@@ -377,7 +378,6 @@ zurück. Er versuchte es wohl hundertmal, schloß die Augen, um die zappelnden
 Beine nicht sehen zu müssen und ließ erst ab, als er in der Seite einen noch
 nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
 "#;
-    #[allow(dead_code)]
     pub fn test_shifts<T: LinearCheck>(chk: &T) {
         let test_sum = chk
             .digest(&b"T\x00\x00\x00E\x00\x00\x00S\x00\x00\x00\x00T"[..])
@@ -394,7 +394,6 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
         new_sum = chk.dig_byte(new_sum, b'T');
         assert_eq!(test_sum, chk.finalize(new_sum));
     }
-    #[allow(dead_code)]
     pub fn test_find<L: LinearCheck>(chk: &L) {
         let sum_1_9 = chk.digest(&b"123456789"[..]).unwrap();
         let sum_9_1 = chk.digest(&b"987654321"[..]).unwrap();
@@ -434,8 +433,107 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
             vec![(vec![3], vec![RelativeIndex::FromEnd(7)])]
         )
     }
-    #[allow(dead_code)]
     pub fn check_example<D: Digest>(chk: &D, sum: D::Sum) {
         assert_eq!(chk.digest(EXAMPLE_TEXT.as_bytes()).unwrap(), sum)
+    }
+
+    pub fn test_prop<L: LinearCheck>(chk: &L) {
+        let mut test_values = Vec::new();
+        test_values.push(chk.init());
+        let e = &chk.add(chk.negate(chk.init()), &chk.init());
+        test_values.push(e.clone());
+        let mut rng = rand::thread_rng();
+        let mut s = chk.init();
+        while test_values.len() < 100 {
+            s = chk.dig_byte(s, rng.gen());
+            if rng.gen_bool(0.1) {
+                test_values.push(s.clone());
+            }
+        }
+        for a in test_values.iter() {
+            check_neutral(chk, e, a);
+            check_invert(chk, e, a);
+            check_shift1(chk, a);
+            check_shiftn(chk, a);
+            check_bil(chk, e, a);
+            check_fin(chk, e, a);
+            for b in test_values.iter() {
+                check_commut(chk, a, b);
+                check_dist(chk, a, b);
+                for c in test_values.iter() {
+                    check_assoc(chk, a, b, c);
+                }
+            }
+        }
+    }
+    fn check_assoc<L: LinearCheck>(chk: &L, a: &L::Sum, b: &L::Sum, c: &L::Sum) {
+        assert_eq!(
+            chk.add(chk.add(a.clone(), b), c),
+            chk.add(a.clone(), &chk.add(b.clone(), c)),
+            "Associativity Fail: ({:x?} + {:x?}) + {:x?} != {:x?} + ({:x?} + {:x?})", a, b, c, a, b, c
+        );
+    }
+    fn check_neutral<L: LinearCheck>(chk: &L, e: &L::Sum, a: &L::Sum) {
+        assert_eq!(
+            chk.add(a.clone(), e),
+            a.clone(),
+            "Neutral Element Fail: {:x?} + {:x?} != {:x?}", a, e, a
+        );
+    }
+    fn check_commut<L: LinearCheck>(chk: &L, a: &L::Sum, b: &L::Sum) {
+        assert_eq!(
+            chk.add(b.clone(), a),
+            chk.add(a.clone(), b),
+            "Commutativity Fail: {:x?} + {:x?} != {:x?} + {:x?}", b, a, a, b
+        );
+    }
+    fn check_invert<L: LinearCheck>(chk: &L, e: &L::Sum, a: &L::Sum) {
+        assert_eq!(
+            chk.add(chk.negate(a.clone()), a),
+            e.clone(),
+            "Inversion Fail: -{:x?} + {:x?} != {:x?}", a, a, e
+        );
+    }
+    fn check_shift1<L: LinearCheck>(chk: &L, a: &L::Sum) {
+        assert_eq!(
+            chk.shift(a.clone(), &chk.shift_n(1)),
+            chk.dig_byte(a.clone(), 0u8),
+            "Shift1 Fail: shift({:x?}, shift_n1(1)) != dig_byte({:x?}, 0u8)", a, a
+        );
+    }
+    fn check_shiftn<L: LinearCheck>(chk: &L, a: &L::Sum) {
+        for x in &[1, 5, 16, 1094, 5412] {
+            let shifted = chk.shift(a.clone(), &chk.shift_n(*x));
+            for y in &[4, 526, 0, 41, 4321] {
+                assert_eq!(
+                    chk.shift(shifted.clone(), &chk.shift_n(*y)),
+                    chk.shift(a.clone(), &chk.shift_n(x+y)),
+                    "Shiftn Fail: shift(shift({:x?}, shift_n({:?})), shift_n({:?})) != shift({:x?}, shift_n({} + {}))", a, x, y, a, x, y
+                );
+            }
+        }
+    }
+    fn check_dist<L: LinearCheck>(chk: &L, a: &L::Sum, b: &L::Sum) {
+        assert_eq!(
+            chk.add(chk.dig_byte(a.clone(), 0u8), &chk.dig_byte(b.clone(), 0u8)),
+            chk.dig_byte(chk.add(a.clone(), b), 0u8),
+            "Distributivity Fail: dig_byte({:x?}, 0u8) + dig_byte({:x?}, 0u8) != dig_byte({:x?} + {:x?}, 0u8)", a, b, a, b
+        );
+    }
+    fn check_bil<L: LinearCheck>(chk: &L, e: &L::Sum, a: &L::Sum) {
+        for k in 0u8..=255 {
+            assert_eq!(
+                chk.dig_byte(a.clone(), k),
+                chk.add(chk.dig_byte(a.clone(), 0u8), &chk.dig_byte(e.clone(), k)),
+                "Bilinearity Fail: dig_byte({:x?}, {:#x}) != dig_byte({:x?}, 0u8) + dig_byte(0, {:#x}u8)", a, k, a ,k
+            )
+        }
+    }
+    fn check_fin<L: LinearCheck>(chk: &L, e: &L::Sum, a: &L::Sum) {
+        assert_eq!(
+            chk.add(chk.finalize(a.clone()), &chk.negate(a.clone())),
+            chk.finalize(e.clone()),
+            "Finalize Linearity Fail: finalize({:x?}) - {:x?} != {:x?}", a, a, &chk.finalize(e.clone())
+        )
     }
 }

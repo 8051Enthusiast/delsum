@@ -238,7 +238,7 @@ impl<S: BitNum> LinearCheck for Fletcher<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::checksum::tests::{check_example, test_find, test_shifts};
+    use crate::checksum::tests::{check_example, test_find, test_shifts, test_prop};
     use std::str::FromStr;
     #[test]
     fn adler32() {
@@ -251,6 +251,7 @@ mod tests {
             .unwrap();
         test_shifts(&adel);
         test_find(&adel);
+        test_prop(&adel);
         check_example(&adel, 0x81bfd25f);
         let nobel = Fletcher::with_options()
             .width(32)
@@ -261,6 +262,7 @@ mod tests {
             .unwrap();
         test_shifts(&nobel);
         test_find(&nobel);
+        test_prop(&adel);
         check_example(&nobel, 0x81bfd25f);
     }
     #[test]
@@ -273,6 +275,7 @@ mod tests {
             .unwrap();
         test_shifts(&f16);
         test_find(&f16);
+        test_prop(&f16);
         check_example(&f16, 0x7815);
     }
     #[test]
@@ -280,7 +283,7 @@ mod tests {
         let f8 = Fletcher::<u8>::from_str("width=8 modulo=15 init=0 addout=0 swap=false check=0xc")
             .unwrap();
         test_shifts(&f8);
+        test_prop(&f8);
         check_example(&f8, 0x6);
-        println!("{}", f8);
     }
 }
