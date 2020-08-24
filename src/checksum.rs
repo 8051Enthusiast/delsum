@@ -1,4 +1,6 @@
 pub mod crc;
+pub mod fletcher;
+pub mod modsum;
 
 use std::cmp::Ordering;
 use std::convert::TryFrom;
@@ -45,6 +47,16 @@ pub trait Digest {
     }
 }
 
+pub enum Relativity {
+    Start,
+    End,
+}
+#[derive(Debug, PartialEq, Eq)]
+pub enum RelativeIndex {
+    FromStart(usize),
+    FromEnd(usize),
+}
+
 /// A checksum that also has some notion of linearity.
 ///
 /// What does linearity mean here? In a mathematically pure world, it would mean
@@ -66,7 +78,7 @@ pub trait Digest {
 /// * `shift(s, shift_n(1)) == dig(s, 0u8)`
 /// * `shift(s, shift_n(1))` is bijective in the set of all valid `Sum` values
 /// * `shift(shift(s, shift_n(a)), shift_n(b)) == shift(s, shift_n(a+b))`
-/// * `add(shift(s, shift_n(n)), shift(r, shift_n(n))) == shift(add(s, r), n)`
+/// * `add(dig_byte(s, 0u8), dig_byte(r, 0u8)) == dig_byte(add(s, r), 0u8)`
 /// * `dig_byte(s, k) == dig_byte(0, k) + dig_byte(s, 0u8)` (consequently, `dig_byte(0, 0u8) == 0`)
 /// * for all sums `s`, `add(finalize(s), negate(s))` is constant (finalize adds a constant value to the sum)
 /// * all methods without default implementations (including those from `Digest`) should run in constant time (assuming constant `Shift`, `Sum` types)
@@ -95,98 +107,120 @@ pub trait LinearCheck: Digest {
         }
         shift
     }
+    #[doc(hidden)]
+    fn presums(
+        &self,
+        bytes: &[u8],
+        sum: &Self::Sum,
+        start_range: std::ops::Range<usize>,
+        end_range: std::ops::Range<usize>,
+    ) -> (Vec<Self::Sum>, Vec<Self::Sum>) {
+        // we calculate two presum arrays, one for the starting values and one for the end values
+        let mut state = self.init();
+        let mut start_presums = Vec::with_capacity(start_range.len());
+        let mut end_presums = Vec::with_capacity(end_range.len());
+        let neg_init = self.negate(self.init());
+        for (i, c) in bytes.iter().enumerate() {
+            if start_range.contains(&i) {
+                // from the startsums, we substract the init value of the checksum
+                start_presums.push(self.add(state.clone(), &neg_init));
+            }
+            state = self.dig_byte(state, *c);
+            if end_range.contains(&i) {
+                // from the endsums, we finalize them and subtract the given final sum
+                let endstate = self.add(self.finalize(state.clone()), &self.negate(sum.clone()));
+                end_presums.push(endstate);
+            }
+        }
+        // we then shift checksums to length of file
+        let mut shift = self.init_shift();
+        for i in (0..bytes.len()).rev() {
+            if end_range.contains(&i) {
+                end_presums[i - end_range.start] =
+                    self.shift(end_presums[i - end_range.start].clone(), &shift)
+            }
+            shift = self.inc_shift(shift);
+            if start_range.contains(&i) {
+                start_presums[i - start_range.start] =
+                    self.shift(start_presums[i - start_range.start].clone(), &shift)
+            }
+        }
+        // This has the effect that, when substracting the n'th startsum from the m'th endsum, we get the checksum
+        // from n to m, minus the final sum (all shifted by (len-m)), which is 0 exactly when the checksum from n to m is equal to
+        // the final sum, which means that start_presums[n] = end_presums[m]
+        //
+        // we then sort an array of indices so equal elements are adjacent, allowing us to easily get the equal elements
+        // Anyway, here's some cryptic stuff i made up and have to put at least *somewhere* so i don't forget it
+        // 		        ([0..m] + f - s)*x^(k-m) - ([0..n] - i)*x^(k-n)
+        // (4)	        = ([0..m] + f - s)*x^(k-m) - ([0..n] - i)*x^(m-n)*x^(k-m)
+        // (1) (5)		= ([0..m] + f - s - [0..n]*x^(n-m) + i*x^(m-n))*x^(k-m)
+        // (2) (6)		= ([0..n]*x^(m-n) + [n..m] + f - s - [0 ..n]*x^(n-m) + i*x^(m-n))*x^(k-m)
+        // (1)		    = ([n..m] + f - s + i*x^(m-n))*x^(k-m)
+        // (6)		    = (i*[n..m] + f - s)*x^(k-m)
+        // (7)		    = (finalize(i*[n..m]) - s)*x^(k-m)
+        // therefore
+        //                  (finalize(i*[n..m]) - s)*x^(k-m) == 0
+        // (2) (3) (6)  <=> finalize(i*[n..m]) - s           == 0
+        // (1)          <=> finalize(i*[n..m])               == s
+        (start_presums, end_presums)
+    }
+
+    /// Given some bytes and a target sum, determines all segments in the bytes that have that
+    /// particular checksum.
+    ///
+    /// Each element of the return value contains a tuple consisting of an array of possible segment starts
+    /// and an array of possible segment ends. If there are multiple starts or ends, each possible combination
+    /// has the target checksum.
+    ///
+    /// This function has a high space usage per byte: for `n` bytes, it uses a total space of `n*(8 + 2*sizeof(Sum))` bytes.
+    /// The time is bounded by the runtime of the sort algorithm, which is around `n*log(n)`.
+    /// If Hashtables were used, it could be done in linear time, but they take too much space.
+    fn find_checksum_segments(
+        &self,
+        bytes: &[Vec<u8>],
+        sum: &[Self::Sum],
+        rel: Relativity,
+    ) -> Vec<(Vec<usize>, Vec<RelativeIndex>)> {
+        if bytes.is_empty() {
+            return Vec::new();
+        }
+        if u32::try_from(bytes[0].len()).is_err() {
+            // only support 32-bit length files for now, since a usize for every byte would take a lot of space
+            panic!("File must be under 4GiB!");
+        }
+        let min_len = bytes.iter().map(|x| x.len()).min().unwrap();
+        let end_range = |b: &[u8]| match rel {
+            Relativity::Start => 0..min_len,
+            Relativity::End => (b.len() - min_len)..b.len(),
+        };
+        let (start_presums, end_presums) = bytes
+            .iter()
+            .zip(sum.iter())
+            .map(|(b, s)| self.presums(b, &s, 0..min_len, end_range(&b)))
+            .unzip();
+
+        let start_preset = PresumSet::new(start_presums);
+        let end_preset = PresumSet::new(end_presums);
+
+        let mut ret_vec = Vec::new();
+        for (a, b) in start_preset.equal_pairs(&end_preset) {
+            let starts = a.iter().map(|x| usize::try_from(*x).unwrap()).collect();
+            let ends = match rel {
+                Relativity::Start => b
+                    .iter()
+                    .map(|x| RelativeIndex::FromStart(usize::try_from(*x).unwrap() + 1))
+                    .collect(),
+                Relativity::End => b
+                    .iter()
+                    .map(|x| RelativeIndex::FromEnd(min_len - 1 - usize::try_from(*x).unwrap()))
+                    .collect(),
+            };
+            ret_vec.push((starts, ends));
+        }
+        ret_vec
+    }
 }
 
-fn presums<L: LinearCheck>(
-    chk: &L,
-    bytes: &[u8],
-    sum: &L::Sum,
-    start: usize,
-    end: usize,
-) -> (Vec<L::Sum>, Vec<L::Sum>) {
-    if start >= end || end > bytes.len() {
-        panic!("Internal error: start not before end or end after eof");
-    }
-    // we calculate two presum arrays, one for the starting values and one for the end values
-    let start_state = bytes[..start]
-        .iter()
-        .fold(chk.init(), |s, b| chk.dig_byte(s, *b));
-    let mut start_presums: Vec<_> = std::iter::once(start_state.clone())
-        .chain(bytes[start..end].iter().scan(start_state, |s, b| {
-            *s = chk.dig_byte(s.clone(), *b);
-            Some(s.clone())
-        }))
-        .collect();
-    let mut end_presums = start_presums.clone();
-    let neg_init = chk.negate(chk.init());
-    // from the startsums, we substract the init value of the checksum and then shift the sums to the length of the file
-    for x in start_presums.iter_mut() {
-        *x = chk.add(x.clone(), &neg_init);
-    }
-    // from the endsums, we finalize them and subtract the given final sum, and shift the sums to the length of the file
-    for x in end_presums.iter_mut() {
-        *x = chk.add(chk.finalize(x.clone()), &chk.negate(sum.clone()));
-    }
-
-    let mut shift = chk.init_shift();
-    for (x, y) in start_presums
-        .iter_mut()
-        .rev()
-        .zip(end_presums.iter_mut().rev())
-    {
-        *x = chk.shift(x.clone(), &shift);
-        *y = chk.shift(y.clone(), &shift);
-        shift = chk.inc_shift(shift);
-    }
-    // This has the effect that, when substracting the n'th startsum from the m'th endsum, we get the checksum
-    // from n to m, minus the final sum (all shifted by (len-m)), which is 0 exactly when the checksum from n to m is equal to
-    // the final sum, which means that start_presums[n] = end_presums[m]
-    //
-    // we then sort an array of indices so equal elements are adjacent, allowing us to easily get the equal elements
-    // Anyway, here's some cryptic stuff i made up and have to put at least *somewhere* so i don't forget it
-    // 		        ([0..m] + f - s)*x^(k-m) - ([0..n] - init)*x^(k-n)
-    // (4)	        = ([0..m] + f - s)*x^(k-m) - ([0..n] - init)*x^(m-n)*x^(k-m)
-    // (1) (5)		= ([0..m] + f - s - [0..n]*x^(n-m) + init*x^(m-n))*x^(k-m)
-    // (2) (6)		= ([0..n]*x^(m-n) + [n..m] + f - s - [0 ..n]*x^(n-m) + init*x^(m-n))*x^(k-m)
-    // (1)		    = ([n..m] + f - s + init*x^(m-n))*x^(k-m)
-    // (6)		    = (init*[n..m] + f - s)*x^(k-m)
-    // (7)		    = (finalize(init*[n..m]) - s)*x^(k-m)
-    // therefore
-    //                  (finalize(init*[n..m]) - s)*x^(k-m) == 0
-    // (2) (3) (6)  <=> finalize(init*[n..m]) - s           == 0
-    // (1)          <=> finalize(init*[n..m])               == s
-    (start_presums, end_presums)
-}
-
-/// Given some bytes and a target sum, determines all segments in the bytes that have that
-/// particular checksum.
-///
-/// Each element of the return value contains a tuple consisting of an array of possible segment starts
-/// and an array of possible segment ends. If there are multiple starts or ends, each possible combination
-/// has the target checksum.
-///
-/// This function has a high space usage per byte: for `n` bytes, it uses a total space of `n*(8 + 2*sizeof(Sum))` bytes.
-/// The time is bounded by the runtime of the sort algorithm, which is around `n*log(n)`.
-/// If Hashtables were used, it could be done in linear time, but they take too much space.
-pub fn find_checksum_segments<L: LinearCheck>(
-    chk: &L,
-    bytes: &[Vec<u8>],
-    sum: &[L::Sum],
-) -> Vec<(Vec<u32>, Vec<u32>)> {
-    if u32::try_from(bytes[0].len()).is_err() {
-        // only support 32-bit length files for now, since a usize for every byte would take a lot of space
-        panic!("File must be under 4GiB!");
-    }
-    let (start_presums, end_presums) = bytes
-        .iter()
-        .zip(sum.iter())
-        .map(|(b, s)| presums(chk, b, &s, 0, b.len()))
-        .unzip();
-
-    let start_preset = PresumSet::new(start_presums);
-    let end_preset = PresumSet::new(end_presums);
-    start_preset.equal_pairs(&end_preset)
-}
 /// A struct for helping to sort and get duplicates of arrays of arrays.
 #[derive(Debug)]
 struct PresumSet<Sum: Clone + Eq + Ord + std::fmt::Debug> {
@@ -270,5 +304,138 @@ impl<Sum: Clone + Eq + Ord + std::fmt::Debug> PresumSet<Sum> {
         // sort it, for good measure
         ret.sort_unstable();
         ret
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum CheckBuilderErr {
+    /// The checksum given on construction does not match
+    /// the checksum of "123456789"
+    CheckFail,
+    /// A mandatory parameter is missing
+    MissingParameter(&'static str),
+    /// A value of a parameter is out of range
+    ValueOutOfRange(&'static str),
+    /// The given string given to the from_str function
+    /// could not be interpreted correctly,
+    ///
+    /// The String indicates the key with the malformant.
+    MalformedString(String),
+    /// A key given to the from_str function is not known
+    UnknownKey(String),
+}
+
+impl std::fmt::Display for CheckBuilderErr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use CheckBuilderErr::*;
+        match self {
+            CheckFail => write!(f, "Failed checksum test"),
+            MissingParameter(para) => write!(f, "Missing parameter '{}'", para),
+            ValueOutOfRange(key) => write!(f, "Value for parameter '{}' invalid", key),
+            MalformedString(key) => {
+                if key.is_empty() {
+                    write!(f, "Malformed input string")
+                } else {
+                    write!(f, "Malformed input string at {}", key)
+                }
+            }
+            UnknownKey(key) => write!(f, "Unknown key '{}'", key),
+        }
+    }
+}
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use crate::checksum::{RelativeIndex, Relativity};
+    #[allow(dead_code)]
+    static EXAMPLE_TEXT: &str = r#"Als Gregor Samsa eines Morgens aus unruhigen Träumen erwachte, fand er sich in
+seinem Bett zu einem ungeheueren Ungeziefer verwandelt. Er lag auf seinem
+panzerartig harten Rücken und sah, wenn er den Kopf ein wenig hob, seinen
+gewölbten, braunen, von bogenförmigen Versteifungen geteilten Bauch, auf
+dessen Höhe sich die Bettdecke, zum gänzlichen Niedergleiten bereit, kaum
+noch erhalten konnte. Seine vielen, im Vergleich zu seinem sonstigen Umfang
+kläglich dünnen Beine flimmerten ihm hilflos vor den Augen.
+
+»Was ist mit mir geschehen?« dachte er. Es war kein Traum, sein Zimmer, ein
+richtiges, nur etwas zu kleines Menschenzimmer, lag ruhig zwischen den vier
+wohlbekannten Wänden, über dem Tisch, auf dem eine auseinandergepackte
+Musterkollektion von Tuchwaren ausgebreitet war – Samsa war Reisender –,
+hing das Bild, das er vor kurzem aus einer illustrierten Zeitschrift
+ausgeschnitten und in einem hübschen, vergoldeten Rahmen untergebracht hatte.
+Es stellte eine Dame dar, die, mit einem Pelzhut und einer Pelzboa versehen,
+aufrecht dasaß und einen schweren Pelzmuff, in dem ihr ganzer Unterarm
+verschwunden war, dem Beschauer entgegenhob.
+
+Gregors Blick richtete sich dann zum Fenster, und das trübe Wetter – man
+hörte Regentropfen auf das Fensterblech aufschlagen – machte ihn ganz
+melancholisch. »Wie wäre es, wenn ich noch ein wenig weiterschliefe und alle
+Narrheiten vergäße,« dachte er, aber das war gänzlich undurchführbar, denn
+er war gewöhnt, auf der rechten Seite zu schlafen, konnte sich aber in seinem
+gegenwärtigen Zustand nicht in diese Lage bringen. Mit welcher Kraft er sich
+auch auf die rechte Seite warf, immer wieder schaukelte er in die Rückenlage
+zurück. Er versuchte es wohl hundertmal, schloß die Augen, um die zappelnden
+Beine nicht sehen zu müssen und ließ erst ab, als er in der Seite einen noch
+nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
+"#;
+    #[allow(dead_code)]
+    pub fn test_shifts<T: LinearCheck>(chk: &T) {
+        let test_sum = chk
+            .digest(&b"T\x00\x00\x00E\x00\x00\x00S\x00\x00\x00\x00T"[..])
+            .unwrap();
+        let shift3 = chk.shift_n(3);
+        let shift4 = chk.inc_shift(shift3.clone());
+        let mut new_sum = chk.init();
+        new_sum = chk.dig_byte(new_sum, b'T');
+        new_sum = chk.shift(new_sum, &shift3);
+        new_sum = chk.dig_byte(new_sum, b'E');
+        new_sum = chk.shift(new_sum, &shift3);
+        new_sum = chk.dig_byte(new_sum, b'S');
+        new_sum = chk.shift(new_sum, &shift4);
+        new_sum = chk.dig_byte(new_sum, b'T');
+        assert_eq!(test_sum, chk.finalize(new_sum));
+    }
+    #[allow(dead_code)]
+    pub fn test_find<L: LinearCheck>(chk: &L) {
+        let sum_1_9 = chk.digest(&b"123456789"[..]).unwrap();
+        let sum_9_1 = chk.digest(&b"987654321"[..]).unwrap();
+        let sum_1_9_1 = chk.digest(&b"12345678987654321"[..]).unwrap();
+        assert_eq!(
+            chk.find_checksum_segments(
+                &[Vec::from(&"a123456789X1235H123456789Y"[..])],
+                &[sum_1_9.clone()],
+                Relativity::Start
+            ),
+            vec![
+                (vec![1], vec![RelativeIndex::FromStart(10)]),
+                (vec![16], vec![RelativeIndex::FromStart(25)])
+            ]
+        );
+        assert_eq!(
+            chk.find_checksum_segments(
+                &[
+                    Vec::from(&"XX98765432123456789XXX"[..]),
+                    Vec::from(&"XX12345678987654321XX"[..])
+                ],
+                &[sum_1_9.clone(), sum_9_1.clone()],
+                Relativity::Start
+            ),
+            vec![(vec![10], vec![RelativeIndex::FromStart(19)])]
+        );
+        assert_eq!(
+            chk.find_checksum_segments(
+                &[
+                    Vec::from("XXX12345678987654321AndSoOn"),
+                    Vec::from("ABC123456789.super."),
+                    Vec::from("Za!987654321ergrfrf")
+                ],
+                &[sum_1_9_1.clone(), sum_1_9.clone(), sum_9_1.clone()],
+                Relativity::End
+            ),
+            vec![(vec![3], vec![RelativeIndex::FromEnd(7)])]
+        )
+    }
+    #[allow(dead_code)]
+    pub fn check_example<D: Digest>(chk: &D, sum: D::Sum) {
+        assert_eq!(chk.digest(EXAMPLE_TEXT.as_bytes()).unwrap(), sum)
     }
 }
