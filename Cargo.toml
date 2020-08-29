@@ -9,8 +9,14 @@ edition = "2018"
 name = "libdelsum"
 path = "src/lib.rs"
 
+[[bin]]
+name = "delsum"
+path = "src/bin.rs"
+
 [dependencies]
 num-traits = "0.2"
+clap = "2"
+rayon = "1.1"
 
 [dev-dependencies]
 rand = "0.7"

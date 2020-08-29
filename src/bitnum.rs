@@ -1,8 +1,8 @@
 use num_traits::Num;
 use std::ops;
-// Me: can I have a trait for either u8, u16, u32, u64 or u128?
-// Mom: We have a trait for either u8, u16, u32, u64 or u128 at home
-// trait for either u8, u16, u32, u64 or u128 at home:
+/// Me: can I have a trait for either u8, u16, u32, u64 or u128?
+/// Mom: We have a trait for either u8, u16, u32, u64 or u128 at home
+/// trait for either u8, u16, u32, u64 or u128 at home:
 pub trait BitNum:
     Num
     + ops::BitXor<Output = Self>
@@ -19,6 +19,8 @@ pub trait BitNum:
     + std::fmt::Debug
     + std::fmt::LowerHex
     + std::fmt::UpperHex
+    + Send
+    + Sync
 {
     fn revbits(self) -> Self;
     fn bits(&self) -> usize;
@@ -71,6 +73,8 @@ impl BitNum for u128 {
     }
 }
 
+/// For the modsum, we need a wider type for temporary reduction modulo some number,
+/// so this is implemented in this type (and there's probably no need for an u128 ModSum anyway)
 pub trait Modnum: BitNum {
     fn add_mod(self, rhs: &Self, modulo: &Self) -> Self;
     fn mul_mod(self, rhs: &Self, modulo: &Self) -> Self;

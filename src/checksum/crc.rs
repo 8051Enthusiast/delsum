@@ -32,12 +32,12 @@ pub struct CRCBuilder<Sum: BitNum> {
 }
 
 impl<Sum: BitNum> CRCBuilder<Sum> {
-    /// Set the poly, mandatory
+    /// Sets the poly, mandatory
     pub fn poly(&mut self, p: Sum) -> &mut Self {
         self.poly = Some(p);
         self
     }
-    /// Set the width, mandatory
+    /// Sets the width, mandatory
     pub fn width(&mut self, w: usize) -> &mut Self {
         self.width = Some(w);
         self
@@ -73,7 +73,7 @@ impl<Sum: BitNum> CRCBuilder<Sum> {
         self
     }
     /// Build the object for the algorithm, generating the lookup table and verifying that
-    /// the parameters are correct.
+    /// the parameters are valid.
     pub fn build(&self) -> Result<CRC<Sum>, CheckBuilderErr> {
         let width = match self.width {
             None => return Err(CheckBuilderErr::MissingParameter("width")),
@@ -342,7 +342,7 @@ impl<S: BitNum> LinearCheck for CRC<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::checksum::tests::{check_example, test_find, test_shifts, test_prop};
+    use crate::checksum::tests::{check_example, test_find, test_prop, test_shifts};
     #[test]
     fn cms_16() {
         assert!(CRC::<u32>::with_options()

@@ -4,53 +4,73 @@ use crate::keyval::KeyValIter;
 use std::fmt::Display;
 use std::str::FromStr;
 
+/// The builder for doing a simple modular sum over bytes (i.e. `bytes.sum() % module`)
+///
+/// There are a number of parameters:
+/// * width: The number of bits in the sum type, at most 64
+/// * module: The sum is taken modulo this number
+/// * init: The initial number
+/// * check: The checksum of "123456789" (optional, gets checked at construction)
+/// * name: An optional name that gets used for display purposes
+///
+/// Note that a parameter to add at the end is not needed, since it is equivalent to `init`.
 #[derive(Clone)]
 pub struct ModSumBuilder<S: Modnum> {
     width: Option<usize>,
-    modulo: S,
+    module: S,
     init: S,
     check: Option<S>,
     name: Option<String>,
 }
 
 impl<S: Modnum> ModSumBuilder<S> {
+    /// The total width, in bits, of the sum. Mandatory.
+    ///
+    /// Can actually be wider than the sum itself, important is that `2^width >= module`.
     pub fn width(&mut self, w: usize) -> &mut Self {
         self.width = Some(w);
         self
     }
-    pub fn modulo(&mut self, m: S) -> &mut Self {
-        self.modulo = m;
+    /// The number by which the remainder is taken. Mandatory.
+    ///
+    /// If this is 0, it is equivalent to be `2^width`.
+    pub fn module(&mut self, m: S) -> &mut Self {
+        self.module = m;
         self
     }
+    /// The initial value, optional, defaults to 0.
     pub fn init(&mut self, i: S) -> &mut Self {
         self.init = i;
         self
     }
+    /// The checksum of "123456789", gets checked on creation.
     pub fn check(&mut self, c: S) -> &mut Self {
         self.check = Some(c);
         self
     }
+    /// An optional name that gets used for display purposes.
     pub fn name(&mut self, n: &str) -> &mut Self {
         self.name = Some(String::from(n));
         self
     }
+    /// Builds the algorithm, after validating the parameters.
     pub fn build(&self) -> Result<ModSum<S>, CheckBuilderErr> {
         let width = self
             .width
             .ok_or_else(|| CheckBuilderErr::MissingParameter("width"))?;
-        let modulo = if self.modulo == S::zero() && width < self.modulo.bits() {
+        let module = if self.module == S::zero() && width < self.module.bits() {
             S::one() << width
         } else {
-            self.modulo
+            self.module
         };
-        let init = if modulo != S::zero() {
-            self.init % modulo
+        let init = if module != S::zero() {
+            self.init % module
         } else {
             self.init
         };
         let s = ModSum {
             width,
-            modulo,
+            module,
             init,
             name: self.name.clone(),
         };
@@ -71,16 +91,17 @@ impl<S: Modnum> ModSumBuilder<S> {
 
 pub struct ModSum<S: Modnum> {
     width: usize,
-    modulo: S,
+    module: S,
     init: S,
     name: Option<String>,
 }
 
 impl<S: Modnum> ModSum<S> {
+    /// Creates a `ModSumBuilder`, for more information see its documentation.
     pub fn with_options() -> ModSumBuilder<S> {
         ModSumBuilder {
             width: None,
-            modulo: S::zero(),
+            module: S::zero(),
             init: S::zero(),
             check: None,
             name: None,
@@ -94,8 +115,8 @@ impl<Sum: Modnum> Display for ModSum<Sum> {
             Some(n) => write!(f, "{}", n),
             None => write!(
                 f,
-                "<modsum width={} modulo={:#x} init={:#x}>",
-                self.width, self.modulo, self.init
+                "<modsum width={} module={:#x} init={:#x}>",
+                self.width, self.module, self.init
             ),
         }
     }
@@ -106,7 +127,7 @@ impl<Sum: Modnum> FromStr for ModSum<Sum> {
     ///
     /// Example:
     ///
-    /// width=16 modulo=65535 init=0
+    /// width=16 module=65535 init=0
     fn from_str(s: &str) -> Result<ModSum<Sum>, CheckBuilderErr> {
         let mut sum = Self::with_options();
         for x in KeyValIter::new(s) {
@@ -116,9 +137,9 @@ impl<Sum: Modnum> FromStr for ModSum<Sum> {
             };
             let crc_op = match current_key.as_str() {
                 "width" => usize::from_str(&current_val).ok().map(|x| sum.width(x)),
-                "modulo" => Sum::from_dec_or_hex(&current_val)
+                "module" => Sum::from_dec_or_hex(&current_val)
                     .ok()
-                    .map(|x| sum.modulo(x)),
+                    .map(|x| sum.module(x)),
                 "init" => Sum::from_dec_or_hex(&current_val).ok().map(|x| sum.init(x)),
                 "name" => Some(sum.name(&current_val)),
                 _ => return Err(CheckBuilderErr::UnknownKey(current_key)),
@@ -139,7 +160,7 @@ impl<S: Modnum> Digest for ModSum<S> {
         self.init
     }
     fn dig_byte(&self, sum: Self::Sum, byte: u8) -> Self::Sum {
-        sum.add_mod(&S::from(byte), &self.modulo)
+        sum.add_mod(&S::from(byte), &self.module)
     }
     fn finalize(&self, sum: Self::Sum) -> Self::Sum {
         sum
@@ -148,6 +169,7 @@ impl<S: Modnum> Digest for ModSum<S> {
 
 impl<S: Modnum> LinearCheck for ModSum<S> {
     type Shift = ();
+    // shifts are trivial in this checksum type
     fn init_shift(&self) -> Self::Shift {}
     fn inc_shift(&self, _: Self::Shift) -> Self::Shift {}
     fn shift(&self, sum: Self::Sum, _: &Self::Shift) -> Self::Sum {
@@ -155,15 +177,17 @@ impl<S: Modnum> LinearCheck for ModSum<S> {
     }
     fn shift_n(&self, _: usize) -> Self::Shift {}
     fn add(&self, sum_a: Self::Sum, sum_b: &Self::Sum) -> Self::Sum {
-        sum_a.add_mod(sum_b, &self.modulo)
+        sum_a.add_mod(sum_b, &self.module)
     }
     fn negate(&self, sum: Self::Sum) -> Self::Sum {
         if sum == S::zero() {
             sum
-        } else if self.modulo == S::zero() {
+        } else if self.module == S::zero() {
+            // this is just -sum in the underlying type, but I don't have
+            // wrapping sub, so this should work as a substitute
             !sum + S::one()
         } else {
-            self.modulo - sum
+            self.module - sum
         }
     }
 }
@@ -193,7 +217,7 @@ mod tests {
     fn this() {
         let s = ModSum::<u8>::with_options()
             .width(5)
-            .modulo(17)
+            .module(17)
             .check(1)
             .build()
             .unwrap();
@@ -205,7 +229,7 @@ mod tests {
         let chk = ModSum::<u16>::with_options()
             .width(16)
             .init(0xff00)
-            .modulo(0xffff)
+            .module(0xffff)
             .check(0xde)
             .build()
             .unwrap();
@@ -219,7 +243,7 @@ mod tests {
         let merchantibility = chk.digest("MERCHANTABILITY".as_bytes()).unwrap();
         let ith_absolutely_ = chk.digest("ith ABSOLUTELY ".as_bytes()).unwrap();
         assert_eq!(
-            chk.find_checksum_segments(
+            chk.find_segments(
                 &[x, y],
                 &[merchantibility, ith_absolutely_],
                 Relativity::Start

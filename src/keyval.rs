@@ -90,9 +90,8 @@ impl<'a> Iterator for KeyValIter<'a> {
         }
         if is_kv_end {
             Some(Ok((current_key, current_val)))
-        } else
-        /* if self.stop */
-        {
+        } else {
+            // if self.stop
             match current_state {
                 State::Whitespace => None,
                 _ => Some(Err(current_key)),

@@ -5,6 +5,7 @@ pub mod modsum;
 use std::cmp::Ordering;
 use std::convert::TryFrom;
 use std::io::Read;
+use rayon::prelude::*;
 
 /// A basic trait for a checksum where
 /// * init gives an initial state
@@ -23,7 +24,7 @@ pub trait Digest {
     /// and gets converted to a Sum by finalize
     /// is not really feasable because of the operations LinearCheck would need to do
     /// both on Sums and interal States, so a single Sum type must be enough.
-    type Sum: Clone + Eq + Ord + std::fmt::Debug;
+    type Sum: Clone + Eq + Ord + std::fmt::Debug + Send + Sync;
     /// Gets an initial sum before the bytes are processed through the sum.
     ///
     /// For instance in the case of crc, the sum type is some integer and the returned value from
@@ -47,11 +48,12 @@ pub trait Digest {
     }
 }
 
+#[derive(Copy, Clone)]
 pub enum Relativity {
     Start,
     End,
 }
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum RelativeIndex {
     FromStart(usize),
     FromEnd(usize),
@@ -84,7 +86,7 @@ pub enum RelativeIndex {
 /// * all methods without default implementations (including those from `Digest`) should run in constant time (assuming constant `Shift`, `Sum` types)
 ///
 /// Basically, it is a graded ring or something idk.
-pub trait LinearCheck: Digest {
+pub trait LinearCheck: Digest + Send + Sync {
     /// The Shift type (see trait documentation for more).
     type Shift: Clone;
     /// The initial shift corresponding to the identity shift of 0 (see trait documentation for more).
@@ -175,12 +177,12 @@ pub trait LinearCheck: Digest {
     /// This function has a high space usage per byte: for `n` bytes, it uses a total space of `n*(8 + 2*sizeof(Sum))` bytes.
     /// The time is bounded by the runtime of the sort algorithm, which is around `n*log(n)`.
     /// If Hashtables were used, it could be done in linear time, but they take too much space.
-    fn find_checksum_segments(
+    fn find_segments(
         &self,
         bytes: &[Vec<u8>],
         sum: &[Self::Sum],
         rel: Relativity,
-    ) -> Vec<(Vec<usize>, Vec<RelativeIndex>)> {
+    ) -> RangePairs {
         if bytes.is_empty() {
             return Vec::new();
         }
@@ -194,8 +196,8 @@ pub trait LinearCheck: Digest {
             Relativity::End => (b.len() - min_len)..b.len(),
         };
         let (start_presums, end_presums) = bytes
-            .iter()
-            .zip(sum.iter())
+            .par_iter()
+            .zip(sum.par_iter())
             .map(|(b, s)| self.presums(b, &s, 0..min_len, end_range(&b)))
             .unzip();
 
@@ -204,22 +206,29 @@ pub trait LinearCheck: Digest {
 
         let mut ret_vec = Vec::new();
         for (a, b) in start_preset.equal_pairs(&end_preset) {
-            let starts = a.iter().map(|x| usize::try_from(*x).unwrap()).collect();
-            let ends = match rel {
-                Relativity::Start => b
-                    .iter()
-                    .map(|x| RelativeIndex::FromStart(usize::try_from(*x).unwrap() + 1))
-                    .collect(),
-                Relativity::End => b
-                    .iter()
-                    .map(|x| RelativeIndex::FromEnd(min_len - 1 - usize::try_from(*x).unwrap()))
-                    .collect(),
-            };
-            ret_vec.push((starts, ends));
+            let starts: Vec<_> = a.iter().map(|x| usize::try_from(*x).unwrap()).collect();
+            let ends: Vec<_> = b.iter().map(|x| usize::try_from(*x).unwrap() + 1).collect();
+            let min_start = *starts.iter().min().unwrap_or(&min_len);
+            let max_end = *ends.iter().max().unwrap_or(&0);
+            let rel_ends: Vec<_> = ends
+                .into_iter()
+                .filter(|x| x > &min_start)
+                .map(|x| match rel {
+                    Relativity::Start => RelativeIndex::FromStart(x),
+                    Relativity::End => RelativeIndex::FromEnd(min_len - x)
+                })
+                .collect();
+            let rel_starts = starts.into_iter().filter(|x| x < &max_end).collect();
+            if !rel_ends.is_empty() {
+                ret_vec.push((rel_starts, rel_ends));
+            }
         }
         ret_vec
     }
 }
+
+pub type RangePairs = Vec<(Vec<usize>, Vec<RelativeIndex>)>;
+
 
 /// A struct for helping to sort and get duplicates of arrays of arrays.
 #[derive(Debug)]
@@ -228,7 +237,7 @@ struct PresumSet<Sum: Clone + Eq + Ord + std::fmt::Debug> {
     presum: Vec<Vec<Sum>>,
 }
 
-impl<Sum: Clone + Eq + Ord + std::fmt::Debug> PresumSet<Sum> {
+impl<Sum: Clone + Eq + Ord + std::fmt::Debug + Send + Sync> PresumSet<Sum> {
     /// Gets a new PresumSet. Gets sorted on construction.
     fn new(presum: Vec<Vec<Sum>>) -> Self {
         let firstlen = presum[0].len();
@@ -239,7 +248,7 @@ impl<Sum: Clone + Eq + Ord + std::fmt::Debug> PresumSet<Sum> {
         // vector of all indices
         let mut idxvec: Vec<_> = (0..=(firstlen - 1) as u32).collect();
         // get a permutation vector representing the sort of the presum arrays first by value and then by index
-        idxvec.sort_unstable_by(|a, b| Self::cmp_idx(&presum, *a, &presum, *b).then(a.cmp(&b)));
+        idxvec.par_sort_unstable_by(|a, b| Self::cmp_idx(&presum, *a, &presum, *b).then(a.cmp(&b)));
         Self {
             idx: idxvec,
             presum,
@@ -343,6 +352,8 @@ impl std::fmt::Display for CheckBuilderErr {
         }
     }
 }
+
+impl std::error::Error for CheckBuilderErr {}
 #[allow(dead_code)]
 #[cfg(test)]
 pub(crate) mod tests {
@@ -399,7 +410,7 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
         let sum_9_1 = chk.digest(&b"987654321"[..]).unwrap();
         let sum_1_9_1 = chk.digest(&b"12345678987654321"[..]).unwrap();
         assert_eq!(
-            chk.find_checksum_segments(
+            chk.find_segments(
                 &[Vec::from(&"a123456789X1235H123456789Y"[..])],
                 &[sum_1_9.clone()],
                 Relativity::Start
@@ -410,7 +421,7 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
             ]
         );
         assert_eq!(
-            chk.find_checksum_segments(
+            chk.find_segments(
                 &[
                     Vec::from(&"XX98765432123456789XXX"[..]),
                     Vec::from(&"XX12345678987654321XX"[..])
@@ -421,7 +432,7 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
             vec![(vec![10], vec![RelativeIndex::FromStart(19)])]
         );
         assert_eq!(
-            chk.find_checksum_segments(
+            chk.find_segments(
                 &[
                     Vec::from("XXX12345678987654321AndSoOn"),
                     Vec::from("ABC123456789.super."),
@@ -446,7 +457,7 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
         let mut s = chk.init();
         while test_values.len() < 100 {
             s = chk.dig_byte(s, rng.gen());
-            if rng.gen_bool(0.1) {
+            if rng.gen_bool(0.01) {
                 test_values.push(s.clone());
             }
         }
@@ -470,35 +481,53 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
         assert_eq!(
             chk.add(chk.add(a.clone(), b), c),
             chk.add(a.clone(), &chk.add(b.clone(), c)),
-            "Associativity Fail: ({:x?} + {:x?}) + {:x?} != {:x?} + ({:x?} + {:x?})", a, b, c, a, b, c
+            "Associativity Fail: ({:x?} + {:x?}) + {:x?} != {:x?} + ({:x?} + {:x?})",
+            a,
+            b,
+            c,
+            a,
+            b,
+            c
         );
     }
     fn check_neutral<L: LinearCheck>(chk: &L, e: &L::Sum, a: &L::Sum) {
         assert_eq!(
             chk.add(a.clone(), e),
             a.clone(),
-            "Neutral Element Fail: {:x?} + {:x?} != {:x?}", a, e, a
+            "Neutral Element Fail: {:x?} + {:x?} != {:x?}",
+            a,
+            e,
+            a
         );
     }
     fn check_commut<L: LinearCheck>(chk: &L, a: &L::Sum, b: &L::Sum) {
         assert_eq!(
             chk.add(b.clone(), a),
             chk.add(a.clone(), b),
-            "Commutativity Fail: {:x?} + {:x?} != {:x?} + {:x?}", b, a, a, b
+            "Commutativity Fail: {:x?} + {:x?} != {:x?} + {:x?}",
+            b,
+            a,
+            a,
+            b
         );
     }
     fn check_invert<L: LinearCheck>(chk: &L, e: &L::Sum, a: &L::Sum) {
         assert_eq!(
             chk.add(chk.negate(a.clone()), a),
             e.clone(),
-            "Inversion Fail: -{:x?} + {:x?} != {:x?}", a, a, e
+            "Inversion Fail: -{:x?} + {:x?} != {:x?}",
+            a,
+            a,
+            e
         );
     }
     fn check_shift1<L: LinearCheck>(chk: &L, a: &L::Sum) {
         assert_eq!(
             chk.shift(a.clone(), &chk.shift_n(1)),
             chk.dig_byte(a.clone(), 0u8),
-            "Shift1 Fail: shift({:x?}, shift_n1(1)) != dig_byte({:x?}, 0u8)", a, a
+            "Shift1 Fail: shift({:x?}, shift_n1(1)) != dig_byte({:x?}, 0u8)",
+            a,
+            a
         );
     }
     fn check_shiftn<L: LinearCheck>(chk: &L, a: &L::Sum) {
@@ -533,7 +562,10 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
         assert_eq!(
             chk.add(chk.finalize(a.clone()), &chk.negate(a.clone())),
             chk.finalize(e.clone()),
-            "Finalize Linearity Fail: finalize({:x?}) - {:x?} != {:x?}", a, a, &chk.finalize(e.clone())
+            "Finalize Linearity Fail: finalize({:x?}) - {:x?} != {:x?}",
+            a,
+            a,
+            &chk.finalize(e.clone())
         )
     }
 }
