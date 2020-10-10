@@ -4,6 +4,19 @@ version = "0.1.0"
 authors = ["8051Enthusiast <8051enthusiast@protonmail.com>"]
 edition = "2018"
 
+[dependencies]
+num-traits = "0.2"
+clap = "2"
+rayon = "1.1"
+poly = { path = "poly" }
+
+[dev-dependencies]
+rand = "0.7"
+
+[workspace]
+members = [
+    "poly",
+]
 
 [lib]
 name = "libdelsum"
@@ -12,11 +25,3 @@ path = "src/lib.rs"
 [[bin]]
 name = "delsum"
 path = "src/bin.rs"
-
-[dependencies]
-num-traits = "0.2"
-clap = "2"
-rayon = "1.1"
-
-[dev-dependencies]
-rand = "0.7"
