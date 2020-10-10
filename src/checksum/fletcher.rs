@@ -158,7 +158,7 @@ impl<Sum: BitNum> Display for Fletcher<Sum> {
             Some(n) => write!(f, "{}", n),
             None => write!(
                 f,
-                "<fletcher width={} module={:#x} init={:#x} addout={:#x} swap={}>",
+                "fletcher width={} module={:#x} init={:#x} addout={:#x} swap={}",
                 2 * self.hwidth,
                 self.module,
                 self.init,
@@ -197,6 +197,35 @@ impl<Sum: BitNum> Fletcher<Sum> {
     }
 }
 
+impl<Sum: BitNum> FromStr for FletcherBuilder<Sum> {
+    /// See documentation of FromStr on Fletcher<Sum>
+    fn from_str(s: &str) -> Result<FletcherBuilder<Sum>, CheckBuilderErr> {
+        let mut fletch = Fletcher::<Sum>::with_options();
+        for x in KeyValIter::new(s) {
+            let (current_key, current_val) = match x {
+                Err(key) => return Err(CheckBuilderErr::MalformedString(key)),
+                Ok(s) => s,
+            };
+            let fletch_op = match current_key.as_str() {
+                "width" => usize::from_str(&current_val).ok().map(|x| fletch.width(x)),
+                "module" => Sum::from_hex(&current_val).ok().map(|x| fletch.module(x)),
+                "init" => Sum::from_hex(&current_val).ok().map(|x| fletch.init(x)),
+                "addout" => Sum::from_hex(&current_val).ok().map(|x| fletch.addout(x)),
+                "swap" => bool::from_str(&current_val).ok().map(|x| fletch.swap(x)),
+                "check" => Sum::from_hex(&current_val).ok().map(|x| fletch.check(x)),
+                "name" => Some(fletch.name(&current_val)),
+                _ => return Err(CheckBuilderErr::UnknownKey(current_key)),
+            };
+            match fletch_op {
+                Some(f) => fletch = f.clone(),
+                None => return Err(CheckBuilderErr::MalformedString(current_key)),
+            }
+        }
+        Ok(fletch)
+    }
+    type Err = CheckBuilderErr;
+}
+
 impl<Sum: BitNum> FromStr for Fletcher<Sum> {
     /// Construct a new fletcher sum algotithm
     ///
@@ -208,36 +237,7 @@ impl<Sum: BitNum> FromStr for Fletcher<Sum> {
     /// Fletcher::<u32>::from_str("width=32 init=1 module=0xfff1 name=\"adler-32\"").is_ok();
     /// ```
     fn from_str(s: &str) -> Result<Fletcher<Sum>, CheckBuilderErr> {
-        let mut fletch = Self::with_options();
-        for x in KeyValIter::new(s) {
-            let (current_key, current_val) = match x {
-                Err(key) => return Err(CheckBuilderErr::MalformedString(key)),
-                Ok(s) => s,
-            };
-            let fletch_op = match current_key.as_str() {
-                "width" => usize::from_str(&current_val).ok().map(|x| fletch.width(x)),
-                "module" => Sum::from_dec_or_hex(&current_val)
-                    .ok()
-                    .map(|x| fletch.module(x)),
-                "init" => Sum::from_dec_or_hex(&current_val)
-                    .ok()
-                    .map(|x| fletch.init(x)),
-                "addout" => Sum::from_dec_or_hex(&current_val)
-                    .ok()
-                    .map(|x| fletch.addout(x)),
-                "swap" => bool::from_str(&current_val).ok().map(|x| fletch.swap(x)),
-                "check" => Sum::from_dec_or_hex(&current_val)
-                    .ok()
-                    .map(|x| fletch.check(x)),
-                "name" => Some(fletch.name(&current_val)),
-                _ => return Err(CheckBuilderErr::UnknownKey(current_key)),
-            };
-            match fletch_op {
-                Some(f) => fletch = f.clone(),
-                None => return Err(CheckBuilderErr::MalformedString(current_key)),
-            }
-        }
-        fletch.build()
+        FletcherBuilder::<Sum>::from_str(s)?.build()
     }
     type Err = CheckBuilderErr;
 }

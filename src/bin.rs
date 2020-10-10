@@ -1,16 +1,24 @@
 use clap::{App, Arg, ArgGroup};
-use libdelsum::find_checksum_segments;
+use libdelsum::{find_checksum_segments, find_algorithm};
 use libdelsum::checksum::{Relativity, RelativeIndex};
 //use rayon::prelude::*;
 use std::fs::File;
 use std::io::Read;
 use std::process::exit;
+use rayon::prelude::*;
 
 fn main() {
     let matches = App::new("delsum")
         .version("0.1.0")
         .author("8051Enthusiast <8051enthusiast@protonmail.com>")
         .about("Finds segments with given checksums inside files")
+        .arg(
+            Arg::with_name("verbose")
+                .short("v")
+                .long("verbose")
+                .multiple(true)
+                .help("put some info on what the program is currently doing to stderr")
+        )
         .arg(
             Arg::with_name("model")
                 .short("m")
@@ -50,6 +58,12 @@ fn main() {
                 .arg("end")
         )
         .arg(
+            Arg::with_name("parallel")
+                .help("try doing more parallelism, in turn using more memory")
+                .long("parallel")
+                .short("p")
+        )
+        .arg(
             Arg::with_name("checksums")
                 .help("a comma-separated list of checksums to match")
                 .short("c")
@@ -59,12 +73,19 @@ fn main() {
                 .takes_value(true),
         )
         .arg(
+            Arg::with_name("reverse")
+                .help("reverse")
+                .short("r")
+                .long("reverse")
+        )
+        .arg(
             Arg::with_name("files")
                 .help("the files to find checksummed segments of")
                 .index(1)
                 .min_values(1),
         )
         .get_matches();
+    let verbosity = matches.occurrences_of("verbose");
     let files = matches.values_of_os("files").unwrap();
     let mut bytes = Vec::new();
     for file in files {
@@ -107,7 +128,10 @@ fn main() {
     } else {
         Relativity::Start
     };
-    models.iter().for_each(|model| {
+    let parallel = matches.is_present("parallel");
+    let reverse = matches.is_present("reverse");
+    let byte_slices: Vec<_> = bytes.iter().map(Vec::<u8>::as_slice).collect();
+    let subsum_print = |model| {
         let segs = find_checksum_segments(model, &bytes, checksums, rel).unwrap_or_else(|err| {
             eprintln!("Could not process model '{}': {}", model, err);
             exit(1);
@@ -123,5 +147,29 @@ fn main() {
                 println!("\t{}:{}", a_list, b_list);
             }
         }
-    });
+    };
+    let algorithms = |model: &str| {
+        find_algorithm(model, &byte_slices, checksums, verbosity).unwrap_or_else(|err| {
+            eprintln!("Could not process model '{}': {}", model, err);
+            exit(1);
+        })
+    };
+    match (reverse, parallel) {
+        (true, true) => {
+            models.par_iter().for_each(|x| algorithms(x).find_all_para().for_each(|algorithm| {
+                println!("{}", algorithm);
+            }));
+        },
+        (true, false) => {
+            models.iter().for_each(|x| algorithms(x).find_all().for_each(|algorithm| {
+                println!("{}", algorithm);
+            }));
+        },
+        (false, true) => {
+            models.par_iter().map(|x| x.as_str()).for_each(subsum_print);
+        },
+        (false, false) => {
+            models.iter().map(|x| x.as_str()).for_each(subsum_print);
+        },
+    }
 }

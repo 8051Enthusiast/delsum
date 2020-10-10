@@ -1,4 +1,4 @@
-#include "poly.hh"
+#include "poly/include/poly.hh"
 #include "poly/src/lib.rs.h"
 #include <NTL/GF2X.h>
 #include <NTL/GF2E.h>
@@ -33,10 +33,10 @@ namespace poly
     {
         return std::make_unique<Poly>(p);
     }
-    std::unique_ptr<std::vector<PolyI64Pair>> squarefree_decomp(const Poly &p)
+    std::unique_ptr<std::vector<PolyI64Pair>> factor(const Poly &p, uint64_t verbosity)
     {
         auto v = std::vector<PolyI64Pair>();
-        auto decomp = NTL::SquareFreeDecomp(p.int_pol);
+        auto decomp = NTL::CanZass(p.int_pol, verbosity);
         for (auto x : decomp)
         {
             auto poly = Poly();
@@ -45,32 +45,21 @@ namespace poly
         }
         return std::make_unique<std::vector<PolyI64Pair>>(std::move(v));
     }
-    std::unique_ptr<std::vector<Poly>> equdeg_decomp(const Poly &p, int64_t d)
-    {
-        auto v = std::vector<Poly>();
-        auto edf = NTL::EDF(p.int_pol, d);
-        for (auto x : edf)
-        {
-            auto poly = Poly();
-            poly.int_pol = x;
-            v.push_back(std::move(poly));
-        }
-        return std::make_unique<std::vector<Poly>>(std::move(v));
-    }
 
-    std::unique_ptr<Poly> new_poly_shifted(rust::Slice<uint8_t> bytes, long shift)
+    std::unique_ptr<Poly> new_poly_shifted(rust::Slice<uint8_t> bytes, long shift, bool msb_first)
     {
         auto ret = Poly();
         ret.int_pol = NTL::GF2X();
-        ret.int_pol.SetMaxLength(shift + bytes.length() * 8);
+        ret.int_pol.SetLength(shift + bytes.length() * 8);
         for (size_t i = 0; i < bytes.length(); i++)
         {
             auto current_byte = bytes.data()[bytes.length() - 1 - i];
             for (int j = 0; j < 8; j++)
             {
-                auto current_bit = (current_byte >> j) & 1;
+                auto bit_pos = msb_first ? j : (7 - j);
+                auto current_bit = (current_byte >> bit_pos) & 1;
                 auto bit_index = shift + 8 * i + j;
-                NTL::SetCoeff(ret.int_pol, bit_index, current_bit);
+                ret.int_pol[bit_index] = current_bit;
             }
         }
         ret.int_pol.normalize();
@@ -79,7 +68,7 @@ namespace poly
 
     std::unique_ptr<Poly> new_poly(rust::Slice<uint8_t> bytes)
     {
-        return new_poly_shifted(bytes, 0);
+        return new_poly_shifted(bytes, 0, true);
     }
     std::unique_ptr<Poly> new_zero()
     {
@@ -87,6 +76,32 @@ namespace poly
         return std::make_unique<Poly>(ret);
     }
 
+    std::unique_ptr<std::vector<uint8_t>> Poly::to_bytes(long min_bytes) const
+    {
+        auto d = NTL::deg(int_pol);
+        auto n_bytes = d / 8 + 1;
+        if (d < 0) {
+            n_bytes = 0;
+        }
+        auto v = std::vector<uint8_t>();
+        auto amount_of_bytes = n_bytes > min_bytes ? n_bytes : min_bytes;
+        v.reserve(amount_of_bytes);
+        for (long i = 0; i < amount_of_bytes - n_bytes; i++) {
+            v.push_back(0);
+        }
+        uint8_t current_byte = 0;
+        for (long i = d; i >= 0; i--)
+        {
+            current_byte <<= 1;
+            current_byte |= (uint8_t)NTL::rep(int_pol[i]);
+            if (i % 8 == 0)
+            {
+                v.push_back(current_byte);
+                current_byte = 0;
+            }
+        }
+        return std::make_unique<std::vector<uint8_t>>(v);
+    }
     std::unique_ptr<Poly> add(const Poly &b, const Poly &c)
     {
         auto ret = Poly();
@@ -132,6 +147,12 @@ namespace poly
         NTL::GCD(ret.int_pol, b.int_pol, c.int_pol);
         return std::make_unique<Poly>(ret);
     }
+    std::unique_ptr<Poly> xgcd(Poly &x, Poly &y, const Poly &b, const Poly &c)
+    {
+        auto ret = Poly();
+        NTL::XGCD(ret.int_pol, x.int_pol, y.int_pol, b.int_pol, c.int_pol);
+        return std::make_unique<Poly>(ret);
+    }
     void Poly::gcd_to(const Poly &b)
     {
         NTL::GCD(int_pol, int_pol, b.int_pol);
@@ -152,6 +173,21 @@ namespace poly
         q.int_pol = NTL::power(p.int_pol, n);
         return std::make_unique<Poly>(q);
     }
+    std::unique_ptr<Poly> shift(const Poly &p, long n)
+    {
+        auto q = Poly();
+        if (n >= 0) {
+            q.int_pol = NTL::LeftShift(p.int_pol, n);
+        } else {
+            q.int_pol = NTL::RightShift(p.int_pol, -n);
+        }
+        return std::make_unique<Poly>(q);
+    }
+    void Poly::sqr()
+    {
+        int_pol = NTL::sqr(int_pol);
+    }
+
     // PolyRem stuff
 
     PolyRem::PolyRem(const Poly &p)

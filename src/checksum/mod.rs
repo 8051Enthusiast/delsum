@@ -2,10 +2,10 @@ pub mod crc;
 pub mod fletcher;
 pub mod modsum;
 
+use rayon::prelude::*;
 use std::cmp::Ordering;
 use std::convert::TryFrom;
 use std::io::Read;
-use rayon::prelude::*;
 
 /// A basic trait for a checksum where
 /// * init gives an initial state
@@ -177,12 +177,7 @@ pub trait LinearCheck: Digest + Send + Sync {
     /// This function has a high space usage per byte: for `n` bytes, it uses a total space of `n*(8 + 2*sizeof(Sum))` bytes.
     /// The time is bounded by the runtime of the sort algorithm, which is around `n*log(n)`.
     /// If Hashtables were used, it could be done in linear time, but they take too much space.
-    fn find_segments(
-        &self,
-        bytes: &[Vec<u8>],
-        sum: &[Self::Sum],
-        rel: Relativity,
-    ) -> RangePairs {
+    fn find_segments(&self, bytes: &[Vec<u8>], sum: &[Self::Sum], rel: Relativity) -> RangePairs {
         if bytes.is_empty() {
             return Vec::new();
         }
@@ -215,7 +210,7 @@ pub trait LinearCheck: Digest + Send + Sync {
                 .filter(|x| x > &min_start)
                 .map(|x| match rel {
                     Relativity::Start => RelativeIndex::FromStart(x),
-                    Relativity::End => RelativeIndex::FromEnd(min_len - x)
+                    Relativity::End => RelativeIndex::FromEnd(min_len - x),
                 })
                 .collect();
             let rel_starts = starts.into_iter().filter(|x| x < &max_end).collect();
@@ -228,7 +223,6 @@ pub trait LinearCheck: Digest + Send + Sync {
 }
 
 pub type RangePairs = Vec<(Vec<usize>, Vec<RelativeIndex>)>;
-
 
 /// A struct for helping to sort and get duplicates of arrays of arrays.
 #[derive(Debug)]

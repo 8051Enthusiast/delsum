@@ -115,11 +115,37 @@ impl<Sum: Modnum> Display for ModSum<Sum> {
             Some(n) => write!(f, "{}", n),
             None => write!(
                 f,
-                "<modsum width={} module={:#x} init={:#x}>",
+                "modsum width={} module={:#x} init={:#x}",
                 self.width, self.module, self.init
             ),
         }
     }
+}
+
+impl<Sum: Modnum> FromStr for ModSumBuilder<Sum> {
+    /// See FromStr for ModSum<Sum>
+    fn from_str(s: &str) -> Result<ModSumBuilder<Sum>, CheckBuilderErr> {
+        let mut sum = ModSum::<Sum>::with_options();
+        for x in KeyValIter::new(s) {
+            let (current_key, current_val) = match x {
+                Err(key) => return Err(CheckBuilderErr::MalformedString(key)),
+                Ok(s) => s,
+            };
+            let crc_op = match current_key.as_str() {
+                "width" => usize::from_str(&current_val).ok().map(|x| sum.width(x)),
+                "module" => Sum::from_hex(&current_val).ok().map(|x| sum.module(x)),
+                "init" => Sum::from_hex(&current_val).ok().map(|x| sum.init(x)),
+                "name" => Some(sum.name(&current_val)),
+                _ => return Err(CheckBuilderErr::UnknownKey(current_key)),
+            };
+            match crc_op {
+                Some(c) => sum = c.clone(),
+                None => return Err(CheckBuilderErr::MalformedString(current_key)),
+            }
+        }
+        Ok(sum)
+    }
+    type Err = CheckBuilderErr;
 }
 
 impl<Sum: Modnum> FromStr for ModSum<Sum> {
@@ -129,27 +155,7 @@ impl<Sum: Modnum> FromStr for ModSum<Sum> {
     ///
     /// width=16 module=65535 init=0
     fn from_str(s: &str) -> Result<ModSum<Sum>, CheckBuilderErr> {
-        let mut sum = Self::with_options();
-        for x in KeyValIter::new(s) {
-            let (current_key, current_val) = match x {
-                Err(key) => return Err(CheckBuilderErr::MalformedString(key)),
-                Ok(s) => s,
-            };
-            let crc_op = match current_key.as_str() {
-                "width" => usize::from_str(&current_val).ok().map(|x| sum.width(x)),
-                "module" => Sum::from_dec_or_hex(&current_val)
-                    .ok()
-                    .map(|x| sum.module(x)),
-                "init" => Sum::from_dec_or_hex(&current_val).ok().map(|x| sum.init(x)),
-                "name" => Some(sum.name(&current_val)),
-                _ => return Err(CheckBuilderErr::UnknownKey(current_key)),
-            };
-            match crc_op {
-                Some(c) => sum = c.clone(),
-                None => return Err(CheckBuilderErr::MalformedString(current_key)),
-            }
-        }
-        sum.build()
+        ModSumBuilder::from_str(s)?.build()
     }
     type Err = CheckBuilderErr;
 }
@@ -194,8 +200,8 @@ impl<S: Modnum> LinearCheck for ModSum<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::checksum::tests::{test_prop, test_shifts};
     use crate::checksum::{RelativeIndex, Relativity};
-    use crate::checksum::tests::{test_shifts, test_prop};
     #[test]
     fn screw() {
         let s = ModSum::<u8>::with_options()

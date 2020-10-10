@@ -3,20 +3,38 @@ pub mod checksum;
 mod keyval;
 use bitnum::BitNum;
 use checksum::CheckBuilderErr;
-use checksum::{crc::CRC, fletcher::Fletcher, modsum::ModSum, LinearCheck, RangePairs, Relativity};
+use checksum::{
+    crc::{CRCBuilder, CRC},
+    fletcher::Fletcher,
+    modsum::ModSum,
+    LinearCheck, RangePairs, Relativity,
+};
+use rayon::prelude::*;
 use std::str::FromStr;
+#[cfg(test)]
+#[macro_use(quickcheck)]
+extern crate quickcheck_macros;
 
 /// For figuring out what type of integer to use, we need to parse the width from the
 /// model string, but to parse the model string, we need to know the integer type,
 /// so it is done here separately.
-fn find_width(s: &str) -> Result<usize, CheckBuilderErr> {
-    for x in keyval::KeyValIter::new(s) {
+/// We also need the prefix to find out what algorithm to use
+fn find_prefix_width(s: &str) -> Result<(&str, usize, &str), CheckBuilderErr> {
+    let stripped = s.trim_start();
+    // it is done like this to ensure that no non-whitespace (blackspace?) is left at the end of the prefix
+    let pref = stripped.split_whitespace().next();
+    let (prefix, rest) = match PREFIXES.iter().find(|x| Some(**x) == pref) {
+        Some(p) => (*p, &stripped[p.len()..]),
+        None => return Err(CheckBuilderErr::MalformedString("algorithm".to_owned())),
+    };
+    for x in keyval::KeyValIter::new(rest) {
         match x {
             Err(k) => return Err(CheckBuilderErr::MalformedString(k)),
             Ok((k, v)) => {
                 if &k == "width" {
                     return usize::from_str_radix(&v, 10)
-                        .map_err(|_| CheckBuilderErr::MalformedString(k));
+                        .map_err(|_| CheckBuilderErr::MalformedString(k))
+                        .map(|width| (prefix, width, rest));
                 }
             }
         }
@@ -35,13 +53,11 @@ where
     L: LinearCheck + FromStr<Err = CheckBuilderErr>,
     L::Sum: BitNum,
 {
-    let mut sum_array = Vec::new();
-    for s in sum.split(|x| x == ',') {
-        sum_array.push(
-            L::Sum::from_dec_or_hex(s)
-                .map_err(|_| CheckBuilderErr::MalformedString(String::default()))?,
-        );
-    }
+    let sum_array = sum
+        .split(|x| x == ',')
+        .map(L::Sum::from_hex)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| CheckBuilderErr::MalformedString(String::default()))?;
     Ok(L::from_str(spec)?.find_segments(bytes, &sum_array, rel))
 }
 
@@ -70,14 +86,7 @@ pub fn find_checksum_segments(
     sum: &str,
     rel: Relativity,
 ) -> Result<RangePairs, CheckBuilderErr> {
-    let stripped = strspec.trim_start();
-    // it is done like this to ensure that no non-whitespace (blackspace?) is left at the end of the prefix
-    let pref = stripped.split_whitespace().next();
-    let (prefix, rest) = match PREFIXES.iter().find(|x| Some(**x) == pref) {
-        Some(p) => (*p, &stripped[p.len()..]),
-        None => return Err(CheckBuilderErr::MalformedString(String::default())),
-    };
-    let width = find_width(rest)?;
+    let (prefix, width, rest) = find_prefix_width(strspec)?;
     match (width, prefix) {
         (1..=8, "crc") => find_segment_str::<CRC<u8>>(rest, bytes, sum, rel),
         (9..=16, "crc") => find_segment_str::<CRC<u16>>(rest, bytes, sum, rel),
@@ -95,4 +104,60 @@ pub fn find_checksum_segments(
         (65..=128, "fletcher") => find_segment_str::<Fletcher<u128>>(rest, bytes, sum, rel),
         _ => Err(CheckBuilderErr::ValueOutOfRange("width")),
     }
+}
+
+enum BuilderEnum {
+    CRC(CRCBuilder<u128>),
+}
+
+pub struct AlgorithmFinder<'a> {
+    pairs: Vec<(&'a [u8], u128)>,
+    spec: BuilderEnum,
+    verbosity: u64,
+}
+
+impl<'a> AlgorithmFinder<'a> {
+    pub fn find_all<'b>(&'b self) -> impl Iterator<Item = String> + 'b {
+        match &self.spec {
+            BuilderEnum::CRC(crc) => {
+                checksum::crc::rev::reverse_crc(crc, self.pairs.as_slice(), self.verbosity)
+                    .map(|x| x.to_string())
+            }
+        }
+    }
+    pub fn find_all_para<'b>(&'b self) -> impl ParallelIterator<Item = String> + 'b {
+        match &self.spec {
+            BuilderEnum::CRC(crc) => {
+                checksum::crc::rev::reverse_crc_para(crc, self.pairs.as_slice(), self.verbosity)
+                    .map(|x| x.to_string())
+            }
+        }
+    }
+}
+
+pub fn find_algorithm<'a>(
+    strspec: &str,
+    bytes: &'a [&[u8]],
+    sum: &str,
+    verbosity: u64,
+) -> Result<AlgorithmFinder<'a>, CheckBuilderErr> {
+    let (prefix, _, rest) = find_prefix_width(strspec)?;
+    if prefix != "crc" {
+        unimplemented!()
+    }
+    let spec = CRCBuilder::<u128>::from_str(rest)?;
+    let sums = sum
+        .split(|x| x == ',')
+        .map(u128::from_hex)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| CheckBuilderErr::MalformedString(String::default()))?;
+    if sums.len() != bytes.len() {
+        panic!("Help how do I error handle this?")
+    }
+    let pairs: Vec<_> = bytes.into_iter().cloned().zip(sums.into_iter()).collect();
+    Ok(AlgorithmFinder {
+        spec: BuilderEnum::CRC(spec),
+        pairs,
+        verbosity,
+    })
 }

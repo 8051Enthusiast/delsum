@@ -1,3 +1,4 @@
+pub mod rev;
 use super::{CheckBuilderErr, Digest, LinearCheck};
 use crate::bitnum::BitNum;
 use crate::keyval::KeyValIter;
@@ -19,14 +20,14 @@ use std::str::FromStr;
 ///
 /// For more information on the parameters (and CRCs in general), see "A PAINLESS GUIDE CRC ERROR DETECTION ALGORITHMS"
 /// or https://reveng.sourceforge.io/crc-catalogue/legend.htm (which is also a source of parameters for various common algorithms)
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct CRCBuilder<Sum: BitNum> {
     width: Option<usize>,
     poly: Option<Sum>,
-    init: Sum,
-    xorout: Sum,
-    refin: bool,
-    refout: bool,
+    init: Option<Sum>,
+    xorout: Option<Sum>,
+    refin: Option<bool>,
+    refout: Option<bool>,
     check: Option<Sum>,
     name: Option<String>,
 }
@@ -44,22 +45,22 @@ impl<Sum: BitNum> CRCBuilder<Sum> {
     }
     /// Sets the `init` parameter, default is 0.
     pub fn init(&mut self, s: Sum) -> &mut Self {
-        self.init = s;
+        self.init = Some(s);
         self
     }
     /// Sets the `xorout` parameter, default is 0.
     pub fn xorout(&mut self, s: Sum) -> &mut Self {
-        self.xorout = s;
+        self.xorout = Some(s);
         self
     }
     /// Sets the `refin` parameter, default is false.
     pub fn refin(&mut self, i: bool) -> &mut Self {
-        self.refin = i;
+        self.refin = Some(i);
         self
     }
     /// Sets the `refout` parameter, default is false.
     pub fn refout(&mut self, o: bool) -> &mut Self {
-        self.refout = o;
+        self.refout = Some(o);
         self
     }
     /// Sets the `check` parameter, no check is done if this is left out.
@@ -85,6 +86,10 @@ impl<Sum: BitNum> CRCBuilder<Sum> {
             None => return Err(CheckBuilderErr::MissingParameter("poly")),
             Some(p) => p,
         };
+        let init = self.init.unwrap_or(Sum::zero());
+        let xorout = self.xorout.unwrap_or(Sum::zero());
+        let refin = self.refin.unwrap_or(false);
+        let refout = self.refout.unwrap_or(false);
         // the type needs at least 8 bit so that we can comfortably add bytes to it
         // (i guess it is kind of already impliead by the from<u8> trait)
         if poly.bits() < width || poly.bits() < 8 {
@@ -97,19 +102,19 @@ impl<Sum: BitNum> CRCBuilder<Sum> {
         if poly & !mask != Sum::zero() {
             return Err(CheckBuilderErr::ValueOutOfRange("poly"));
         }
-        if self.init & !mask != Sum::zero() {
+        if init & !mask != Sum::zero() {
             return Err(CheckBuilderErr::ValueOutOfRange("init"));
         }
-        if self.xorout & !mask != Sum::zero() {
+        if xorout & !mask != Sum::zero() {
             return Err(CheckBuilderErr::ValueOutOfRange("xorout"));
         }
         let crc = CRC {
             width,
             poly,
-            init: self.init,
-            xorout: self.xorout,
-            refin: self.refin,
-            refout: self.refout,
+            init,
+            xorout,
+            refin,
+            refout,
             mask,
             name: self.name.clone(),
             table: CRC::<Sum>::generate_crc_table(poly, width),
@@ -129,6 +134,7 @@ impl<Sum: BitNum> CRCBuilder<Sum> {
     }
 }
 
+#[derive(PartialEq, Eq)]
 pub struct CRC<Sum: BitNum> {
     init: Sum,
     xorout: Sum,
@@ -147,7 +153,7 @@ impl<Sum: BitNum> Display for CRC<Sum> {
             Some(n) => write!(f, "{}", n),
             None => write!(
                 f,
-                "<crc width={} poly={:#x} init={:#x} xorout={:#x} refin={} refout={}>",
+                "crc width={} poly={:#x} init={:#x} xorout={:#x} refin={} refout={}",
                 self.width, self.poly, self.init, self.xorout, self.refin, self.refout
             ),
         }
@@ -159,13 +165,13 @@ impl<Sum: BitNum> CRC<Sum> {
     pub fn with_options() -> CRCBuilder<Sum> {
         CRCBuilder {
             poly: None,
-            init: Sum::zero(),
-            xorout: Sum::zero(),
+            init: None,
+            xorout: None,
             width: None,
-            refin: false,
-            refout: false,
+            refin: None,
+            refout: None,
             check: None,
-            name: Some(String::default()),
+            name: None,
         }
     }
     /// Construct the CRC table, given the bitwidth and the generator.
@@ -206,16 +212,10 @@ impl<Sum: BitNum> CRC<Sum> {
         }
     }
 }
-impl<Sum: BitNum> FromStr for CRC<Sum> {
-    /// Construct a new CRC from a string specification.
-    ///
-    /// Example (courtesy of the crc reveng catalogue):
-    ///
-    /// width=16 poly=0x8005 init=0x0000 refin=true refout=true xorout=0x0000 check=0xbb3d residue=0x0000 name="CRC-16/ARC"
-    ///
-    /// Note: the `residue` parameter is currently ignored.
-    fn from_str(s: &str) -> Result<CRC<Sum>, CheckBuilderErr> {
-        let mut crc = Self::with_options();
+impl<Sum: BitNum> FromStr for CRCBuilder<Sum> {
+    /// See documentation of Fromstr on CRC<Sum>
+    fn from_str(s: &str) -> Result<CRCBuilder<Sum>, CheckBuilderErr> {
+        let mut crc = CRC::<Sum>::with_options();
         for x in KeyValIter::new(s) {
             let (current_key, current_val) = match x {
                 Err(key) => return Err(CheckBuilderErr::MalformedString(key)),
@@ -225,17 +225,13 @@ impl<Sum: BitNum> FromStr for CRC<Sum> {
                 // I would love to return a ValueOutOfRange error here, but I don't know how
                 // I would go about it
                 "width" => usize::from_str(&current_val).ok().map(|x| crc.width(x)),
-                "poly" => Sum::from_dec_or_hex(&current_val).ok().map(|x| crc.poly(x)),
-                "init" => Sum::from_dec_or_hex(&current_val).ok().map(|x| crc.init(x)),
-                "xorout" => Sum::from_dec_or_hex(&current_val)
-                    .ok()
-                    .map(|x| crc.xorout(x)),
+                "poly" => Sum::from_hex(&current_val).ok().map(|x| crc.poly(x)),
+                "init" => Sum::from_hex(&current_val).ok().map(|x| crc.init(x)),
+                "xorout" => Sum::from_hex(&current_val).ok().map(|x| crc.xorout(x)),
                 "refin" => bool::from_str(&current_val).ok().map(|x| crc.refin(x)),
                 "refout" => bool::from_str(&current_val).ok().map(|x| crc.refout(x)),
                 "residue" => Some(&mut crc),
-                "check" => Sum::from_dec_or_hex(&current_val)
-                    .ok()
-                    .map(|x| crc.check(x)),
+                "check" => Sum::from_hex(&current_val).ok().map(|x| crc.check(x)),
                 "name" => Some(crc.name(&current_val)),
                 _ => return Err(CheckBuilderErr::UnknownKey(current_key)),
             };
@@ -244,7 +240,21 @@ impl<Sum: BitNum> FromStr for CRC<Sum> {
                 None => return Err(CheckBuilderErr::MalformedString(current_key)),
             }
         }
-        crc.build()
+        Ok(crc)
+    }
+    type Err = CheckBuilderErr;
+}
+
+impl<Sum: BitNum> FromStr for CRC<Sum> {
+    /// Construct a new CRC from a string specification.
+    ///
+    /// Example (courtesy of the crc reveng catalogue):
+    ///
+    /// width=16 poly=0x8005 init=0x0000 refin=true refout=true xorout=0x0000 check=0xbb3d residue=0x0000 name="CRC-16/ARC"
+    ///
+    /// Note: the `residue` parameter is currently ignored.
+    fn from_str(s: &str) -> Result<CRC<Sum>, CheckBuilderErr> {
+        CRCBuilder::<Sum>::from_str(s)?.build()
     }
     type Err = CheckBuilderErr;
 }

@@ -24,10 +24,10 @@ pub trait BitNum:
 {
     fn revbits(self) -> Self;
     fn bits(&self) -> usize;
-    fn from_dec_or_hex(s: &str) -> Result<Self, Self::FromStrRadixErr> {
+    fn from_hex(s: &str) -> Result<Self, Self::FromStrRadixErr> {
         match s.strip_prefix("0x") {
             Some(remain) => Self::from_str_radix(remain, 16),
-            None => Self::from_str_radix(s, 10),
+            None => Self::from_str_radix(s, 16),
         }
     }
 }
