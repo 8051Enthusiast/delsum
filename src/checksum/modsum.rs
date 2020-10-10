@@ -57,7 +57,7 @@ impl<S: Modnum> ModSumBuilder<S> {
     pub fn build(&self) -> Result<ModSum<S>, CheckBuilderErr> {
         let width = self
             .width
-            .ok_or_else(|| CheckBuilderErr::MissingParameter("width"))?;
+            .ok_or(CheckBuilderErr::MissingParameter("width"))?;
         let module = if self.module == S::zero() && width < self.module.bits() {
             S::one() << width
         } else {
@@ -246,8 +246,8 @@ mod tests {
         assert_eq!(chk.digest(many_255.as_slice()).unwrap(), 0xff00);
         let x = Vec::from("implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR");
         let y = Vec::from("This program comes with ABSOLUTELY NO WARRANTY; for details typ");
-        let merchantibility = chk.digest("MERCHANTABILITY".as_bytes()).unwrap();
-        let ith_absolutely_ = chk.digest("ith ABSOLUTELY ".as_bytes()).unwrap();
+        let merchantibility = chk.digest(b"MERCHANTABILITY".as_ref()).unwrap();
+        let ith_absolutely_ = chk.digest(b"ith ABSOLUTELY ".as_ref()).unwrap();
         assert_eq!(
             chk.find_segments(
                 &[x, y],

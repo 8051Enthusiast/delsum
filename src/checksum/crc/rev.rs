@@ -10,8 +10,14 @@ pub fn reverse_crc_para<'a>(
 ) -> impl ParallelIterator<Item = CRC<u128>> + 'a {
     let spec = spec.clone();
     let width = spec.width.expect("Width is a mandatory argument");
-    let refins = spec.refin.map(|x| vec![x]).unwrap_or(vec![false, true]);
-    let refouts = spec.refout.map(|x| vec![x]).unwrap_or(vec![false, true]);
+    let refins = spec
+        .refin
+        .map(|x| vec![x])
+        .unwrap_or_else(|| vec![false, true]);
+    let refouts = spec
+        .refout
+        .map(|x| vec![x])
+        .unwrap_or_else(|| vec![false, true]);
     let ref_combinations: Vec<_> = refins
         .iter()
         .map(|&x| refouts.iter().map(move |&y| (x, y)))
@@ -54,8 +60,14 @@ pub fn reverse_crc<'a>(
 ) -> impl Iterator<Item = CRC<u128>> + 'a {
     let spec = spec.clone();
     let width = spec.width.expect("Width is a mandatory argument");
-    let refins = spec.refin.map(|x| vec![x]).unwrap_or(vec![false, true]);
-    let refouts = spec.refout.map(|x| vec![x]).unwrap_or(vec![false, true]);
+    let refins = spec
+        .refin
+        .map(|x| vec![x])
+        .unwrap_or_else(|| vec![false, true]);
+    let refouts = spec
+        .refout
+        .map(|x| vec![x])
+        .unwrap_or_else(|| vec![false, true]);
     let ref_combinations: Vec<_> = refins
         .iter()
         .map(|&x| refouts.iter().map(move |&y| (x, y)))
@@ -323,7 +335,10 @@ fn find_polyhull(spec: &RevInfo, polys: Vec<InitPoly>, verbosity: u64) -> (Vec<I
     let mut x_to_2_to_n = copy_polyrem(&x);
     for i in 0..spec.width {
         if verbosity > 1 {
-            eprintln!("<crc poly, refin = {}, refout = {}> step {} of {}", spec.refin, spec.refout, i, spec.width)
+            eprintln!(
+                "<crc poly, refin = {}, refout = {}> step {} of {}",
+                spec.refin, spec.refout, i, spec.width
+            )
         }
         x_to_2_to_n.sqr();
         let mut fac = copy_polyrem(&x_to_2_to_n);
@@ -652,7 +667,7 @@ mod tests {
     impl Arbitrary for CRCBuilder<u128> {
         fn arbitrary<G: quickcheck::Gen>(g: &mut G) -> Self {
             let width = (u8::arbitrary(g) % 128) + 1;
-            let poly = u128::arbitrary(g) % (1 << width) | 1;
+            let poly = (u128::arbitrary(g) % (1 << width)) | 1;
             let init = u128::arbitrary(g) % (1 << width);
             let xorout = u128::arbitrary(g) % (1 << width);
             let refout = bool::arbitrary(g);
@@ -721,7 +736,7 @@ mod tests {
         mut crc_build: CRCBuilder<u128>,
         known: bool,
     ) -> TestResult {
-        if files.len() < 1 {
+        if files.is_empty() {
             return TestResult::discard();
         }
         let do_stuff = |builder: &CRCBuilder<u128>| {
@@ -935,7 +950,7 @@ mod tests {
         let chk_files: Vec<_> = files
             .iter()
             .map(|f| {
-                let checksum = crc.digest(f.as_slice()).unwrap().into();
+                let checksum = crc.digest(f.as_slice()).unwrap();
                 println!("{:?} {:x}", &f, checksum);
                 (f.as_slice(), checksum)
             })

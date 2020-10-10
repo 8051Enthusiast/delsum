@@ -86,8 +86,8 @@ impl<Sum: BitNum> CRCBuilder<Sum> {
             None => return Err(CheckBuilderErr::MissingParameter("poly")),
             Some(p) => p,
         };
-        let init = self.init.unwrap_or(Sum::zero());
-        let xorout = self.xorout.unwrap_or(Sum::zero());
+        let init = self.init.unwrap_or_else(Sum::zero);
+        let xorout = self.xorout.unwrap_or_else(Sum::zero);
         let refin = self.refin.unwrap_or(false);
         let refout = self.refout.unwrap_or(false);
         // the type needs at least 8 bit so that we can comfortably add bytes to it

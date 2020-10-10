@@ -1,11 +1,11 @@
 use clap::{App, Arg, ArgGroup};
-use libdelsum::{find_checksum_segments, find_algorithm};
-use libdelsum::checksum::{Relativity, RelativeIndex};
+use libdelsum::checksum::{RelativeIndex, Relativity};
+use libdelsum::{find_algorithm, find_checksum_segments};
 //use rayon::prelude::*;
+use rayon::prelude::*;
 use std::fs::File;
 use std::io::Read;
 use std::process::exit;
-use rayon::prelude::*;
 
 fn main() {
     let matches = App::new("delsum")
@@ -138,12 +138,20 @@ fn main() {
         });
         if !segs.is_empty() {
             println!("{}:", model);
-            for (a,b) in segs {
-                let a_list = a.iter().map(|x| format!("{}", x)).collect::<Vec<_>>().join(",");
-                let b_list = b.iter().map(|x| match x {
-                   RelativeIndex::FromStart(n) => format!("{}", n),
-                   RelativeIndex::FromEnd(n) => format!("-{}", n),
-                }).collect::<Vec<_>>().join(",");
+            for (a, b) in segs {
+                let a_list = a
+                    .iter()
+                    .map(|x| format!("{}", x))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let b_list = b
+                    .iter()
+                    .map(|x| match x {
+                        RelativeIndex::FromStart(n) => format!("{}", n),
+                        RelativeIndex::FromEnd(n) => format!("-{}", n),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",");
                 println!("\t{}:{}", a_list, b_list);
             }
         }
@@ -156,20 +164,24 @@ fn main() {
     };
     match (reverse, parallel) {
         (true, true) => {
-            models.par_iter().for_each(|x| algorithms(x).find_all_para().for_each(|algorithm| {
-                println!("{}", algorithm);
-            }));
-        },
+            models.par_iter().for_each(|x| {
+                algorithms(x).find_all_para().for_each(|algorithm| {
+                    println!("{}", algorithm);
+                })
+            });
+        }
         (true, false) => {
-            models.iter().for_each(|x| algorithms(x).find_all().for_each(|algorithm| {
-                println!("{}", algorithm);
-            }));
-        },
+            models.iter().for_each(|x| {
+                algorithms(x).find_all().for_each(|algorithm| {
+                    println!("{}", algorithm);
+                })
+            });
+        }
         (false, true) => {
             models.par_iter().map(|x| x.as_str()).for_each(subsum_print);
-        },
+        }
         (false, false) => {
             models.iter().map(|x| x.as_str()).for_each(subsum_print);
-        },
+        }
     }
 }

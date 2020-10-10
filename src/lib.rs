@@ -154,7 +154,7 @@ pub fn find_algorithm<'a>(
     if sums.len() != bytes.len() {
         panic!("Help how do I error handle this?")
     }
-    let pairs: Vec<_> = bytes.into_iter().cloned().zip(sums.into_iter()).collect();
+    let pairs: Vec<_> = bytes.iter().cloned().zip(sums.into_iter()).collect();
     Ok(AlgorithmFinder {
         spec: BuilderEnum::CRC(spec),
         pairs,

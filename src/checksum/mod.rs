@@ -432,7 +432,7 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
                     Vec::from("ABC123456789.super."),
                     Vec::from("Za!987654321ergrfrf")
                 ],
-                &[sum_1_9_1.clone(), sum_1_9.clone(), sum_9_1.clone()],
+                &[sum_1_9_1, sum_1_9, sum_9_1],
                 Relativity::End
             ),
             vec![(vec![3], vec![RelativeIndex::FromEnd(7)])]

@@ -1,8 +1,8 @@
 use std::fmt::Display;
 use std::ops;
 
-pub use ffi::*;
 pub use cxx::UniquePtr;
+pub use ffi::*;
 pub type PolyPtr = UniquePtr<Poly>;
 pub type PolyRemPtr = UniquePtr<PolyRem>;
 impl Display for Poly {
@@ -92,10 +92,10 @@ impl ops::DivAssign<&PolyRem> for PolyRemPtr {
 }
 
 // ntl author says it is thread safe
-unsafe impl Send for Poly{}
-unsafe impl Sync for Poly{}
-unsafe impl Send for PolyRem{}
-unsafe impl Sync for PolyRem{}
+unsafe impl Send for Poly {}
+unsafe impl Sync for Poly {}
+unsafe impl Send for PolyRem {}
+unsafe impl Sync for PolyRem {}
 
 #[cxx::bridge(namespace = poly)]
 mod ffi {
