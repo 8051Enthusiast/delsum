@@ -1,14 +1,15 @@
 mod bitnum;
 pub mod checksum;
+mod factor;
 mod keyval;
 use bitnum::BitNum;
-use checksum::CheckBuilderErr;
 use checksum::{
     crc::{CRCBuilder, CRC},
     fletcher::Fletcher,
-    modsum::ModSum,
+    modsum::{ModSum, ModSumBuilder},
     LinearCheck, RangePairs, Relativity,
 };
+use checksum::{CheckBuilderErr, CheckReverserError};
 use rayon::prelude::*;
 use std::str::FromStr;
 #[cfg(test)]
@@ -108,6 +109,7 @@ pub fn find_checksum_segments(
 
 enum BuilderEnum {
     CRC(CRCBuilder<u128>),
+    ModSum(ModSumBuilder<u64>),
 }
 
 pub struct AlgorithmFinder<'a> {
@@ -117,21 +119,59 @@ pub struct AlgorithmFinder<'a> {
 }
 
 impl<'a> AlgorithmFinder<'a> {
-    pub fn find_all<'b>(&'b self) -> impl Iterator<Item = String> + 'b {
-        match &self.spec {
-            BuilderEnum::CRC(crc) => {
-                checksum::crc::rev::reverse_crc(crc, self.pairs.as_slice(), self.verbosity)
-                    .map(|x| x.to_string())
-            }
-        }
+    pub fn find_all<'b>(&'b self) -> Result<impl Iterator<Item = String> + 'b, CheckReverserError> {
+        let maybe_crc = if let BuilderEnum::CRC(crc) = &self.spec {
+            Some(
+                checksum::crc::rev::reverse_crc(crc, self.pairs.as_slice(), self.verbosity)?
+                    .map(|x| x.to_string()),
+            )
+        } else {
+            None
+        };
+        let maybe_modsum = if let BuilderEnum::ModSum(modsum) = &self.spec {
+            Some(
+                checksum::modsum::rev::reverse_modsum(
+                    modsum,
+                    self.pairs.as_slice(),
+                    self.verbosity,
+                )?
+                .map(|x| x.to_string()),
+            )
+        } else {
+            None
+        };
+        Ok(maybe_crc
+            .into_iter()
+            .flatten()
+            .chain(maybe_modsum.into_iter().flatten()))
     }
-    pub fn find_all_para<'b>(&'b self) -> impl ParallelIterator<Item = String> + 'b {
-        match &self.spec {
-            BuilderEnum::CRC(crc) => {
-                checksum::crc::rev::reverse_crc_para(crc, self.pairs.as_slice(), self.verbosity)
-                    .map(|x| x.to_string())
-            }
-        }
+    pub fn find_all_para<'b>(
+        &'b self,
+    ) -> Result<impl ParallelIterator<Item = String> + 'b, CheckReverserError> {
+        let maybe_crc = if let BuilderEnum::CRC(crc) = &self.spec {
+            Some(
+                checksum::crc::rev::reverse_crc_para(crc, self.pairs.as_slice(), self.verbosity)?
+                    .map(|x| x.to_string()),
+            )
+        } else {
+            None
+        };
+        let maybe_modsum = if let BuilderEnum::ModSum(modsum) = &self.spec {
+            Some(ParallelBridge::par_bridge(
+                checksum::modsum::rev::reverse_modsum(
+                    modsum,
+                    self.pairs.as_slice(),
+                    self.verbosity,
+                )?
+                .map(|x| x.to_string()),
+            ))
+        } else {
+            None
+        };
+        Ok(maybe_crc
+            .into_par_iter()
+            .flatten()
+            .chain(maybe_modsum.into_par_iter().flatten()))
     }
 }
 
@@ -142,10 +182,12 @@ pub fn find_algorithm<'a>(
     verbosity: u64,
 ) -> Result<AlgorithmFinder<'a>, CheckBuilderErr> {
     let (prefix, _, rest) = find_prefix_width(strspec)?;
-    if prefix != "crc" {
-        unimplemented!()
-    }
-    let spec = CRCBuilder::<u128>::from_str(rest)?;
+    let prefix = prefix.to_ascii_lowercase();
+    let spec = match prefix.as_str() {
+        "crc" => BuilderEnum::CRC(CRCBuilder::<u128>::from_str(rest)?),
+        "modsum" => BuilderEnum::ModSum(ModSumBuilder::<u64>::from_str(rest)?),
+        _ => unimplemented!(),
+    };
     let sums = sum
         .split(|x| x == ',')
         .map(u128::from_hex)
@@ -156,7 +198,7 @@ pub fn find_algorithm<'a>(
     }
     let pairs: Vec<_> = bytes.iter().cloned().zip(sums.into_iter()).collect();
     Ok(AlgorithmFinder {
-        spec: BuilderEnum::CRC(spec),
+        spec,
         pairs,
         verbosity,
     })

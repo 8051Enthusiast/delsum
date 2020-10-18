@@ -8,12 +8,15 @@ edition = "2018"
 num-traits = "0.2"
 clap = "2"
 rayon = "1.1"
+bitvec = "0.19"
+lazy_static = "1.4"
+rand = "0.7"
 poly = { path = "poly" }
 
 [dev-dependencies]
-rand = "0.7"
 quickcheck = "0.9"
 quickcheck_macros = "0.9"
+bigint = "4.4.3"
 
 [workspace]
 members = [

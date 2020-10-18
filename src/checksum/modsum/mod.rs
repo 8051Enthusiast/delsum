@@ -1,3 +1,4 @@
+pub mod rev;
 use crate::bitnum::Modnum;
 use crate::checksum::{CheckBuilderErr, Digest, LinearCheck};
 use crate::keyval::KeyValIter;
@@ -14,11 +15,11 @@ use std::str::FromStr;
 /// * name: An optional name that gets used for display purposes
 ///
 /// Note that a parameter to add at the end is not needed, since it is equivalent to `init`.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct ModSumBuilder<S: Modnum> {
     width: Option<usize>,
-    module: S,
-    init: S,
+    module: Option<S>,
+    init: Option<S>,
     check: Option<S>,
     name: Option<String>,
 }
@@ -35,12 +36,12 @@ impl<S: Modnum> ModSumBuilder<S> {
     ///
     /// If this is 0, it is equivalent to be `2^width`.
     pub fn module(&mut self, m: S) -> &mut Self {
-        self.module = m;
+        self.module = Some(m);
         self
     }
     /// The initial value, optional, defaults to 0.
     pub fn init(&mut self, i: S) -> &mut Self {
-        self.init = i;
+        self.init = Some(i);
         self
     }
     /// The checksum of "123456789", gets checked on creation.
@@ -58,15 +59,13 @@ impl<S: Modnum> ModSumBuilder<S> {
         let width = self
             .width
             .ok_or(CheckBuilderErr::MissingParameter("width"))?;
-        let module = if self.module == S::zero() && width < self.module.bits() {
-            S::one() << width
-        } else {
-            self.module
+        let mut module = self.module.unwrap_or_else(S::zero);
+        if module == S::zero() && width < module.bits() {
+            module = S::one() << width
         };
-        let init = if module != S::zero() {
-            self.init % module
-        } else {
-            self.init
+        let mut init = self.init.unwrap_or_else(S::zero);
+        if module != S::zero() {
+            init = init % module
         };
         let s = ModSum {
             width,
@@ -89,6 +88,7 @@ impl<S: Modnum> ModSumBuilder<S> {
     }
 }
 
+#[derive(PartialEq, Eq)]
 pub struct ModSum<S: Modnum> {
     width: usize,
     module: S,
@@ -101,8 +101,8 @@ impl<S: Modnum> ModSum<S> {
     pub fn with_options() -> ModSumBuilder<S> {
         ModSumBuilder {
             width: None,
-            module: S::zero(),
-            init: S::zero(),
+            module: None,
+            init: None,
             check: None,
             name: None,
         }

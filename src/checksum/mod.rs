@@ -348,6 +348,29 @@ impl std::fmt::Display for CheckBuilderErr {
 }
 
 impl std::error::Error for CheckBuilderErr {}
+
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum CheckReverserError {
+    MissingParameter(&'static str),
+    UnsuitableFiles(&'static str),
+    ChecksumFileMismatch
+}
+
+impl std::fmt::Display for CheckReverserError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use CheckReverserError::*;
+        match self {
+            MissingParameter(s) => write!(f, "Missing Parameters: {}", s),
+            UnsuitableFiles(s) => write!(f, "Could not reverse because\
+                files are unsuitable: {}", s),
+            ChecksumFileMismatch => write!(f, "Number of files does not\
+                match number of checksums"),
+        }
+    }
+}
+impl std::error::Error for CheckReverserError {}
+
 #[allow(dead_code)]
 #[cfg(test)]
 pub(crate) mod tests {

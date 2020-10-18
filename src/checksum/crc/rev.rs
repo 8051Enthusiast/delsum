@@ -1,4 +1,5 @@
 use super::{CRCBuilder, CRC};
+use crate::checksum::CheckReverserError;
 use poly::*;
 use rayon::prelude::*;
 use std::convert::TryInto;
@@ -7,9 +8,27 @@ pub fn reverse_crc_para<'a>(
     spec: &CRCBuilder<u128>,
     chk_bytes: &'a [(&[u8], u128)],
     verbosity: u64,
-) -> impl ParallelIterator<Item = CRC<u128>> + 'a {
+) -> Result<impl ParallelIterator<Item = CRC<u128>> + 'a, CheckReverserError> {
     let spec = spec.clone();
-    let width = spec.width.expect("Width is a mandatory argument");
+    let width = spec
+        .width
+        .ok_or(CheckReverserError::MissingParameter("width"))?;
+    if 3 > chk_bytes.len()
+        + spec.init.is_some() as usize
+        + spec.xorout.is_some() as usize
+        + spec.poly.is_some() as usize
+    {
+        return Err(CheckReverserError::MissingParameter(
+            "at least 3 parameters/files",
+        ));
+    }
+    if spec.init.is_some()
+        || chk_bytes.iter().map(|x| x.0.len()).max() == chk_bytes.iter().map(|x| x.0.len()).min()
+    {
+        return Err(CheckReverserError::UnsuitableFiles(
+            "need at least one file with different length",
+        ));
+    }
     let refins = spec
         .refin
         .map(|x| vec![x])
@@ -23,7 +42,7 @@ pub fn reverse_crc_para<'a>(
         .map(|&x| refouts.iter().map(move |&y| (x, y)))
         .flatten()
         .collect();
-    ref_combinations
+    Ok(ref_combinations
         .into_par_iter()
         .map(move |(refin, refout)| {
             let mut polys: Vec<_> = chk_bytes
@@ -50,14 +69,14 @@ pub fn reverse_crc_para<'a>(
                 })
                 .par_bridge()
         })
-        .flatten()
+        .flatten())
 }
 
 pub fn reverse_crc<'a>(
     spec: &CRCBuilder<u128>,
     chk_bytes: &'a [(&[u8], u128)],
     verbosity: u64,
-) -> impl Iterator<Item = CRC<u128>> + 'a {
+) -> Result<impl Iterator<Item = CRC<u128>> + 'a, CheckReverserError> {
     let spec = spec.clone();
     let width = spec.width.expect("Width is a mandatory argument");
     let refins = spec
@@ -73,7 +92,7 @@ pub fn reverse_crc<'a>(
         .map(|&x| refouts.iter().map(move |&y| (x, y)))
         .flatten()
         .collect();
-    ref_combinations
+    Ok(ref_combinations
         .into_iter()
         .map(move |(refin, refout)| {
             let mut polys: Vec<_> = chk_bytes
@@ -97,7 +116,7 @@ pub fn reverse_crc<'a>(
                     .unwrap()
             })
         })
-        .flatten()
+        .flatten())
 }
 
 struct RevInfo {
@@ -111,7 +130,7 @@ struct RevInfo {
 
 impl RevInfo {
     fn from_builder(spec: &CRCBuilder<u128>, refin: bool, refout: bool) -> Self {
-        let width = spec.width.expect("Width is a mandatory argument");
+        let width = spec.width.unwrap();
         let init = spec.init.map(|i| new_poly(&i.to_be_bytes()));
         let poly = spec.poly.map(|p| {
             let mut p = new_poly(&p.to_be_bytes());
@@ -326,7 +345,8 @@ fn find_polyhull(spec: &RevInfo, polys: Vec<InitPoly>, verbosity: u64) -> (Vec<I
 
     if hull.is_zero() {
         // nothing i can do to help now really
-        panic!("Error: very unlucky choice of input files");
+        eprintln!("Error: very unlucky choice of input files, skipping crc reversing");
+        return (contain_init_vec, new_poly(&[1]));
     }
 
     log("removing factors with degree*multiplicity > width");
@@ -880,7 +900,10 @@ mod tests {
                 (f.as_slice(), checksum)
             })
             .collect();
-        let reverser = reverse_crc(&naive, &chk_files, 0);
+        let reverser = match reverse_crc(&naive, &chk_files, 0) {
+            Ok(r) => r,
+            Err(_) => return TestResult::discard(),
+        };
         let mut has_appeared = false;
         for crc_loop in reverser {
             if !has_appeared && crc_loop == crc {
@@ -925,7 +948,7 @@ mod tests {
             .collect();
         let mut crc_naive = CRC::<u128>::with_options();
         crc_naive.width(32).refin(true).refout(true);
-        for c in reverse_crc(&crc_naive, &chk_files, 0) {
+        for c in reverse_crc(&crc_naive, &chk_files, 0).unwrap() {
             for (file, original_check) in &chk_files {
                 let checksum = c.digest(*file).unwrap();
                 assert_eq!(checksum, *original_check);
@@ -957,11 +980,13 @@ mod tests {
             .collect();
         let mut crc_naive = CRC::<u128>::with_options();
         crc_naive.width(16).refin(true).refout(true);
-        reverse_crc(&crc_naive, &chk_files, 0).for_each(|c| {
-            for (file, original_check) in &chk_files {
-                let checksum = c.digest(*file).unwrap();
-                assert_eq!(checksum, *original_check);
-            }
-        });
+        reverse_crc(&crc_naive, &chk_files, 0)
+            .unwrap()
+            .for_each(|c| {
+                for (file, original_check) in &chk_files {
+                    let checksum = c.digest(*file).unwrap();
+                    assert_eq!(checksum, *original_check);
+                }
+            });
     }
 }

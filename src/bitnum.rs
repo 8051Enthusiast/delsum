@@ -5,6 +5,12 @@ use std::ops;
 /// trait for either u8, u16, u32, u64 or u128 at home:
 pub trait BitNum:
     Num
+    + num_traits::ops::wrapping::WrappingSub
+    + num_traits::ops::wrapping::WrappingAdd
+    + num_traits::ops::wrapping::WrappingMul
+    + num_traits::ops::checked::CheckedSub
+    + num_traits::ops::checked::CheckedAdd
+    + num_traits::ops::checked::CheckedMul
     + ops::BitXor<Output = Self>
     + ops::Shl<usize, Output = Self>
     + ops::Shr<usize, Output = Self>
@@ -24,6 +30,7 @@ pub trait BitNum:
 {
     fn revbits(self) -> Self;
     fn bits(&self) -> usize;
+    fn trail_zeros(&self) -> u32;
     fn from_hex(s: &str) -> Result<Self, Self::FromStrRadixErr> {
         match s.strip_prefix("0x") {
             Some(remain) => Self::from_str_radix(remain, 16),
@@ -39,6 +46,10 @@ impl BitNum for u8 {
     fn bits(&self) -> usize {
         8
     }
+
+    fn trail_zeros(&self) -> u32 {
+        self.trailing_zeros()
+    }
 }
 impl BitNum for u16 {
     fn revbits(self) -> Self {
@@ -46,6 +57,10 @@ impl BitNum for u16 {
     }
     fn bits(&self) -> usize {
         16
+    }
+
+    fn trail_zeros(&self) -> u32 {
+        self.trailing_zeros()
     }
 }
 impl BitNum for u32 {
@@ -55,6 +70,10 @@ impl BitNum for u32 {
     fn bits(&self) -> usize {
         32
     }
+
+    fn trail_zeros(&self) -> u32 {
+        self.trailing_zeros()
+    }
 }
 impl BitNum for u64 {
     fn revbits(self) -> Self {
@@ -63,6 +82,10 @@ impl BitNum for u64 {
     fn bits(&self) -> usize {
         64
     }
+
+    fn trail_zeros(&self) -> u32 {
+        self.trailing_zeros()
+    }
 }
 impl BitNum for u128 {
     fn revbits(self) -> Self {
@@ -70,6 +93,10 @@ impl BitNum for u128 {
     }
     fn bits(&self) -> usize {
         128
+    }
+
+    fn trail_zeros(&self) -> u32 {
+        self.trailing_zeros()
     }
 }
 

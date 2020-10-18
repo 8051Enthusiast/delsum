@@ -164,17 +164,22 @@ fn main() {
     };
     match (reverse, parallel) {
         (true, true) => {
-            models.par_iter().for_each(|x| {
-                algorithms(x).find_all_para().for_each(|algorithm| {
-                    println!("{}", algorithm);
-                })
-            });
+            models
+                .par_iter()
+                .for_each(|x| match algorithms(x).find_all_para() {
+                    Ok(a) => a.for_each(|algorithm| {
+                        println!("{}", algorithm);
+                    }),
+
+                    Err(e) => eprintln!("Error: {}", e),
+                });
         }
         (true, false) => {
-            models.iter().for_each(|x| {
-                algorithms(x).find_all().for_each(|algorithm| {
+            models.iter().for_each(|x| match algorithms(x).find_all() {
+                Ok(a) => a.for_each(|algorithm| {
                     println!("{}", algorithm);
-                })
+                }),
+                Err(e) => eprintln!("Error: {}", e),
             });
         }
         (false, true) => {
