@@ -444,7 +444,7 @@ fn next_factor<N: FactorNum>(
     bound: u64,
 ) -> Option<N> {
     let neg_one = mon.n.mod_neg(mon.one);
-    for p in sieve.iter_from(*current_p).take_while(|&x| x < bound) {
+    for p in sieve.iter_from(*current_p).take_while(|&x| x <= bound) {
         *current_p = p;
         let q = maximum_power(bound, p);
         *current_power = mon.mon_powermod(*current_power, q as u128);
