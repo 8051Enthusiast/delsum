@@ -1,7 +1,7 @@
-use super::{ModSumBuilder, ModSum};
-use std::iter::Iterator;
-use crate::factor::{gcd, divisors_range};
+use super::{ModSum, ModSumBuilder};
 use crate::checksum::CheckReverserError;
+use crate::factor::{divisors_range, gcd};
+use std::iter::Iterator;
 pub fn reverse_modsum(
     spec: &ModSumBuilder<u64>,
     // note: even though all the sums are supposed to be u64,
@@ -10,11 +10,15 @@ pub fn reverse_modsum(
     chk_bytes: &[(&[u8], u128)],
     verbosity: u64,
 ) -> Result<impl Iterator<Item = ModSum<u64>>, CheckReverserError> {
-    let log = |s| if verbosity > 0 {
-        eprintln!("<modsum> {}", s);
+    let log = |s| {
+        if verbosity > 0 {
+            eprintln!("<modsum> {}", s);
+        }
     };
     let spec = spec.clone();
-    let width = spec.width.ok_or(CheckReverserError::MissingParameter("width"))?;
+    let width = spec
+        .width
+        .ok_or(CheckReverserError::MissingParameter("width"))?;
     let mut sums = Vec::<i128>::new();
     let max_sum = 1u128 << width;
     let mut min_sum = 0;
@@ -23,36 +27,48 @@ pub fn reverse_modsum(
         min_sum = min_sum.max(*chk as u128);
         sums.push(f.iter().copied().map(i128::from).sum::<i128>() - *chk as i128);
     }
-    let mut hull = 0;
+    let mut module = 0;
     log("removing inits");
-    let init = match spec.init {
-        Some(i) => {
-            let init = i as i128;
-            for s in sums {
-                hull = gcd(hull, (s + init).abs() as u128);
-            }
-            i as i128
-        },
-        None => {
-            for (s1, s2) in sums.iter().zip(sums.iter().skip(1)) {
-                hull = gcd(hull, (s1 - s2).abs() as u128);
-            }
-            -sums[0]
-        }
-    };
-    if hull == 0 {
-        return Err(CheckReverserError::UnsuitableFiles("sum of files to small to wrap around"));
+    let init = find_largest_mod(&sums, spec.init, &mut module);
+    if module == 0 {
+        return Err(CheckReverserError::UnsuitableFiles(
+            "sum of files to small to wrap around",
+        ));
     }
     log("finding all possible factors");
-    let modules = divisors_range(hull, min_sum + 1, max_sum);
+    let modules = divisors_range(module, min_sum + 1, max_sum);
     Ok(modules.into_iter().map(move |module| {
         let init_negative = init < 0;
         let mut init = init.abs() as u128 % module;
         if init_negative {
             init = module - init;
         }
-        ModSum::with_options().width(width).module(module as u64).init(init as u64).build().unwrap()
+        ModSum::with_options()
+            .width(width)
+            .module(module as u64)
+            .init(init as u64)
+            .build()
+            .unwrap()
     }))
+}
+
+pub(crate) fn find_largest_mod(sums: &[i128], maybe_init: Option<u64>, module: &mut u128) -> i128 {
+    let init = match maybe_init {
+        Some(i) => {
+            let init = i as i128;
+            for s in sums {
+                *module = gcd(*module, (s + init).abs() as u128);
+            }
+            i as i128
+        }
+        None => {
+            for (s1, s2) in sums.iter().zip(sums.iter().skip(1)) {
+                *module = gcd(*module, (s1 - s2).abs() as u128);
+            }
+            -sums[0]
+        }
+    };
+    init
 }
 
 #[cfg(test)]
@@ -109,7 +125,7 @@ mod tests {
             .collect();
         let reverser = match reverse_modsum(&naive, &chk_files, 0) {
             Ok(r) => r,
-            Err(_) => return TestResult::discard()
+            Err(_) => return TestResult::discard(),
         };
         let mut has_appeared = false;
         for modsum_loop in reverser {
