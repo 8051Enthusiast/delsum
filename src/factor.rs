@@ -127,7 +127,7 @@ impl<'a> Iterator for PrimeIterator<'a> {
     }
 }
 
-pub(crate) fn gcd<N: BitNum>(mut a: N, mut b: N) -> N {
+pub fn gcd<N: BitNum>(mut a: N, mut b: N) -> N {
     if a.is_zero() {
         return b;
     }
@@ -175,7 +175,7 @@ fn make_u128(x: &[u64; 2]) -> u128 {
     x[0] as u128 + ((x[1] as u128) << 64)
 }
 
-trait FactorNum: BitNum + From<u64> + Into<u128> + rand::distributions::uniform::SampleUniform {
+pub trait FactorNum: BitNum + From<u64> + Into<u128> + rand::distributions::uniform::SampleUniform {
     fn mon_mul_raw(self, a: Self, b: Self, n_inv: u64) -> Self;
     fn checked_pow(self, e: u8) -> Option<Self>;
     fn mod_neg(self, a: Self) -> Self {
@@ -277,7 +277,7 @@ impl FactorNum for u128 {
     }
 }
 
-struct MonContext<T: FactorNum> {
+pub struct MonContext<T: FactorNum> {
     n: T,
     one: T,
     r_squared: T,
@@ -285,7 +285,7 @@ struct MonContext<T: FactorNum> {
 }
 
 impl<T: FactorNum> MonContext<T> {
-    fn new(n: T) -> MonContext<T> {
+    pub fn new(n: T) -> MonContext<T> {
         let n_inv = word_inverse(n.as_u64()).wrapping_neg();
         // we pretty much only have to call this function once per
         // factorization, so doing this inefficiently is ok i guess
@@ -311,10 +311,10 @@ impl<T: FactorNum> MonContext<T> {
             n_inv,
         }
     }
-    fn mon_mul(&self, a: T, b: T) -> T {
+    pub fn mon_mul(&self, a: T, b: T) -> T {
         self.n.mon_mul_raw(a, b, self.n_inv)
     }
-    fn mon_powermod(&self, a: T, mut b: u128) -> T {
+    pub fn mon_powermod(&self, a: T, mut b: u128) -> T {
         let mut ret = a;
         if b == 0 {
             return self.one;
@@ -333,14 +333,14 @@ impl<T: FactorNum> MonContext<T> {
         }
         ret
     }
-    fn to_mon(&self, a: T) -> T {
+    pub fn to_mon(&self, a: T) -> T {
         self.mon_mul(a, self.r_squared)
     }
-    fn from_mon(&self, a: T) -> T {
+    pub fn from_mon(&self, a: T) -> T {
         self.mon_mul(a, T::one())
     }
     // new_n divides n
-    fn update(&mut self, new_n: T) {
+    pub fn update(&mut self, new_n: T) {
         self.n = new_n;
         self.n_inv = word_inverse(new_n.as_u64()).wrapping_neg();
         self.r_squared = self.r_squared % new_n;
@@ -648,7 +648,7 @@ fn div_combs(mut cur: u128, facs: &[(u128, u8)], low: u128, high: u128) -> Vec<u
     ret
 }
 
-pub(crate) fn divisors_range(number: u128, low: u128, high: u128) -> Vec<u128> {
+pub fn divisors_range(number: u128, low: u128, high: u128) -> Vec<u128> {
     let switch_div = number / low > high;
     let (new_high, new_low) = if switch_div {
         (number / low, number / high)

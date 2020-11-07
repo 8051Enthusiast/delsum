@@ -1,6 +1,6 @@
 mod bitnum;
 pub mod checksum;
-mod factor;
+pub(crate) mod factor;
 mod keyval;
 use bitnum::BitNum;
 use checksum::{
