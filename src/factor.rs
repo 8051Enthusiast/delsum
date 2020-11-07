@@ -311,6 +311,9 @@ impl<T: FactorNum> MonContext<T> {
             n_inv,
         }
     }
+    pub fn module(&self) -> T {
+        self.n
+    }
     pub fn mon_mul(&self, a: T, b: T) -> T {
         self.n.mon_mul_raw(a, b, self.n_inv)
     }
