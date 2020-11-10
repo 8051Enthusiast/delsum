@@ -175,7 +175,7 @@ fn make_u128(x: &[u64; 2]) -> u128 {
     x[0] as u128 + ((x[1] as u128) << 64)
 }
 
-pub trait FactorNum: BitNum + From<u64> + Into<u128> + rand::distributions::uniform::SampleUniform {
+trait FactorNum: BitNum + From<u64> + Into<u128> + rand::distributions::uniform::SampleUniform {
     fn mon_mul_raw(self, a: Self, b: Self, n_inv: u64) -> Self;
     fn checked_pow(self, e: u8) -> Option<Self>;
     fn mod_neg(self, a: Self) -> Self {
@@ -277,7 +277,7 @@ impl FactorNum for u128 {
     }
 }
 
-pub struct MonContext<T: FactorNum> {
+struct MonContext<T: FactorNum> {
     n: T,
     one: T,
     r_squared: T,
@@ -285,7 +285,7 @@ pub struct MonContext<T: FactorNum> {
 }
 
 impl<T: FactorNum> MonContext<T> {
-    pub fn new(n: T) -> MonContext<T> {
+    fn new(n: T) -> MonContext<T> {
         let n_inv = word_inverse(n.as_u64()).wrapping_neg();
         // we pretty much only have to call this function once per
         // factorization, so doing this inefficiently is ok i guess
@@ -311,13 +311,10 @@ impl<T: FactorNum> MonContext<T> {
             n_inv,
         }
     }
-    pub fn module(&self) -> T {
-        self.n
-    }
-    pub fn mon_mul(&self, a: T, b: T) -> T {
+    fn mon_mul(&self, a: T, b: T) -> T {
         self.n.mon_mul_raw(a, b, self.n_inv)
     }
-    pub fn mon_powermod(&self, a: T, mut b: u128) -> T {
+    fn mon_powermod(&self, a: T, mut b: u128) -> T {
         let mut ret = a;
         if b == 0 {
             return self.one;
@@ -336,14 +333,14 @@ impl<T: FactorNum> MonContext<T> {
         }
         ret
     }
-    pub fn to_mon(&self, a: T) -> T {
+    fn to_mon(&self, a: T) -> T {
         self.mon_mul(a, self.r_squared)
     }
-    pub fn from_mon(&self, a: T) -> T {
+    fn from_mon(&self, a: T) -> T {
         self.mon_mul(a, T::one())
     }
     // new_n divides n
-    pub fn update(&mut self, new_n: T) {
+    fn update(&mut self, new_n: T) {
         self.n = new_n;
         self.n_inv = word_inverse(new_n.as_u64()).wrapping_neg();
         self.r_squared = self.r_squared % new_n;
@@ -531,7 +528,7 @@ fn p1fac<N: FactorNum>(
             ret.push(mon.n);
             return (N::zero(), ret);
         }
-        let fac_op = next_factor(&mut mon, prime, &mut power, sieve, bound >> 1);
+        let fac_op = next_factor(&mut mon, prime, &mut power, sieve, (bound + 1) >> 1);
         let fac = match fac_op {
             Some(f) => f,
             None => break,
@@ -674,7 +671,6 @@ pub fn divisors_range(number: u128, low: u128, high: u128) -> Vec<u128> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bigint::U256;
     use quickcheck::TestResult;
     #[test]
     fn sieve_correct_primes() {
@@ -748,130 +744,6 @@ mod tests {
         }
         let x_red = x >> x.trailing_zeros();
         TestResult::from_bool(x_red.wrapping_mul(word_inverse(x_red)) == 1)
-    }
-    #[quickcheck]
-    fn qc_monmul64(a: u64, b: u64, n: u64) -> TestResult {
-        if n == 0 {
-            return TestResult::discard();
-        }
-        let mut n = n >> n.trailing_zeros();
-        for _ in 0..100 {
-            n = n.wrapping_mul(n);
-        }
-        let mon = MonContext::new(n);
-        let mut result = a % n;
-        let mut regular_mul = a % n;
-        let mut b_1 = b % n;
-        let mut b_2 = b % n;
-        for i in 0..10000 {
-            let unred_result = mon.mon_mul(result, b_1);
-            result = (((unred_result as u128) << 64) % n as u128) as u64;
-            regular_mul = ((regular_mul as u128 * b_2 as u128) % n as u128) as u64;
-            if i % 2 == 0 {
-                std::mem::swap(&mut result, &mut b_1);
-                std::mem::swap(&mut regular_mul, &mut b_2);
-            }
-        }
-        println!("regular_mul: {}", regular_mul);
-        println!("reduced_result: {}", result);
-        TestResult::from_bool(regular_mul == result)
-    }
-    #[quickcheck]
-    fn qc_monmul128(a: u128, b: u128, n: u128) -> TestResult {
-        if n == 0 {
-            return TestResult::discard();
-        }
-        let mut n = n >> n.trailing_zeros();
-        // I'm too lazy to figure out how to get the parameters distributed differently,
-        // so i'll just do it like this
-        for _ in 0..100 {
-            n = n.wrapping_mul(n);
-        }
-        let mon = MonContext::new(n);
-        let from = |x: u128| U256::from_dec_str(&x.to_string()).unwrap();
-        let to = |x: U256| u128::from_str_radix(&x.to_string(), 10).unwrap();
-        let mut result = a % n;
-        let mut regular_mul = a % n;
-        let mut b_1 = b % n;
-        let mut b_2 = b % n;
-        for i in 0..1000 {
-            let unred_result = mon.mon_mul(result, b_1);
-            result = to((from(unred_result) << 128) % from(n));
-            regular_mul = to((from(regular_mul) * from(b_2)) % from(n));
-            if i % 2 == 0 {
-                std::mem::swap(&mut result, &mut b_1);
-                std::mem::swap(&mut regular_mul, &mut b_2);
-            }
-        }
-        println!("regular_mul: {}", regular_mul);
-        println!("reduced_result: {}", result);
-        println!("{} {} {}", a, b, n);
-        TestResult::from_bool(regular_mul == result)
-    }
-    #[test]
-    fn monmul128_zero() {
-        let n = 3;
-        let mon = MonContext::new(3);
-        let result = mon.mon_mul(0, 0);
-        assert_eq!(result, 0);
-        let from = |x: u128| U256::from_dec_str(&x.to_string()).unwrap();
-        let reduced_result = ((from(result)) << 128) % from(n);
-        assert_eq!(reduced_result, U256::from(0));
-    }
-    #[quickcheck]
-    fn qc_monmul_powermod64(a: u64, b: u64, n: u64) -> TestResult {
-        if n == 0 {
-            return TestResult::discard();
-        }
-        let n = n >> n.trailing_zeros();
-        let a = a % n;
-        let mon = MonContext::new(n);
-        fn normal_powermod(a: u64, mut e: u64, n: u64) -> u64 {
-            let mut ret = 1u64;
-            for _ in 0..64 {
-                ret = (ret as u128 * ret as u128 % n as u128) as u64;
-                if e & (1 << 63) != 0 {
-                    ret = (ret as u128 * a as u128 % n as u128) as u64;
-                }
-                e <<= 1;
-            }
-            ret
-        }
-        let a_mon = mon.to_mon(a);
-        let power_mon = mon.mon_powermod(a_mon, b as u128);
-        let power = mon.from_mon(power_mon);
-        TestResult::from_bool(power == normal_powermod(a, b, n))
-    }
-    #[quickcheck]
-    fn qc_monmul_powermod128(a: u128, b: u64, n: u128) -> TestResult {
-        if n == 0 {
-            return TestResult::discard();
-        }
-        // god i hate this so much but i will not fix it right now
-        fn from(x: u128) -> U256 {
-            U256::from_dec_str(&x.to_string()).unwrap()
-        }
-        fn to(x: U256) -> u128 {
-            u128::from_str_radix(&x.to_string(), 10).unwrap()
-        }
-        let n = n >> n.trailing_zeros();
-        let a = a % n;
-        let mon = MonContext::new(n);
-        fn normal_powermod(a: u128, mut e: u64, n: u128) -> u128 {
-            let mut ret = 1u128;
-            for _ in 0..64 {
-                ret = to(from(ret) * from(ret) % from(n));
-                if e & (1 << 63) != 0 {
-                    ret = to(from(ret) * from(a) % from(n));
-                }
-                e <<= 1;
-            }
-            ret
-        }
-        let a_mon = mon.to_mon(a);
-        let power_mon = mon.mon_powermod(a_mon, b as u128);
-        let power = mon.from_mon(power_mon);
-        TestResult::from_bool(power == normal_powermod(a, b, n))
     }
     #[test]
     fn max_power() {
@@ -952,6 +824,7 @@ mod tests {
         assert_eq!(is_prob_prime(4957391571224061778730779295067041u128), false);
         assert_eq!(is_prob_prime(4957391571224061778730779295067042u128), false);
         assert_eq!(is_prob_prime(3u64), true);
+        assert_eq!(is_prob_prime(9u64), false);
     }
     #[test]
     fn combs() {
