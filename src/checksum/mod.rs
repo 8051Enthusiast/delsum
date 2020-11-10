@@ -349,12 +349,11 @@ impl std::fmt::Display for CheckBuilderErr {
 
 impl std::error::Error for CheckBuilderErr {}
 
-
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum CheckReverserError {
     MissingParameter(&'static str),
     UnsuitableFiles(&'static str),
-    ChecksumFileMismatch
+    ChecksumFileMismatch,
 }
 
 impl std::fmt::Display for CheckReverserError {
@@ -362,14 +361,35 @@ impl std::fmt::Display for CheckReverserError {
         use CheckReverserError::*;
         match self {
             MissingParameter(s) => write!(f, "Missing Parameters: {}", s),
-            UnsuitableFiles(s) => write!(f, "Could not reverse because\
-                files are unsuitable: {}", s),
-            ChecksumFileMismatch => write!(f, "Number of files does not\
-                match number of checksums"),
+            UnsuitableFiles(s) => write!(
+                f,
+                "Could not reverse because\
+                files are unsuitable: {}",
+                s
+            ),
+            ChecksumFileMismatch => write!(
+                f,
+                "Number of files does not\
+                match number of checksums"
+            ),
         }
     }
 }
 impl std::error::Error for CheckReverserError {}
+
+/// Turns Result<Iterator, Error> into Iterator<Result<Iterator::Item, Error>> so that
+/// on Err, only the single error is iterated, and else the items of the iterator
+fn unresult_iter<I, E>(x: Result<I, E>) -> impl Iterator<Item = Result<I::Item, E>>
+where
+    I: std::iter::Iterator,
+    E: std::error::Error,
+{
+    let (i, e) = match x {
+        Ok(i) => (Some(i.map(Ok)), None),
+        Err(e) => (None, Some(std::iter::once(Err(e)))),
+    };
+    e.into_iter().flatten().chain(i.into_iter().flatten())
+}
 
 #[allow(dead_code)]
 #[cfg(test)]

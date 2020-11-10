@@ -1,10 +1,11 @@
+pub mod rev;
 use crate::bitnum::BitNum;
 use crate::checksum::{CheckBuilderErr, Digest, LinearCheck};
 use crate::keyval::KeyValIter;
 use std::fmt::Display;
 use std::str::FromStr;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 /// A builder for a Fletcher-like algorithm.
 ///
 /// The basic functionality of this algorithm is:
@@ -42,10 +43,10 @@ use std::str::FromStr;
 /// * name: The name to be used when displaying the algorithm (optional)
 pub struct FletcherBuilder<Sum: BitNum> {
     width: Option<usize>,
-    module: Sum,
-    init: Sum,
-    addout: Sum,
-    swap: bool,
+    module: Option<Sum>,
+    init: Option<Sum>,
+    addout: Option<Sum>,
+    swap: Option<bool>,
     check: Option<Sum>,
     name: Option<String>,
 }
@@ -58,27 +59,27 @@ impl<S: BitNum> FletcherBuilder<S> {
     }
     /// Sets the module of both sums (mandatory)
     pub fn module(&mut self, m: S) -> &mut Self {
-        self.module = m;
+        self.module = Some(m);
         self
     }
     /// Sets the initial value
     ///
     /// Contains separate values for both sums, the cumulative one is bitshifted
     pub fn init(&mut self, i: S) -> &mut Self {
-        self.init = i;
+        self.init = Some(i);
         self
     }
     /// Sets a value that gets added after the checksum is finished
     ///
     /// Contains separate values for both sums, the cumulative one is bitshifted
     pub fn addout(&mut self, o: S) -> &mut Self {
-        self.addout = o;
+        self.addout = Some(o);
         self
     }
     /// Normally, the cumulative sum is saved on the higher bits and the normal sum in the lower bits.
     /// Setting this option to true swaps the positions.
     pub fn swap(&mut self, s: bool) -> &mut Self {
-        self.swap = s;
+        self.swap = Some(s);
         self
     }
     /// Checks whether c is the same as the checksum of "123456789" on creation
@@ -93,11 +94,13 @@ impl<S: BitNum> FletcherBuilder<S> {
     }
     /// Returns the Fletcher object after verifying correctness
     pub fn build(&self) -> Result<Fletcher<S>, CheckBuilderErr> {
+        let init = self.init.unwrap_or_else(S::zero);
+        let addout = self.addout.unwrap_or_else(S::zero);
         // note: we only store the half width because it is more useful to us
         let hwidth = match self.width {
             None => return Err(CheckBuilderErr::MissingParameter("width")),
             Some(w) => {
-                if w % 2 != 0 || w > self.init.bits() {
+                if w % 2 != 0 || w > init.bits() {
                     return Err(CheckBuilderErr::ValueOutOfRange("width"));
                 } else {
                     w / 2
@@ -106,25 +109,22 @@ impl<S: BitNum> FletcherBuilder<S> {
         };
 
         let mask = (S::one() << hwidth) - S::one();
-        let module = if self.module == S::zero() {
+        let module = if self.module.unwrap_or_else(S::zero) == S::zero() {
             S::one() << hwidth
         } else {
-            self.module
+            self.module.unwrap_or_else(S::zero)
         };
         let mut fletch = Fletcher {
             hwidth,
             module,
-            init: self.init,
-            addout: self.addout,
-            swap: self.swap,
+            init,
+            addout,
+            swap: self.swap.unwrap_or(false),
             mask,
             name: self.name.clone(),
         };
-        let (mut s, mut c) = fletch.from_compact(self.init);
-        s = s % module;
-        c = c % module;
-        fletch.init = fletch.to_compact((s, c));
-        let (mut s, mut c) = fletch.from_compact(self.addout);
+        fletch.init = init % module;
+        let (mut s, mut c) = fletch.from_compact(addout);
         s = s % module;
         c = c % module;
         fletch.addout = fletch.to_compact((s, c));
@@ -142,6 +142,7 @@ impl<S: BitNum> FletcherBuilder<S> {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Fletcher<Sum: BitNum> {
     hwidth: usize,
     module: Sum,
@@ -174,10 +175,10 @@ impl<Sum: BitNum> Fletcher<Sum> {
     pub fn with_options() -> FletcherBuilder<Sum> {
         FletcherBuilder {
             width: None,
-            module: Sum::zero(),
-            init: Sum::zero(),
-            addout: Sum::zero(),
-            swap: false,
+            module: None,
+            init: None,
+            addout: None,
+            swap: None,
             check: None,
             name: None,
         }
@@ -245,7 +246,7 @@ impl<Sum: BitNum> FromStr for Fletcher<Sum> {
 impl<S: BitNum> Digest for Fletcher<S> {
     type Sum = S;
     fn init(&self) -> Self::Sum {
-        self.init
+        self.to_compact((self.init, S::zero()))
     }
     fn dig_byte(&self, sum: Self::Sum, byte: u8) -> Self::Sum {
         let (mut s, mut c) = self.from_compact(sum);
