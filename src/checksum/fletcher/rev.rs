@@ -3,6 +3,7 @@ use crate::checksum::{unresult_iter, CheckReverserError};
 use crate::factor::divisors_range;
 use num_bigint::BigInt;
 use num_traits::{one, zero, One, Signed, Zero};
+use rayon::prelude::*;
 use std::convert::TryInto;
 use std::iter::Iterator;
 pub fn reverse_fletcher<'a>(
@@ -17,6 +18,23 @@ pub fn reverse_fletcher<'a>(
         .unwrap_or_else(|| vec![false, true]);
     swap.into_iter()
         .map(move |s| unresult_iter(reverse(&spec, chk_bytes, s, verbosity).map(|x| x.iter())))
+        .flatten()
+}
+
+pub fn reverse_fletcher_para<'a>(
+    spec: &FletcherBuilder<u128>,
+    chk_bytes: &'a [(&[u8], u128)],
+    verbosity: u64,
+) -> impl ParallelIterator<Item = Result<Fletcher<u128>, CheckReverserError>> + 'a {
+    let spec = spec.clone();
+    let swap = spec
+        .swap
+        .map(|x| vec![x])
+        .unwrap_or_else(|| vec![false, true]);
+    swap.into_par_iter()
+        .map(move |s| {
+            unresult_iter(reverse(&spec, chk_bytes, s, verbosity).map(|x| x.iter())).par_bridge()
+        })
         .flatten()
 }
 
@@ -78,10 +96,9 @@ fn reverse(
     let mut files = chk_bytes.to_owned();
     files.sort_unstable_by(|a, b| a.0.len().cmp(&b.0.len()).reverse());
     let spec = spec.clone();
-    let width = match spec.width {
-        Some(x) => x,
-        None => return Err(CheckReverserError::MissingParameter("width")),
-    };
+    let width = spec
+        .width
+        .ok_or(CheckReverserError::MissingParameter("width"))?;
     log("finding parameters of lower sum");
     let (module, addout1) = find_regular_sum(&spec, &files, swap);
     let mut module = BigInt::from(module);
@@ -149,7 +166,11 @@ fn chk_range(chks: &[(&[u8], u128)], width: usize) -> (u128, u128) {
     (min, max)
 }
 
-fn find_regular_sum(spec: &FletcherBuilder<u128>, files: &[(&[u8], u128)], swap: bool) -> (u128, i128) {
+fn find_regular_sum(
+    spec: &FletcherBuilder<u128>,
+    files: &[(&[u8], u128)],
+    swap: bool,
+) -> (u128, i128) {
     let width = spec.width.unwrap();
     let mut sums = Vec::new();
     for (f, chk) in files.iter() {
@@ -179,7 +200,9 @@ fn remove_addout2(
     swap: bool,
 ) -> (Vec<(BigInt, usize)>, (BigInt, usize)) {
     let width = spec.width.unwrap();
-    let maybe_addout = spec.addout.map(|x| BigInt::from(split_sum(x, width, swap).1));
+    let maybe_addout = spec
+        .addout
+        .map(|x| BigInt::from(split_sum(x, width, swap).1));
     let mut ret_vec = Vec::new();
     let mut prev = sums
         .pop()
@@ -229,7 +252,12 @@ fn refine_module(module: &mut BigInt, sums: Vec<(BigInt, usize)>) -> Vec<(BigInt
         .collect()
 }
 
-fn cumusum(width: usize, chk_bytes: &[(&[u8], u128)], module: &BigInt, swap: bool) -> Vec<(BigInt, usize)> {
+fn cumusum(
+    width: usize,
+    chk_bytes: &[(&[u8], u128)],
+    module: &BigInt,
+    swap: bool,
+) -> Vec<(BigInt, usize)> {
     let mut sums = Vec::new();
     for (bytes, chk) in chk_bytes {
         let mut current_sum: BigInt = zero();

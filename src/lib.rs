@@ -5,7 +5,7 @@ mod keyval;
 use bitnum::BitNum;
 use checksum::{
     crc::{CRCBuilder, CRC},
-    fletcher::Fletcher,
+    fletcher::{Fletcher, FletcherBuilder},
     modsum::{ModSum, ModSumBuilder},
     LinearCheck, RangePairs, Relativity,
 };
@@ -110,6 +110,7 @@ pub fn find_checksum_segments(
 enum BuilderEnum {
     CRC(CRCBuilder<u128>),
     ModSum(ModSumBuilder<u64>),
+    Fletcher(FletcherBuilder<u128>),
 }
 
 pub struct AlgorithmFinder<'a> {
@@ -119,11 +120,11 @@ pub struct AlgorithmFinder<'a> {
 }
 
 impl<'a> AlgorithmFinder<'a> {
-    pub fn find_all<'b>(&'b self) -> Result<impl Iterator<Item = String> + 'b, CheckReverserError> {
+    pub fn find_all<'b>(&'b self) -> impl Iterator<Item = Result<String, CheckReverserError>> + 'b {
         let maybe_crc = if let BuilderEnum::CRC(crc) = &self.spec {
             Some(
-                checksum::crc::rev::reverse_crc(crc, self.pairs.as_slice(), self.verbosity)?
-                    .map(|x| x.to_string()),
+                checksum::crc::rev::reverse_crc(crc, self.pairs.as_slice(), self.verbosity)
+                    .map(|x| x.map(|y| y.to_string())),
             )
         } else {
             None
@@ -134,44 +135,70 @@ impl<'a> AlgorithmFinder<'a> {
                     modsum,
                     self.pairs.as_slice(),
                     self.verbosity,
-                )?
-                .map(|x| x.to_string()),
+                )
+                .map(|x| x.map(|y| y.to_string())),
             )
         } else {
             None
         };
-        Ok(maybe_crc
+        let maybe_fletcher = if let BuilderEnum::Fletcher(fletcher) = &self.spec {
+            Some(
+                checksum::fletcher::rev::reverse_fletcher(
+                    fletcher,
+                    self.pairs.as_slice(),
+                    self.verbosity,
+                )
+                .map(|x| x.map(|y| y.to_string())),
+            )
+        } else {
+            None
+        };
+        maybe_crc
             .into_iter()
             .flatten()
-            .chain(maybe_modsum.into_iter().flatten()))
+            .chain(maybe_modsum.into_iter().flatten())
+            .chain(maybe_fletcher.into_iter().flatten())
     }
     pub fn find_all_para<'b>(
         &'b self,
-    ) -> Result<impl ParallelIterator<Item = String> + 'b, CheckReverserError> {
+    ) -> impl ParallelIterator<Item = Result<String, CheckReverserError>> + 'b {
         let maybe_crc = if let BuilderEnum::CRC(crc) = &self.spec {
             Some(
-                checksum::crc::rev::reverse_crc_para(crc, self.pairs.as_slice(), self.verbosity)?
-                    .map(|x| x.to_string()),
+                checksum::crc::rev::reverse_crc_para(crc, self.pairs.as_slice(), self.verbosity)
+                    .map(|x| x.map(|y| y.to_string())),
             )
         } else {
             None
         };
         let maybe_modsum = if let BuilderEnum::ModSum(modsum) = &self.spec {
-            Some(ParallelBridge::par_bridge(
+            Some(
                 checksum::modsum::rev::reverse_modsum(
                     modsum,
                     self.pairs.as_slice(),
                     self.verbosity,
-                )?
-                .map(|x| x.to_string()),
-            ))
+                )
+                .map(|x| x.map(|y| y.to_string())).par_bridge(),
+            )
         } else {
             None
         };
-        Ok(maybe_crc
+        let maybe_fletcher = if let BuilderEnum::Fletcher(fletcher) = &self.spec {
+            Some(
+                checksum::fletcher::rev::reverse_fletcher_para(
+                    fletcher,
+                    self.pairs.as_slice(),
+                    self.verbosity,
+                )
+                .map(|x| x.map(|y| y.to_string())),
+            )
+        } else {
+            None
+        };
+        maybe_crc
             .into_par_iter()
             .flatten()
-            .chain(maybe_modsum.into_par_iter().flatten()))
+            .chain(maybe_modsum.into_par_iter().flatten())
+            .chain(maybe_fletcher.into_par_iter().flatten())
     }
 }
 
@@ -186,6 +213,7 @@ pub fn find_algorithm<'a>(
     let spec = match prefix.as_str() {
         "crc" => BuilderEnum::CRC(CRCBuilder::<u128>::from_str(rest)?),
         "modsum" => BuilderEnum::ModSum(ModSumBuilder::<u64>::from_str(rest)?),
+        "fletcher" => BuilderEnum::Fletcher(FletcherBuilder::<u128>::from_str(rest)?),
         _ => unimplemented!(),
     };
     let sums = sum
