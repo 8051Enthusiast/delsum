@@ -7,7 +7,6 @@ edition = "2018"
 [dependencies]
 num-traits = "0.2"
 num-bigint = "0.3"
-clap = "2"
 rayon = "1.1"
 bitvec = "0.19"
 lazy_static = "1.4"
@@ -21,12 +20,9 @@ quickcheck_macros = "0.9"
 [workspace]
 members = [
     "poly",
+    "delsum-bin",
 ]
 
 [lib]
-name = "libdelsum"
-path = "src/lib.rs"
-
-[[bin]]
 name = "delsum"
-path = "src/bin.rs"
+path = "src/lib.rs"

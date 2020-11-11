@@ -1,6 +1,6 @@
 use clap::{App, Arg, ArgGroup};
-use libdelsum::checksum::{RelativeIndex, Relativity};
-use libdelsum::{find_algorithm, find_checksum_segments};
+use delsum::checksum::{RelativeIndex, Relativity};
+use delsum::{find_algorithm, find_checksum_segments};
 //use rayon::prelude::*;
 use rayon::prelude::*;
 use std::fs::File;
