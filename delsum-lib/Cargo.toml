@@ -1,0 +1,28 @@
+[package]
+name = "delsum-lib"
+version = "0.1.0"
+authors = ["8051Enthusiast <8051enthusiast@protonmail.com>"]
+edition = "2018"
+
+[features]
+default = ["parallel"]
+
+parallel = ["rayon"]
+
+[dependencies]
+num-traits = "0.2"
+num-bigint = "0.3"
+rayon = { version = "1.1", optional = true }
+bitvec = "0.19"
+lazy_static = "1.4"
+rand = "0.7"
+poly = { path = "../poly" }
+
+[dev-dependencies]
+quickcheck = "0.9"
+quickcheck_macros = "0.9"
+
+
+[lib]
+name = "delsum_lib"
+path = "src/lib.rs"

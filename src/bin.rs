@@ -1,5 +1,5 @@
-use delsum::checksum::{RelativeIndex, Relativity};
-use delsum::{find_algorithm, find_checksum_segments, find_checksum};
+use delsum_lib::checksum::{RelativeIndex, Relativity};
+use delsum_lib::{find_algorithm, find_checksum_segments, find_checksum};
 use structopt::StructOpt;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
