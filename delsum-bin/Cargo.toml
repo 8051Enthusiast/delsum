@@ -4,11 +4,16 @@ version = "0.1.0"
 authors = ["8051Enthusiast <8051enthusiast@protonmail.com>"]
 edition = "2018"
 
+[features]
+default = ["parallel"]
+
+parallel = ["delsum/parallel", "rayon"]
+
 [[bin]]
 name = "delsum"
 path = "src/bin.rs"
 
 [dependencies]
-rayon = "1.1"
+rayon = { version = "1.1", optional = true }
 clap = "2"
-delsum = { path = ".." }
+delsum = { path = "..", default-features = false }

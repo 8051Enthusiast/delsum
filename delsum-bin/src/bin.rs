@@ -1,13 +1,17 @@
 use clap::{App, Arg, ArgGroup};
 use delsum::checksum::{RelativeIndex, Relativity};
 use delsum::{find_algorithm, find_checksum_segments};
-//use rayon::prelude::*;
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use std::fs::File;
 use std::io::Read;
 use std::process::exit;
 
 fn main() {
+    #[cfg(feature = "parallel")]
+    let parallel_string = "try doing more parallelism, in turn using more memory";
+    #[cfg(not(feature = "parallel"))]
+    let parallel_string = "try doing more parallelism, in turn using more memory (not available because disabled at compile time)";
     let matches = App::new("delsum")
         .version("0.1.0")
         .author("8051Enthusiast <8051enthusiast@protonmail.com>")
@@ -59,7 +63,9 @@ fn main() {
         )
         .arg(
             Arg::with_name("parallel")
-                .help("try doing more parallelism, in turn using more memory")
+                .help(
+                    parallel_string
+                )
                 .long("parallel")
                 .short("p")
         )
@@ -128,7 +134,11 @@ fn main() {
     } else {
         Relativity::Start
     };
+
+    #[cfg(feature = "parallel")]
     let parallel = matches.is_present("parallel");
+    #[cfg(not(feature = "parallel"))]
+    let parallel = false;
     let reverse = matches.is_present("reverse");
     let byte_slices: Vec<_> = bytes.iter().map(Vec::<u8>::as_slice).collect();
     let subsum_print = |model| {
@@ -164,26 +174,24 @@ fn main() {
     };
     match (reverse, parallel) {
         (true, true) => {
-            models.par_iter().for_each(|x|
-                algorithms(x).find_all_para().for_each(|algo| {
-                    match algo {
-                        Ok(a) => println!("{}", a),
-                        Err(e) => eprintln!("Error on {}: {}", x, e),
-                    }
+            #[cfg(feature = "parallel")]
+            models.par_iter().for_each(|x| {
+                algorithms(x).find_all_para().for_each(|algo| match algo {
+                    Ok(a) => println!("{}", a),
+                    Err(e) => eprintln!("Error on {}: {}", x, e),
                 })
-            );
+            });
         }
         (true, false) => {
-            models.iter().for_each(|x|
-                algorithms(x).find_all().for_each(|algo| {
-                    match algo {
-                        Ok(a) => println!("{}", a),
-                        Err(e) => eprintln!("Error on {}: {}", x, e),
-                    }
+            models.iter().for_each(|x| {
+                algorithms(x).find_all().for_each(|algo| match algo {
+                    Ok(a) => println!("{}", a),
+                    Err(e) => eprintln!("Error on {}: {}", x, e),
                 })
-            );
+            });
         }
         (false, true) => {
+            #[cfg(feature = "parallel")]
             models.par_iter().map(|x| x.as_str()).for_each(subsum_print);
         }
         (false, false) => {

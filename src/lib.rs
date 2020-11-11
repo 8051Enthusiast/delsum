@@ -10,6 +10,7 @@ use checksum::{
     LinearCheck, RangePairs, Relativity,
 };
 use checksum::{CheckBuilderErr, CheckReverserError};
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use std::str::FromStr;
 #[cfg(test)]
@@ -159,6 +160,8 @@ impl<'a> AlgorithmFinder<'a> {
             .chain(maybe_modsum.into_iter().flatten())
             .chain(maybe_fletcher.into_iter().flatten())
     }
+
+    #[cfg(feature = "parallel")]
     pub fn find_all_para<'b>(
         &'b self,
     ) -> impl ParallelIterator<Item = Result<String, CheckReverserError>> + 'b {
@@ -177,7 +180,8 @@ impl<'a> AlgorithmFinder<'a> {
                     self.pairs.as_slice(),
                     self.verbosity,
                 )
-                .map(|x| x.map(|y| y.to_string())).par_bridge(),
+                .map(|x| x.map(|y| y.to_string()))
+                .par_bridge(),
             )
         } else {
             None

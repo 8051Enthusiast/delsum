@@ -3,6 +3,7 @@ use crate::checksum::{unresult_iter, CheckReverserError};
 use crate::factor::divisors_range;
 use num_bigint::BigInt;
 use num_traits::{one, zero, One, Signed, Zero};
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use std::convert::TryInto;
 use std::iter::Iterator;
@@ -21,6 +22,7 @@ pub fn reverse_fletcher<'a>(
         .flatten()
 }
 
+#[cfg(feature = "parallel")]
 pub fn reverse_fletcher_para<'a>(
     spec: &FletcherBuilder<u128>,
     chk_bytes: &'a [(&[u8], u128)],

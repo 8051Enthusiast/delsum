@@ -233,7 +233,7 @@ impl<Sum: BitNum> FromStr for Fletcher<Sum> {
     /// Example:
     ///
     /// ```
-    /// # use libdelsum::checksum::fletcher::Fletcher;
+    /// # use delsum::checksum::fletcher::Fletcher;
     /// # use std::str::FromStr;
     /// Fletcher::<u32>::from_str("width=32 init=1 module=0xfff1 name=\"adler-32\"").is_ok();
     /// ```

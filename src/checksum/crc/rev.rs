@@ -1,9 +1,11 @@
 use super::{CRCBuilder, CRC};
-use crate::checksum::{CheckReverserError, unresult_iter};
+use crate::checksum::{unresult_iter, CheckReverserError};
 use poly::*;
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use std::convert::TryInto;
 
+#[cfg(feature = "parallel")]
 pub fn reverse_crc_para<'a>(
     spec: &CRCBuilder<u128>,
     chk_bytes: &'a [(&[u8], u128)],
@@ -920,7 +922,7 @@ mod tests {
         for crc_loop in reverser {
             let crc_loop = match crc_loop {
                 Ok(x) => x,
-                Err(_) => return TestResult::discard()
+                Err(_) => return TestResult::discard(),
             };
             if !has_appeared && crc_loop == crc {
                 has_appeared = true;

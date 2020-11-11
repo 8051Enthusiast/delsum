@@ -2,6 +2,7 @@ pub mod crc;
 pub mod fletcher;
 pub mod modsum;
 
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use std::cmp::Ordering;
 use std::convert::TryFrom;
@@ -190,9 +191,16 @@ pub trait LinearCheck: Digest + Send + Sync {
             Relativity::Start => 0..min_len,
             Relativity::End => (b.len() - min_len)..b.len(),
         };
+        #[cfg(feature = "parallel")]
         let (start_presums, end_presums) = bytes
             .par_iter()
             .zip(sum.par_iter())
+            .map(|(b, s)| self.presums(b, &s, 0..min_len, end_range(&b)))
+            .unzip();
+        #[cfg(not(feature = "parallel"))]
+        let (start_presums, end_presums) = bytes
+            .iter()
+            .zip(sum.iter())
             .map(|(b, s)| self.presums(b, &s, 0..min_len, end_range(&b)))
             .unzip();
 
@@ -242,7 +250,11 @@ impl<Sum: Clone + Eq + Ord + std::fmt::Debug + Send + Sync> PresumSet<Sum> {
         // vector of all indices
         let mut idxvec: Vec<_> = (0..=(firstlen - 1) as u32).collect();
         // get a permutation vector representing the sort of the presum arrays first by value and then by index
+
+        #[cfg(feature = "parallel")]
         idxvec.par_sort_unstable_by(|a, b| Self::cmp_idx(&presum, *a, &presum, *b).then(a.cmp(&b)));
+        #[cfg(not(feature = "parallel"))]
+        idxvec.sort_unstable_by(|a, b| Self::cmp_idx(&presum, *a, &presum, *b).then(a.cmp(&b)));
         Self {
             idx: idxvec,
             presum,
