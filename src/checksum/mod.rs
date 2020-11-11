@@ -25,7 +25,7 @@ pub trait Digest {
     /// and gets converted to a Sum by finalize
     /// is not really feasable because of the operations LinearCheck would need to do
     /// both on Sums and interal States, so a single Sum type must be enough.
-    type Sum: Clone + Eq + Ord + std::fmt::Debug + Send + Sync;
+    type Sum: Clone + Eq + Ord + std::fmt::Debug + Send + Sync + SumStr;
     /// Gets an initial sum before the bytes are processed through the sum.
     ///
     /// For instance in the case of crc, the sum type is some integer and the returned value from
@@ -388,6 +388,22 @@ impl std::fmt::Display for CheckReverserError {
     }
 }
 impl std::error::Error for CheckReverserError {}
+
+/// Trait for displaying checksum outputs
+pub trait SumStr {
+    fn to_width_str(&self, width: usize) -> String;
+}
+
+// default implementation for normal numbers
+impl<T: crate::bitnum::BitNum> SumStr for T {
+    fn to_width_str(&self, width: usize) -> String {
+        if width == 0 {
+            return String::new();
+        }
+        let w = (width - 1)/4 + 1;
+        format!("{:0width$x}", self, width = w)
+    }
+}
 
 /// Turns Result<Iterator, Error> into Iterator<Result<Iterator::Item, Error>> so that
 /// on Err, only the single error is iterated, and else the items of the iterator

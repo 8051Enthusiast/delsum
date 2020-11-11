@@ -7,7 +7,7 @@ use checksum::{
     crc::{CRCBuilder, CRC},
     fletcher::{Fletcher, FletcherBuilder},
     modsum::{ModSum, ModSumBuilder},
-    LinearCheck, RangePairs, Relativity,
+    LinearCheck, RangePairs, Relativity, Digest, SumStr
 };
 use checksum::{CheckBuilderErr, CheckReverserError};
 #[cfg(feature = "parallel")]
@@ -104,6 +104,43 @@ pub fn find_checksum_segments(
         (17..=32, "fletcher") => find_segment_str::<Fletcher<u32>>(rest, bytes, sum, rel),
         (33..=64, "fletcher") => find_segment_str::<Fletcher<u64>>(rest, bytes, sum, rel),
         (65..=128, "fletcher") => find_segment_str::<Fletcher<u128>>(rest, bytes, sum, rel),
+        _ => Err(CheckBuilderErr::ValueOutOfRange("width")),
+    }
+}
+
+fn get_checksums<A>(strspec: &str, files: &[Vec<u8>], width: usize) -> Result<Vec<String>, CheckBuilderErr>
+where
+    A: Digest + FromStr<Err = CheckBuilderErr>,
+{
+    let algo = A::from_str(strspec)?;
+    let mut sums = Vec::new();
+    for file in files {
+        sums.push(algo.digest(file.as_slice()).unwrap().to_width_str(width));
+    }
+    Ok(sums)
+}
+
+pub fn find_checksum(
+    strspec: &str,
+    bytes: &[Vec<u8>]
+) -> Result<Vec<String>, CheckBuilderErr> {
+    let (prefix, width, rest) = find_prefix_width(strspec)?;
+    // look, it's not really useful to it in this case, but i really like how this looks
+    match (width, prefix) {
+        (1..=8, "crc") => get_checksums::<CRC<u8>>(rest, bytes, width),
+        (9..=16, "crc") => get_checksums::<CRC<u16>>(rest, bytes, width),
+        (17..=32, "crc") => get_checksums::<CRC<u32>>(rest, bytes, width),
+        (33..=64, "crc") => get_checksums::<CRC<u64>>(rest, bytes, width),
+        (65..=128, "crc") => get_checksums::<CRC<u128>>(rest, bytes, width),
+        (1..=8, "modsum") => get_checksums::<ModSum<u8>>(rest, bytes, width),
+        (9..=16, "modsum") => get_checksums::<ModSum<u16>>(rest, bytes, width),
+        (17..=32, "modsum") => get_checksums::<ModSum<u32>>(rest, bytes, width),
+        (33..=64, "modsum") => get_checksums::<ModSum<u64>>(rest, bytes, width),
+        (1..=8, "fletcher") => get_checksums::<Fletcher<u8>>(rest, bytes, width),
+        (9..=16, "fletcher") => get_checksums::<Fletcher<u16>>(rest, bytes, width),
+        (17..=32, "fletcher") => get_checksums::<Fletcher<u32>>(rest, bytes, width),
+        (33..=64, "fletcher") => get_checksums::<Fletcher<u64>>(rest, bytes, width),
+        (65..=128, "fletcher") => get_checksums::<Fletcher<u128>>(rest, bytes, width),
         _ => Err(CheckBuilderErr::ValueOutOfRange("width")),
     }
 }

@@ -1,5 +1,5 @@
 use delsum::checksum::{RelativeIndex, Relativity};
-use delsum::{find_algorithm, find_checksum_segments};
+use delsum::{find_algorithm, find_checksum_segments, find_checksum};
 use structopt::StructOpt;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -13,6 +13,7 @@ fn main() {
     match opt {
         Opt::Part(p) => part(&p),
         Opt::Reverse(r) => reverse(&r),
+        Opt::Check(c) => check(&c),
     }
 }
 
@@ -70,7 +71,8 @@ fn part(opts: &Part) {
             exit(1);
         });
         if !segs.is_empty() {
-            println!("{}:", model);
+            let mut list = String::new();
+            list.push_str(&format!("{}:\n", model));
             for (a, b) in segs {
                 let a_list = a
                     .iter()
@@ -85,8 +87,9 @@ fn part(opts: &Part) {
                     })
                     .collect::<Vec<_>>()
                     .join(",");
-                println!("\t{}:{}", a_list, b_list);
+                list.push_str(&format!("\t{}:{}\n", a_list, b_list));
             }
+            print!("{}", list);
         }
     };
     match parallel {
@@ -100,10 +103,36 @@ fn part(opts: &Part) {
     };
 }
 
+fn check(opts: &Check) {
+    let files = read_files(&opts.files);
+    let models = read_models(&opts.model, &opts.model_file);
+    #[cfg(feature = "parallel")]
+    let parallel = opts.parallel;
+    #[cfg(not(feature = "parallel"))]
+    let parallel = false;
+    let print_sums = |model| {
+        let checksums = find_checksum(model, &files).unwrap_or_else(|err| {
+            eprintln!("Could not process model '{}': {}", model, err);
+            exit(1);
+        });
+        println!("{}: {}", model, checksums.join(","))
+    };
+    match parallel {
+        true => {
+            #[cfg(feature = "parallel")]
+            models.par_iter().for_each(|x| print_sums(x));
+        }
+        false => {
+            models.iter().for_each(|x| print_sums(x));
+        }
+    }
+}
+
 #[derive(Debug, StructOpt)]
 enum Opt {
     Part(Part),
     Reverse(Reverse),
+    Check(Check),
 }
 
 /// With given checksum algorithm and checksums, find parts of the file matching the checksum
@@ -158,6 +187,25 @@ struct Reverse {
     files: Vec<OsString>
 }
 
+/// From given files and algorithms, find out the checksums
+#[derive(Debug, StructOpt)]
+#[structopt(rename_all = "kebab-case")]
+struct Check {
+    /// Print some messages indicating progress
+    #[structopt(short, long, parse(from_occurrences))]
+    verbose: u64,
+    /// Do more parallelism, in turn using more memory
+    #[structopt(short, long)]
+    parallel: bool,
+    /// Use the checksum algorithm given by the model string
+    #[structopt(short, long)]
+    model: Option<String>,
+    /// Read model strings line-by-line from given file
+    #[structopt(short = "M", long)]
+    model_file: Option<OsString>,
+    /// The files of which to find checksummed parts
+    files: Vec<OsString>
+}
 fn read_models(model: &Option<String>, model_file: &Option<OsString>) -> Vec<String> {
     model_file.clone().map_or_else(
         || {
