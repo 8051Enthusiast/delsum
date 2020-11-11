@@ -611,7 +611,10 @@ fn factor(mut num: u128, bound: u128) -> Vec<(u128, u8)> {
         };
     }
     for factor in maybe_prime64 {
-        prime_factors = if sieve.is_prime(factor).unwrap_or_else(|| is_prob_prime(factor)) {
+        prime_factors = if sieve
+            .is_prime(factor)
+            .unwrap_or_else(|| is_prob_prime(factor))
+        {
             merge_factors(&[(factor as u128, 1)], &prime_factors)
         } else {
             let trial_fac: Vec<_> = trial_div(factor, &mut sieve, bound)
@@ -836,13 +839,13 @@ mod tests {
             divisors_range(21627638661127035875894778593280, 65531, 65535),
             vec![65531, 65532, 65533, 65534, 65535]
         );
-        assert_eq!(
-            divisors_range(13875613813, 7000000, 8000000),
-            vec![7299113]
-        );
+        assert_eq!(divisors_range(13875613813, 7000000, 8000000), vec![7299113]);
         assert_eq!(
             divisors_range(1749336101070558, 500000, 600000),
-            vec![513799, 517881, 528171, 531973, 536851, 540813, 542542, 542543, 553322, 555529, 566566, 572894, 577122, 598262]
+            vec![
+                513799, 517881, 528171, 531973, 536851, 540813, 542542, 542543, 553322, 555529,
+                566566, 572894, 577122, 598262
+            ]
         );
         assert_eq!(
             divisors_range(287000, 1000, 1500),

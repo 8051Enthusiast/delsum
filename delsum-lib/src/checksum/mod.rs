@@ -400,7 +400,7 @@ impl<T: crate::bitnum::BitNum> SumStr for T {
         if width == 0 {
             return String::new();
         }
-        let w = (width - 1)/4 + 1;
+        let w = (width - 1) / 4 + 1;
         format!("{:0width$x}", self, width = w)
     }
 }

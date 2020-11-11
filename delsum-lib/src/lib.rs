@@ -7,7 +7,7 @@ use checksum::{
     crc::{CRCBuilder, CRC},
     fletcher::{Fletcher, FletcherBuilder},
     modsum::{ModSum, ModSumBuilder},
-    LinearCheck, RangePairs, Relativity, Digest, SumStr
+    Digest, LinearCheck, RangePairs, Relativity, SumStr,
 };
 use checksum::{CheckBuilderErr, CheckReverserError};
 #[cfg(feature = "parallel")]
@@ -108,7 +108,11 @@ pub fn find_checksum_segments(
     }
 }
 
-fn get_checksums<A>(strspec: &str, files: &[Vec<u8>], width: usize) -> Result<Vec<String>, CheckBuilderErr>
+fn get_checksums<A>(
+    strspec: &str,
+    files: &[Vec<u8>],
+    width: usize,
+) -> Result<Vec<String>, CheckBuilderErr>
 where
     A: Digest + FromStr<Err = CheckBuilderErr>,
 {
@@ -120,10 +124,7 @@ where
     Ok(sums)
 }
 
-pub fn find_checksum(
-    strspec: &str,
-    bytes: &[Vec<u8>]
-) -> Result<Vec<String>, CheckBuilderErr> {
+pub fn find_checksum(strspec: &str, bytes: &[Vec<u8>]) -> Result<Vec<String>, CheckBuilderErr> {
     let (prefix, width, rest) = find_prefix_width(strspec)?;
     // look, it's not really useful to it in this case, but i really like how this looks
     match (width, prefix) {

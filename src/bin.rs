@@ -1,12 +1,12 @@
 use delsum_lib::checksum::{RelativeIndex, Relativity};
-use delsum_lib::{find_algorithm, find_checksum_segments, find_checksum};
-use structopt::StructOpt;
+use delsum_lib::{find_algorithm, find_checksum, find_checksum_segments};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+use std::ffi::OsString;
 use std::fs::File;
 use std::io::Read;
 use std::process::exit;
-use std::ffi::OsString;
+use structopt::StructOpt;
 
 fn main() {
     let opt = Opt::from_args();
@@ -66,10 +66,11 @@ fn part(opts: &Part) {
     #[cfg(not(feature = "parallel"))]
     let parallel = false;
     let subsum_print = |model| {
-        let segs = find_checksum_segments(model, &files, &opts.checksums, rel).unwrap_or_else(|err| {
-            eprintln!("Could not process model '{}': {}", model, err);
-            exit(1);
-        });
+        let segs =
+            find_checksum_segments(model, &files, &opts.checksums, rel).unwrap_or_else(|err| {
+                eprintln!("Could not process model '{}': {}", model, err);
+                exit(1);
+            });
         if !segs.is_empty() {
             let mut list = String::new();
             list.push_str(&format!("{}:\n", model));
@@ -161,7 +162,7 @@ struct Part {
     #[structopt(short, long)]
     checksums: String,
     /// The files of which to find checksummed parts
-    files: Vec<OsString>
+    files: Vec<OsString>,
 }
 
 /// From given files and checksums, find out the checksum algorithms
@@ -184,7 +185,7 @@ struct Reverse {
     #[structopt(short, long)]
     checksums: String,
     /// The files of which to find checksummed parts
-    files: Vec<OsString>
+    files: Vec<OsString>,
 }
 
 /// From given files and algorithms, find out the checksums
@@ -204,7 +205,7 @@ struct Check {
     #[structopt(short = "M", long)]
     model_file: Option<OsString>,
     /// The files of which to find checksummed parts
-    files: Vec<OsString>
+    files: Vec<OsString>,
 }
 fn read_models(model: &Option<String>, model_file: &Option<OsString>) -> Vec<String> {
     model_file.clone().map_or_else(
