@@ -113,7 +113,8 @@ The parameters are:
 * `addout`: The packed value which is added at the end of the sum. The high part is always added to the high part of the checksum at the end, regardless of `swap`. Defaults to 0.
 * `swap`: The boolean flag which indicates that the regular sum should be in the higher half of the packed checksum. Defaults to `false`.
 
-Note that currently, only sums over bytes are supported so sums fletcher-32 can't be specified yet.`
+Note that currently, only sums over bytes are supported so sums fletcher-32 can't be specified yet.
+Also, the `reverse` part does not appear to really work right now.
 
 `crc`
 =====
