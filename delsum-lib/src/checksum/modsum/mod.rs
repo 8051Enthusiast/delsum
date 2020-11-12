@@ -19,6 +19,7 @@ use std::str::FromStr;
 ///
 /// Example:
 /// ```
+/// # use delsum_lib::checksum::modsum::ModSum;
 /// ModSum::<u8>::with_options()
 ///     .width(8)
 ///     .check(0xdd)
