@@ -1,3 +1,43 @@
+//! A builder for a Fletcher-like algorithm.
+//!
+//! The basic functionality of this algorithm is:
+//! * there is a sum which is just the bytes summed modulo some number
+//! * there is also a second sum which the sum of all of the normal sums (modulo the same number)
+//!
+//! Note that text word sizes are currently only `u8`.
+//!
+//! It works roughly like this:
+//! ```
+//! # fn check(file: &[u8]) -> u32 {
+//! # let module = 0xfff1u32;
+//! # let init = 1;
+//! # let (addout1, addout2) = (0, 0);
+//! # let hwidth = 16;
+//! let mut sum1 = init;
+//! let mut sum2 = 0;
+//! for byte in file {
+//!     sum1 = (sum1 + *byte as u32) % module;
+//!     sum2 = (sum2 + sum1) % module;
+//! }
+//! return (sum2 + addout2) % module << hwidth | (sum1 + addout1) % module;
+//! # }
+//! ```
+//! Normally, the sum is represented as the cumulative sum bitshifted to be above the regular sum.
+//! This representation will be referred to as "compact".
+//!
+//! These are the parameters:
+//! * width: Total number of bits of the checksum (twice the amount of bits of the individual sums)
+//! * module: The number by which both sums get reduced
+//! * init: The initial value of the regular sum
+//! * addout: The value that gets added at the end, compact
+//! * swap: Whether to swap the values in the compact representation, i.e. put the regular sum above the cumulative sum
+//! * check: The checksum of the bytes "123456789", checked to be correct on build
+//! * name: The name to be used when displaying the algorithm (optional)
+//!
+//! Note that the `init` parameter, unlike the `addout` parameter, is not compact and is only added to the regular sum,
+//! as for the cumulative sum, it is equivalent to the addout (so you can just add the cumulative `init` to the cumulative `addout`).
+
+
 pub mod rev;
 use crate::bitnum::BitNum;
 use crate::checksum::{CheckBuilderErr, Digest, LinearCheck};
@@ -5,42 +45,24 @@ use crate::keyval::KeyValIter;
 use std::fmt::Display;
 use std::str::FromStr;
 
+
+/// A builder for a fletcher.
+///
+/// One can use it for specifying a fletcher algorithm, which can be used for checksumming.
+/// 
+/// Example:
+/// ```
+/// # use delsum_lib::checksum::fletcher::Fletcher;
+/// let adler32 = Fletcher::<u32>::with_options()
+///     .width(32)
+///     .init(1)
+///     .module(65521)
+///     .check(0x091e01de)
+///     .name("adler32")
+///     .build()
+///     .is_ok();
+/// ```
 #[derive(Clone, Debug)]
-/// A builder for a Fletcher-like algorithm.
-///
-/// The basic functionality of this algorithm is:
-/// * there is a sum which is just the bytes summed modulo some number
-/// * there is also a second sum which the sum of all of the normal sums (modulo the same number)
-///
-/// Note that text word sizes are currently only `u8`.
-///
-/// It works roughly like this:
-/// ```
-/// # fn check(file: &[u8]) -> u32 {
-/// # let module = 0xfff1u32;
-/// # let (init1, init2) = (1, 0);
-/// # let (addout1, addout2) = (0, 0);
-/// # let hwidth = 16;
-/// let mut sum1 = init1;
-/// let mut sum2 = init2;
-/// for byte in file {
-///     sum1 = (sum1 + *byte as u32) % module;
-///     sum2 = (sum2 + sum1) % module;
-/// }
-/// return (sum2 + addout2) % module << hwidth | (sum1 + addout1) % module;
-/// # }
-/// ```
-/// Normally, the sum is represented as the cumulative sum bitshifted to be above the regular sum.
-/// This representation will be referred to as "compact".
-///
-/// These are the parameters:
-/// * width: Total number of bits of the checksum (twice the amount of bits of the individual sums)
-/// * module: The number by which both sums get reduced
-/// * init: The initial value of the sum, compact
-/// * addout: The value that gets added at the end, compact
-/// * swap: Whether to swap the values in the compact representation, i.e. put the regular sum above the cumulative sum
-/// * check: The checksum of the bytes "123456789", checked to be correct on build
-/// * name: The name to be used when displaying the algorithm (optional)
 pub struct FletcherBuilder<Sum: BitNum> {
     width: Option<usize>,
     module: Option<Sum>,
@@ -64,7 +86,7 @@ impl<S: BitNum> FletcherBuilder<S> {
     }
     /// Sets the initial value
     ///
-    /// Contains separate values for both sums, the cumulative one is bitshifted
+    /// Contains one value for the regular sum.
     pub fn init(&mut self, i: S) -> &mut Self {
         self.init = Some(i);
         self
@@ -228,7 +250,8 @@ impl<Sum: BitNum> FromStr for FletcherBuilder<Sum> {
 }
 
 impl<Sum: BitNum> FromStr for Fletcher<Sum> {
-    /// Construct a new fletcher sum algotithm
+    /// Construct a new fletcher sum algorithm from a string.
+    /// Note that all parameters except width are in hexadecimal.
     ///
     /// Example:
     ///

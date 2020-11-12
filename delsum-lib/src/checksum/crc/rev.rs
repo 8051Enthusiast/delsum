@@ -1,3 +1,15 @@
+//! This module contains the function(s) for reversing the parameters for a CRC algorithm with given bytes and checksums.
+//!
+//! Generally, to find out the parameters, the checksums and their width are needed, and 3 of the following (with at least one file):
+//! * value of `init`
+//! * value of `xorout`
+//! * value of `module`
+//! * a file with checksum
+//! * a different file with checksum
+//! * yet another different file checksum
+//!
+//! If `init` is not known, it is neccessary to know two checksums of files with different lengths.
+//! In case only checksums of files with a set length are required, setting `init = 0` is sufficient.
 use super::{CRCBuilder, CRC};
 use crate::checksum::{unresult_iter, CheckReverserError};
 use poly::*;
@@ -5,6 +17,32 @@ use poly::*;
 use rayon::prelude::*;
 use std::convert::TryInto;
 
+/// Find the parameters of a CRC algorithm.
+///
+/// `spec` contains the known parameters of the algorithm (by setting the corresponding values in the builder).
+/// `chk_bytes` are pairs of files and their checksums.
+/// `verbosity` makes the function output what it is doing.
+///
+/// The `width` parameter of the builder has to be set.
+pub fn reverse_crc<'a>(
+    spec: &CRCBuilder<u128>,
+    chk_bytes: &'a [(&[u8], u128)],
+    verbosity: u64,
+) -> impl Iterator<Item = Result<CRC<u128>, CheckReverserError>> + 'a {
+    let spec = spec.clone();
+    let ref_combinations: Vec<_> = ref_comb(spec.refin, spec.refout);
+    ref_combinations
+        .into_iter()
+        .map(move |(refin, refout)| {
+            unresult_iter(reverse(&spec, chk_bytes, verbosity, refin, refout))
+        })
+        .flatten()
+}
+
+/// Parallel version of reverse_crc.
+///
+/// Note that this is parallel only because it tries the 4 combinations of refin, refout
+/// at once when not given, giving at most a 4x speedup.
 #[cfg(feature = "parallel")]
 pub fn reverse_crc_para<'a>(
     spec: &CRCBuilder<u128>,
@@ -21,21 +59,7 @@ pub fn reverse_crc_para<'a>(
         .flatten()
 }
 
-pub fn reverse_crc<'a>(
-    spec: &CRCBuilder<u128>,
-    chk_bytes: &'a [(&[u8], u128)],
-    verbosity: u64,
-) -> impl Iterator<Item = Result<CRC<u128>, CheckReverserError>> + 'a {
-    let spec = spec.clone();
-    let ref_combinations: Vec<_> = ref_comb(spec.refin, spec.refout);
-    ref_combinations
-        .into_iter()
-        .map(move |(refin, refout)| {
-            unresult_iter(reverse(&spec, chk_bytes, verbosity, refin, refout))
-        })
-        .flatten()
-}
-
+// find all combinations of refin, refout using both bool values when a parameter is not given
 fn ref_comb(maybe_refin: Option<bool>, maybe_refout: Option<bool>) -> Vec<(bool, bool)> {
     let refins = maybe_refin
         .map(|x| vec![x])
@@ -50,6 +74,7 @@ fn ref_comb(maybe_refin: Option<bool>, maybe_refout: Option<bool>) -> Vec<(bool,
         .collect()
 }
 
+// wrapper to call rev_from_polys with polynomial arguments
 fn reverse<'a>(
     spec: &CRCBuilder<u128>,
     chk_bytes: &'a [(&[u8], u128)],
@@ -61,6 +86,7 @@ fn reverse<'a>(
         Some(x) => x,
         None => return Err(CheckReverserError::MissingParameter("width")),
     };
+    // check for errors in the parameters
     if 3 > chk_bytes.len()
         + spec.init.is_some() as usize
         + spec.xorout.is_some() as usize
@@ -77,11 +103,14 @@ fn reverse<'a>(
             "need at least one file with different length",
         ));
     }
+    // convert the files to polynomials
     let mut polys: Vec<_> = chk_bytes
         .iter()
         .map(|(b, c)| (bytes_to_poly(b, *c, width as u8, refin, refout), b.len()))
         .collect();
+    // sort by reverse file length
     polys.sort_by(|(fa, la), (fb, lb)| la.cmp(&lb).then(deg(fa).cmp(&deg(fb)).reverse()));
+    // convert parameters to polynomials
     let revinfo = RevInfo::from_builder(spec, refin, refout);
     rev_from_polys(&revinfo, &polys, verbosity).map(|x| x.iter())
 }
@@ -101,10 +130,11 @@ impl RevInfo {
         let init = spec.init.map(|i| new_poly(&i.to_be_bytes()));
         let poly = spec.poly.map(|p| {
             let mut p = new_poly(&p.to_be_bytes());
-            // add leading coefficient
+            // add leading coefficient, which is omitted in binary form
             p.add_to(&new_poly_shifted(&[1], width as i64, true));
             p
         });
+        // while init and poly are unaffected by refout, xorout is not
         let xorout = spec
             .xorout
             .map(|x| new_poly(&cond_reverse(width as u8, x, refout).to_be_bytes()));
@@ -129,6 +159,7 @@ struct RevResult {
 }
 
 impl RevResult {
+    // iterate over all possible parameters
     fn iter(self) -> impl Iterator<Item = CRC<u128>> {
         let RevResult {
             polys,
@@ -141,9 +172,11 @@ impl RevResult {
         polys
             .into_iter()
             .map(move |pol| {
+                // for each polynomial of degree width, iterate over all solutions of the PrefactorMod
                 inits
                     .iter_inits(&pol, &xorout)
                     .map(move |(poly_p, init_p, xorout_p)| {
+                        // convert polynomial parameters to a CRC<u128>
                         let poly = poly_to_u128(&add(
                             &poly_p,
                             &new_poly_shifted(&[1], width as i64, true),
@@ -174,6 +207,49 @@ enum InitPlace {
 
 type InitPoly = (PolyPtr, InitPlace);
 
+// The parameter reversing for CRC is quite similar and it may be easier to try to understand that implementation first,
+// since it uses integers instead of 𝔽₂[X].
+//
+// If f is a file of length l (in bits) interpreted as a polynomial in 𝔽₂[X], then the crc is just
+//  (init*X^l + f*X^width + xorout) % poly
+//
+// If we have a file with a crc checksum, we can calculate
+//  checksum - f*X^width ≡ init*X^l + xorout mod poly
+// Note that poly is not yet known, so we can't reduce by poly yet and have a giant degree l polynomial,
+// with a file that is a few MB, this is a polynomial whose degree is a few millions, so each operation
+// can be expensive.
+//
+// By using multiple files, we can also cancel xorout and init:
+// Given three files of len l₁, l₂, l₃, we have calculated init*X^lₐ + xorout mod poly before, so by subtracting
+// the first two, we get `a = init*(X^l₁ + X^l₂) mod poly`. Doing the 2nd and 3rd, we get similarly get `b = init*(X^l₂ + X^l₃) mod poly`.
+// For simplicity, let's assume l₁ < l₂ < l₃ (if there are two of the same length, init is already cancelled).
+// If we multiply a by (X^(l₃ - l₂) + 1), we get init*(X^(l₃ + l₁ - l₂) + X^l₃ + X^l₂ + X^l₁) mod poly.
+// When we multiply b by (X^(l₂ - l₁) + 1), we also get that, so by subtracting both, we get 0 mod poly, meaning that
+// poly divides the result, which we can use to determine poly later.
+//
+// If we have more than three files, we can also get more results, but since poly has to divide all of them, we can gcd them
+// together to get a smaller polynomial that is divided by poly.
+// If we don't have that, we still know that the highest prime factor of poly that we care about has degree width,
+// which we can use to construct a polynomial that only has factors of degree <= width and gcd with that.
+//
+// One could think that doing a gcd between million-degree polynomials could be very slow.
+// And if a naive implementation of multiplication and gcd were used, that would be correct.
+// However this program uses two excellent libraries, NTL and gf2x, with which the gcd can be calculated in
+// around O(n*log^2(n)) time, thanks to the FFT-based Schönhage-Strassen multiplication and a clever
+// gcd implementation called half-gcd.
+//
+// Now we just assume that the result we got in the previous step is already our poly.
+// We can just adjust it to be a divisor of that if we found it to be wrong later.
+// With that, we can solve init*(X^l₂ + X^l₁) ≡ x mod poly for init using number theory®
+// and from that, we get xorout by subtracting e.g. init*X^l₁.
+//
+// If our poly is still of degree higher than width, we can then factorize it.
+// Note that factoring 𝔽₂[X] polynoials is suprisingly feasable (people have factored
+// such polynomials in the degree of millions) and because the factors all have degree <= width,
+// due to the way distinct degree factorization works, it should still work quite fast.
+// However, by this point poly should be very close in degree to width, so it's not a very big issue anyway.
+//
+// Using the factorization, we can then iterate over all divisors of degree width.
 fn rev_from_polys(
     spec: &RevInfo,
     arg_polys: &[(PolyPtr, usize)],
@@ -187,6 +263,8 @@ fn rev_from_polys(
             );
         }
     };
+    // InitPlace is essentially a sparse polynomial with at most 2 coefficients being 1
+    // note that it has an implied factor of 8, because it uses the byte position instead of bit position
     let mut polys: Vec<_> = arg_polys
         .iter()
         .rev()
@@ -253,6 +331,8 @@ fn remove_xorouts(
         .expect("Internal Error: Zero-length vector given to remove_xorouts");
     let xor_ret = match maybe_xorout {
         Some(xorout) => {
+            // if we already have xorout, we can subtract it from the files themselves so
+            // that we have one more to get parameters from
             ret_vec.push((add(&prev.0, xorout), prev.1));
             (copy_poly(&xorout), InitPlace::None)
         }
@@ -263,9 +343,11 @@ fn remove_xorouts(
             (None, _) | (_, true) => {
                 let poly_diff = add(&p, &prev.0);
                 let new_init_place = match (prev.1, l) {
+                    // no coefficients being one means it is zero and therefore the neutral element
                     (InitPlace::None, other) | (other, InitPlace::None) => other,
                     (InitPlace::Single(l1), InitPlace::Single(l2)) => {
                         if l1 == l2 {
+                            // they cancel out
                             InitPlace::None
                         } else {
                             InitPlace::Pair(l1, l2)
@@ -307,6 +389,7 @@ fn find_polyhull(spec: &RevInfo, polys: Vec<InitPoly>, verbosity: u64) -> (Vec<I
     for (p, l) in polys {
         match l {
             InitPlace::None => {
+                // if init is multiplied by 0, this is already a multiple of poly so we can gcd it to our estimate
                 hull.gcd_to(&p);
             }
             _ => {
@@ -318,10 +401,12 @@ fn find_polyhull(spec: &RevInfo, polys: Vec<InitPoly>, verbosity: u64) -> (Vec<I
         }
     }
 
-    // do smart things
     log("gcd'ing different length files together");
     for ((p, l), (q, m)) in contain_init_vec.iter().zip(contain_init_vec.iter().skip(1)) {
         let power_8n = |n: usize| new_poly_shifted(&[1], 8 * n as i64, true);
+        // this essentially tries to cancel out the init in the checksums
+        // if you have a*init and b*init, you can get 0 by calculating b*a*init - a*b*init
+        // this is almost done here, except for cancelling unneccessary common X^k between a and b
         let (mut p_fac, mut q_fac) = match (l, m) {
             (InitPlace::None, _) | (_, InitPlace::None) => unreachable!(),
             (InitPlace::Single(d), InitPlace::Single(e)) => {
@@ -354,6 +439,7 @@ fn find_polyhull(spec: &RevInfo, polys: Vec<InitPoly>, verbosity: u64) -> (Vec<I
         p_fac *= q;
         q_fac *= p;
         q_fac += &p_fac;
+        // q_fac should now contain no init, so we can gcd it to the hull
         hull.gcd_to(&q_fac);
         if deg(&hull) == 0 {
             return (contain_init_vec, hull);
@@ -367,6 +453,13 @@ fn find_polyhull(spec: &RevInfo, polys: Vec<InitPoly>, verbosity: u64) -> (Vec<I
     }
 
     log("removing factors with degree*multiplicity > width");
+    // You may remember from your course in abstract algebra that in GF(q)[X],
+    // the polynomial p_d = X^(q^d) - X contains all primes with degrees dividing d (with multiplicty 1)
+    // Here, we multiply all such polynomials for d from 1 to width together.
+    // In this product, each prime of degree k has multiplicity floor(width/k) since there are
+    // exactly floor(width/k) p_d where k divides d.
+    // Now, that polynomial would be quite large, but we only care about the gcd of this polynomial
+    // with hull, so we can evaluated this modulo hull.
     let mut cumulative_prod = new_polyrem(&new_poly(&[1]), &hull);
     let x = new_polyrem(&new_poly(&[1 << 1]), &hull);
     let mut x_to_2_to_n = copy_polyrem(&x);
@@ -383,13 +476,15 @@ fn find_polyhull(spec: &RevInfo, polys: Vec<InitPoly>, verbosity: u64) -> (Vec<I
         // (fac = x^(2^n) + x)
         cumulative_prod *= &fac;
     }
-    // can be potentially large, might not hurt to drop a bit earlier
     drop(x_to_2_to_n);
     let reduced_prod = cumulative_prod.rep();
     drop(cumulative_prod);
     log("doing final gcd");
     hull.gcd_to(&reduced_prod);
     log("removing trailing zeros");
+    // we don't care about the factor X^k in the hull, since crc polys should
+    // have the lowest bit set (why would you not??)
+    // it is also assumed later that this holds, so this can not just be removed
     for i in 0..=spec.width {
         if hull.coeff(i as i64) {
             hull = shift(&hull, -(i as i64));
@@ -399,6 +494,10 @@ fn find_polyhull(spec: &RevInfo, polys: Vec<InitPoly>, verbosity: u64) -> (Vec<I
     (contain_init_vec, hull)
 }
 
+// we don't actually ever convert the factors represented by a
+// InitPlaces struct into a full polynomial, we just evaluate it modulo the hull
+// to do this faster, we save X^k mod hull and evaluate them from smallest to largest
+// so we can reuse it later
 struct MemoPower {
     prev_power: usize,
     prev_ppoly: PolyRemPtr,
@@ -460,6 +559,8 @@ impl PrefactorMod {
         }
     }
     fn new_init(maybe_init: &Option<PolyPtr>, hull: &Poly) -> Self {
+        // if we already have init, we can use that for our solution here, otherwise use the
+        // set of all possible solutions
         let (unknown, possible) = match maybe_init {
             None => (copy_poly(hull), new_zero()),
             Some(init) => (new_poly(&[1]), copy_poly(init)),
@@ -494,6 +595,8 @@ impl PrefactorMod {
         drop(discrepancy);
         drop(power_float);
         drop(file_float);
+        // since we only have power*init ≡ mod hull, but want to calculate init,
+        // we need to calculate the modular inverse
         let possible = inverse_fixed(file, power.get_init_fac(), &common_float, &hull);
         Some(PrefactorMod {
             unknown: common_float,
@@ -511,6 +614,8 @@ impl PrefactorMod {
         self.possible %= &self.valid();
     }
 
+    // merge two different sets of solutions into one where the hull is the gcd of both
+    // and all solutions are valid in both
     fn merge(mut self, mut other: Self, hull: &mut Poly) -> Option<Self> {
         self.update_hull(hull);
         other.update_hull(hull);
@@ -522,7 +627,7 @@ impl PrefactorMod {
         let mut other_fac = new_zero();
         let self_valid = self.valid();
         let other_valid = other.valid();
-        // bezout
+        // this is the chinese remainder theorem for non-coprime ideals
         let common_valid = xgcd(&mut self_fac, &mut other_fac, &self_valid, &other_valid);
         self_fac *= &self_valid;
         self_fac *= &other.possible;
@@ -572,11 +677,12 @@ impl PrefactorMod {
             _ => panic!("Internal Error: Double"),
         };
         let poly_copy = copy_poly(red_poly);
-
+        // iterate over all polynomials p mod red_unknown and calculate possible + valid*p
         (0u128..1 << deg(&red_unknown)).map(move |p| {
             let mut current_init = new_polyrem(&new_poly(&p.to_be_bytes()), &poly_copy);
             current_init *= &mod_valid;
             current_init += &mod_init;
+            // also calculate the corresponding xorouts while we're at it
             let mut current_xorout = copy_polyrem(&mod_power);
             current_xorout *= &current_init;
             current_xorout += &mod_xorout;
@@ -606,6 +712,7 @@ fn find_init(maybe_init: &Option<PolyPtr>, hull: &mut Poly, polys: Vec<InitPoly>
     ret
 }
 
+// calculates lim_{n to inf} gcd(a, b^n)
 fn highest_power_gcd(a: &Poly, b: &Poly) -> PolyPtr {
     let mut prev = new_poly(&[1]);
     let mut cur = b % a;

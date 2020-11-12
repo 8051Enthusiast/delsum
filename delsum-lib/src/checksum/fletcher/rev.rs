@@ -1,3 +1,18 @@
+//! This module contains the function(s) for reversing the parameters for a fletcher algorithm with given bytes and checksums.
+//!
+//! Generally, to find out the parameters, the checksums and their width are needed, and 3 of the following (with at least one file):
+//! * value of `init`
+//! * value of `addout`
+//! * value of `module`
+//! * a file with checksum
+//! * a different file with checksum
+//! * yet another different file checksum
+//!
+//! If `init` is not known, it is neccessary to know two checksums of files with different lengths.
+//! In case only checksums of files with a set length are required, setting `init = 0` is sufficient.
+//!
+//! It is probable that giving just two files + checksum might already be enough, but there will
+//! probably also be many some false positives.
 use super::{Fletcher, FletcherBuilder};
 use crate::checksum::{unresult_iter, CheckReverserError};
 use crate::factor::divisors_range;
@@ -7,6 +22,13 @@ use num_traits::{one, zero, One, Signed, Zero};
 use rayon::prelude::*;
 use std::convert::TryInto;
 use std::iter::Iterator;
+/// Find the parameters of a fletcher algorithm.
+///
+/// `spec` contains the known parameters of the algorithm (by setting the corresponding values in the builder).
+/// `chk_bytes` are pairs of files and their checksums.
+/// `verbosity` makes the function output what it is doing.
+///
+/// The `width` parameter of the builder has to be set.
 pub fn reverse_fletcher<'a>(
     spec: &FletcherBuilder<u128>,
     chk_bytes: &'a [(&[u8], u128)],
@@ -22,6 +44,10 @@ pub fn reverse_fletcher<'a>(
         .flatten()
 }
 
+/// Parallel version of reverse_fletcher.
+///
+/// It is parallel in the sense that there are two threads, for swap=false and swap=true, if it is not given,
+/// so don't expect too much speedup.
 #[cfg(feature = "parallel")]
 pub fn reverse_fletcher_para<'a>(
     spec: &FletcherBuilder<u128>,
@@ -40,6 +66,9 @@ pub fn reverse_fletcher_para<'a>(
         .flatten()
 }
 
+// contains the information needed for iterating over the possible algorithms
+// `inits` is a solution set of the form `a*x ≡ y mod m`, and init still has to
+// be subtracted from addout1 and addout2
 #[derive(Debug, Clone)]
 struct ReversingResult {
     inits: PrefactorMod,
@@ -84,6 +113,32 @@ impl ReversingResult {
     }
 }
 
+// For understanding the reversing process, one must first look what the sum looks like.
+// If one has a file [a, b, c, d, e] of 5 bytes, then the regular checksum will be in the form
+//      (init + a + b + c + d + e + addout1) mod m
+// and the cumulative one will be
+//      (5*init + 5*a + 4*b + 3*c + 2*d * e + addout2) mod m
+// Because we also know the file, we can subtract a + b + c + d + e or 5a + 4b + 3c + 2d + 1e and get
+//      (init + addout1) mod m
+//      (5*init + addout2) mod m
+// Note that the notation `mod` here does not mean that the result is 0 <= x < m, just that the difference
+// to the unreduced form is a multiple of `m`.
+// So we can just subtract these values without knowing the value of m.
+//
+// We will ignore the regular sum for now because that's the easy part and is the same as in modsum with addout = addout1 + init.
+//
+// Now assume that we do not know addout2 or init, but have three files of lengths 2, 3 and 5.
+// We can therefore get the values (5*init + addout2) mod m, (3*init + addout2) mod m and (2*init + addout2) mod m.
+// If we take the differences of the first two and the last two, we get x = 2*init mod m and y = init mod m.
+//
+// So now we can calculate x - 2*y to get a result that is (0 mod m), which means that the result is divisible by m.
+// We can just assume for now that we actually found m and adjust m later if we found that to be wrong.
+// If m is zero, that is bad luck and we return an error that the files were likely too similar.
+//
+// Now that we have a candidate for m, we can start looking for init and addout.
+// Say we found m = 4 and x = 2*init = 2 mod 4.
+// From that, we can infer that init = 1 mod 4 or init = 3 mod 4 (see PrefactorMod for how exactly that is done).
+// Finding out addout2 is now as easy as subtracting 5*init from (5*init + addout2) mod m.
 fn reverse(
     spec: &FletcherBuilder<u128>,
     chk_bytes: &[(&[u8], u128)],
@@ -96,36 +151,49 @@ fn reverse(
         }
     };
     let mut files = chk_bytes.to_owned();
+    // we sort the files in reverse length because the remove_addout2 function reverses their order
     files.sort_unstable_by(|a, b| a.0.len().cmp(&b.0.len()).reverse());
     let spec = spec.clone();
     let width = spec
         .width
         .ok_or(CheckReverserError::MissingParameter("width"))?;
     log("finding parameters of lower sum");
+    // finding the parameters of the lower sum is pretty much a separate problem already
+    // handled in modsum, so we delegate to that
     let (module, addout1) = find_regular_sum(&spec, &files, swap);
     let mut module = BigInt::from(module);
     let mut addout1 = BigInt::from(addout1);
+    // here, we take the the checksums and remove the cumulative sum sums from them
+    // the second value of each value is supposed to be the multiplicity of init in the sum
     let mut cumusums = cumusum(width, chk_bytes, &module, swap);
     if let Some(init) = spec.init {
         log("removing inits from upper sum");
+        // if we have the parameter init already given, we can remove
+        // it from the sums, so that the cumusums are now just (x, 0) pairs.
         remove_init(&mut cumusums, &BigInt::from(init));
     }
     log("removing upper sum addout");
+    // take the difference between neighboring files if addout2 is not given, to remove the constant addout from the sums
+    // if we already have addout2 given, we don't take the difference between two files, but between each file and given addout2
     let (red_files, mut addout2) = remove_addout2(&spec, cumusums, &module, swap);
     log("refining the module");
+    // here we try to find `module` and reduce the sums by module
     let boneless_files = refine_module(&mut module, red_files);
     if module.is_zero() {
         return Err(CheckReverserError::UnsuitableFiles(
-            "too short or too similar",
+            "too short or too similar or too few files given",
         ));
     }
     log("attempting to find init");
+    // now that we have the module, we can try to find init and reduce `module` some more
     let inits = find_init(&spec.init.map(BigInt::from), &mut module, boneless_files);
     let module = inits.module.clone();
     addout1 = mod_red(&addout1, &module);
     addout2.0 = mod_red(&addout2.0, &module);
+    // if we have checksums of width 7 with values 0x24, 0x51 and 0x64 we know that `module` has to be between 2^7 = 0x80 and 0x64
     let (min, max) = chk_range(chk_bytes, width);
     log("try to find all possible module values");
+    // therefore we try to find all divisors of module in that range
     let modules = divisors_range(module.try_into().unwrap(), min, max)
         .into_iter()
         .map(BigInt::from)
@@ -180,10 +248,12 @@ fn find_regular_sum(
         sums.push(f.iter().copied().map(i128::from).sum::<i128>() - chk_lo as i128);
     }
     let mut module = 0;
+    // init is here actually addout1 + init, which we can only know if we have both values
     let maybe_init = spec
         .addout
         .map(|x| spec.init.map(|y| y as u64 + split_sum(x, width, swap).0))
         .flatten();
+    // delegate to the corresponding modsum function
     let sum1_addout = super::super::modsum::rev::find_largest_mod(&sums, maybe_init, &mut module);
     (module, sum1_addout)
 }
@@ -209,16 +279,25 @@ fn remove_addout2(
     let mut prev = sums
         .pop()
         .expect("Internal Error: Zero-length vector given to remove_addout2");
+    // note: this variable is actually (x,y) where x = addout2 + y*init because we do not know
+    // init yet
     let addout2 = match &maybe_addout {
         Some(addout) => {
+            // if we already know addout, we can use the first file for determining
+            // the module or init better
             ret_vec.push((mod_red(&(&prev.0 - addout), module), prev.1));
             (addout.clone(), 0)
         }
         None => prev.clone(),
     };
+    // note that we reverse the order of the vector here
     for (p, l) in sums.into_iter().rev() {
         let appendix = match (&maybe_addout, l != 0 && l == prev.1) {
+            // if we know addout, but the two files have the same length, we still
+            // want to calculate the difference between the two files, as it will
+            // make it easier to determine the module
             (None, _) | (_, true) => (mod_red(&(&p - prev.0), module), l - prev.1),
+            // but if they're not the same size, we just subtract addout
             (Some(addout), false) => (mod_red(&(&p - addout), module), l),
         };
         ret_vec.push(appendix);
@@ -234,19 +313,19 @@ fn refine_module(module: &mut BigInt, sums: Vec<(BigInt, usize)>) -> Vec<(BigInt
             non_zero.push((s, l));
             continue;
         }
+        // if we have l == 0, they don't contain init, and because they also don't contain
+        // addout, they have to be divisible by module
         *module = gcd(module, &s);
     }
     for ((sa, la), (sb, lb)) in non_zero.iter().zip(non_zero.iter().skip(1)) {
+        // for x = a*init mod m, y = b*init mod m we can get 0 mod m by calculating
+        // (b * x + a * y)/gcd(a, b)
         let bla = BigInt::from(*la);
         let blb = BigInt::from(*lb);
         let common = gcd(&bla, &blb);
-        let a_part = mod_red(&(bla / &common), module);
-        let b_part = mod_red(&(blb / &common), module);
-        let mut mul_sa = sa * b_part;
-        let mut mul_sb = sb * a_part;
-        mul_sa = mod_red(&mul_sa, module);
-        mul_sb = mod_red(&mul_sb, module);
-        *module = gcd(module, &(mul_sa - mul_sb));
+        let mul_sa = sa * blb;
+        let mul_sb = sb * bla;
+        *module = gcd(module, &((mul_sa - mul_sb) / common));
     }
     non_zero
         .iter()
@@ -299,7 +378,9 @@ fn find_init(
     };
     let mut ret = PrefactorMod::new_init(maybe_init, module);
     for (p, l) in sums {
+        // get the set of inits that solve l*init ≡ p mod module
         let file_solutions = PrefactorMod::from_sum(&p, l, module);
+        // merge the solutions with the other solutions
         ret = match file_solutions.map(|f| ret.merge(f)).flatten() {
             Some(valid) => valid,
             None => return PrefactorMod::empty(),
@@ -307,7 +388,10 @@ fn find_init(
     }
     ret
 }
-// describes a set of solutions for unknown*possible % hull
+// describes a set of solutions for unknown*possible % module
+// the `unknown` parameter divides module and captures the fact that there
+// can be multiple solutions for unknown*possible mod `module` because we only
+// know possible modulo (module / unknown)
 #[derive(Clone, Debug)]
 struct PrefactorMod {
     unknown: BigInt,
@@ -325,6 +409,8 @@ impl PrefactorMod {
     }
     fn from_sum(sum: &BigInt, power: usize, module: &mut BigInt) -> Option<PrefactorMod> {
         let bpower = BigInt::from(power);
+        // this basically calculates sum*power^-1, but adjusting module if there are no solutions
+        // and keeping in mind that there can be multiple solutions (which the unknown var keeps track of)
         let (possible, unknown) = partial_mod_div(sum, &bpower, module);
         if module.is_one() {
             return None;
@@ -348,14 +434,15 @@ impl PrefactorMod {
     }
     fn merge(mut self, mut a: PrefactorMod) -> Option<PrefactorMod> {
         if self.module != a.module {
-            let (module, _) = xgcd(&self.module, &a.module);
+            let module = gcd(&self.module, &a.module);
             self.update_module(&module);
             a.update_module(&module);
         }
+        // remove the set of incompatible solutions by adjusting module
         self.adjust_compability(&mut a);
         let self_valid = self.valid();
         let other_valid = a.valid();
-        // bezout
+        // this is how the chinese remainder theorem with two non-coprime parameters works
         let (common_valid, (mut self_fac, mut other_fac)) = xgcd(&self_valid, &other_valid);
         self_fac *= &self_valid;
         self_fac *= &a.possible;
@@ -381,7 +468,7 @@ impl PrefactorMod {
     }
     // in order to chinese remainder with a common factor, both polynomials modulo
     // the common factor need to be the same
-    // if this is not the case, the hull is adjusted
+    // if this is not the case, the module is adjusted
     fn adjust_compability(&mut self, other: &mut Self) {
         let common_valid = gcd(&self.valid(), &other.valid());
         let actual_valid = gcd(&(&self.possible - &other.possible), &common_valid);
@@ -392,6 +479,7 @@ impl PrefactorMod {
         self.update_module(&module);
         other.update_module(&module);
     }
+    // iterate over all solutions in `module`, also calculating addout1, addout2
     fn iter(
         &self,
         addout1: &BigInt,
@@ -422,10 +510,24 @@ impl PrefactorMod {
     }
 }
 
+// from b*x ≡ a mod m, try to calculate x mod m/y where y is the second return value
 fn partial_mod_div(a: &BigInt, b: &BigInt, module: &mut BigInt) -> (BigInt, BigInt) {
     let common = gcd(&b, &module);
+    // if we want b*x ≡ a mod m, and c divides both b and m,
+    // then a must be divisible by c as well
+    // if that is not the case, we determine the maximal module where this is true
     if !(a % &common).is_zero() {
+        // assume for simplicity that module is a prime power p^k
+        // then we have b = d*p^n, a = e*p^m with d, e not divisible by p
+        // then gcd(b, p^k) = p^n (because n has to be smaller than k)
+        // if m < n, then b doesn't divide a and we try to adjust k so that it does
+        // this can be done by simply setting m = k so that we now have 0*x ≡ 0 mod p^m
         let mut x = common.clone() / gcd(a, &common);
+        // this loop tries to calculate
+        //    if m < n { k = m }
+        // without having to factor the number to obtain the prime powers
+        // this works by first determining p^m by squaring and gcd'ing the product of all p's where
+        // m < n, so that we have the maximum powers that divide module
         loop {
             let new_x = gcd(&(&x * &x), &module);
             if new_x == x {
@@ -441,6 +543,8 @@ fn partial_mod_div(a: &BigInt, b: &BigInt, module: &mut BigInt) -> (BigInt, BigI
     (inv, common)
 }
 
+// note: this can be replaced with a more efficient implementations, like the one in factor.rs, but
+// i'm not feeling like doing it right now tbh
 fn gcd(a: &BigInt, b: &BigInt) -> BigInt {
     xgcd(a, b).0
 }

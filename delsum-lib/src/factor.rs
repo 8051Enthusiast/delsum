@@ -5,8 +5,12 @@ use rand::prelude::*;
 use std::cmp::Ordering;
 use std::convert::TryFrom;
 
-// beware, only cs101 and madness lies ahead
+// this whole file could be replaced by the slightly more inefficient
+// (low..=high).filter(|x| number % x == 0).collect()
+// but due to an unfortunate hyperfocus accident related to factorization algorithms,
+// this file appeared instead
 
+// used in prime sieve
 lazy_static! {
     static ref WHEEL: BitVec = {
         let mut v = BitVec::repeat(false, 6720);
@@ -32,9 +36,11 @@ impl PrimeSieve {
         sieve.set(1, true);
         PrimeSieve {
             sieve,
+            // yes i know 1 is not a prime, but i needed something less than 2
             max_prime: 1,
         }
     }
+    // doubles the size of the sieve when the primes run out
     fn extend(&mut self) {
         let old_size = self.sieve.len();
         let mut new_sieve_part: BitVec = WHEEL
@@ -47,6 +53,7 @@ impl PrimeSieve {
             if is_composite {
                 continue;
             }
+            // continue where we left off
             let mut current_pos = match old_size % i {
                 0 => 0,
                 x => i - x,
@@ -58,8 +65,11 @@ impl PrimeSieve {
         }
         self.sieve.append(&mut new_sieve_part);
     }
+    // add the next prime p to the sieve
     fn update(&mut self, p: usize) {
         if self.max_prime < p {
+            // start at 2p and not p because we don't want to set
+            // p as composite
             let mut current_pos = 2 * p;
             while current_pos < self.sieve.len() {
                 self.sieve.set(current_pos, true);
@@ -70,11 +80,14 @@ impl PrimeSieve {
     }
     fn next_prime(&mut self, p: usize) -> usize {
         let old_len = self.sieve.len();
+        // find index of next prime
         if let Some((i, _)) = self.sieve[p + 1..].iter().enumerate().find(|(_, x)| !**x) {
             let q = p + 1 + i;
+            // add the new found prime to the sieve
             self.update(q);
             return q;
         }
+        // if we did not find a next prime, extend the sieve
         self.extend();
         match self.sieve[old_len..].iter().enumerate().find(|(_, x)| !**x) {
             Some((j, _)) => {
@@ -127,6 +140,7 @@ impl<'a> Iterator for PrimeIterator<'a> {
     }
 }
 
+// binary gcd algorithm
 pub fn gcd<N: BitNum>(mut a: N, mut b: N) -> N {
     if a.is_zero() {
         return b;
@@ -175,7 +189,11 @@ fn make_u128(x: &[u64; 2]) -> u128 {
     x[0] as u128 + ((x[1] as u128) << 64)
 }
 
+// note: this is either u64 or u128
+// this is because we want to avoid expensive u128 arithmetic, but some numbers just don't
+// fit within 64 bits, so we use u128 only when needed
 trait FactorNum: BitNum + From<u64> + Into<u128> + rand::distributions::uniform::SampleUniform {
+    // combined multiply + montgomery reduction
     fn mon_mul_raw(self, a: Self, b: Self, n_inv: u64) -> Self;
     fn checked_pow(self, e: u8) -> Option<Self>;
     fn mod_neg(self, a: Self) -> Self {
@@ -192,6 +210,8 @@ trait FactorNum: BitNum + From<u64> + Into<u128> + rand::distributions::uniform:
 impl FactorNum for u64 {
     fn mon_mul_raw(self, a: Self, b: Self, n_inv: u64) -> Self {
         let n = self;
+        // note: it is done like this so that it optimizes to a single mul instruction,
+        // but we can still access the upper half, which is not possible with rust's api
         let [t0, t1] = split_u128(a as u128 * b as u128);
         let m = t0.wrapping_mul(n_inv);
         let [zero, carry] = split_u128(t0 as u128 + m as u128 * n as u128);
@@ -228,6 +248,7 @@ impl FactorNum for u64 {
 
 impl FactorNum for u128 {
     fn mon_mul_raw(self, a: Self, b: Self, n_inv: u64) -> Self {
+        // scary
         let a = split_u128(a);
         let b = split_u128(b);
         let n = split_u128(self);
@@ -324,6 +345,7 @@ impl<T: FactorNum> MonContext<T> {
         }
         let leading_zero = b.leading_zeros();
         b <<= leading_zero;
+        // classical square and multiply exponentiation
         for _ in (leading_zero + 1)..128 {
             b <<= 1;
             ret = self.mon_mul(ret, ret);
@@ -348,6 +370,7 @@ impl<T: FactorNum> MonContext<T> {
     }
 }
 
+// finds x in x^e = n, returns Ok if exact, else Err
 fn get_exact_root<N: FactorNum>(n: N, e: u8) -> Result<N, N> {
     let mut n_shift = n;
     let mut shift_amount = 0u8;
@@ -402,6 +425,7 @@ fn maximum_power_iter(bound: u64, mut base: u64) -> u64 {
     }
 }
 
+// calculates maximum e so that base^e <= bound
 fn maximum_power(bound: u64, base: u64) -> u64 {
     if base > bound {
         return 1;
@@ -423,7 +447,7 @@ static PRIMES: [u8; 31] = [
 /// i still have an emotional bond to it, so i won't delete it
 fn perfect_power<N: FactorNum>(mut n: N) -> (N, u8) {
     let mut current_power = 1;
-    // PRIMES is in P
+    // PRIMES is in P or something like that, idk im no number theorist
     for p in PRIMES.iter() {
         if (n >> *p as usize).is_zero() {
             break;
@@ -436,6 +460,7 @@ fn perfect_power<N: FactorNum>(mut n: N) -> (N, u8) {
     (n, current_power)
 }
 
+// a single step in pollard's p-1 factorization algorithm
 fn next_factor<N: FactorNum>(
     mon: &mut MonContext<N>,
     current_p: &mut u64,
@@ -460,6 +485,8 @@ fn next_factor<N: FactorNum>(
     None
 }
 
+// note that pollard's p-1 algorithm may return composite factors, so we still have to fall back
+// to trial division if we detect that the number is not prime, but hopefully on a smaller number
 fn trial_div<N: FactorNum>(mut n: N, sieve: &mut PrimeSieve, mut bound: u64) -> Vec<(u128, u8)> {
     let mut ret = Vec::new();
     for p in sieve.iter() {
@@ -483,6 +510,7 @@ fn trial_div<N: FactorNum>(mut n: N, sieve: &mut PrimeSieve, mut bound: u64) -> 
     ret
 }
 
+// we maintain a sorted list of prime factors, this multiplies their corresponding numbers together
 fn merge_factors(a: &[(u128, u8)], b: &[(u128, u8)]) -> Vec<(u128, u8)> {
     let mut ret = Vec::new();
     let mut a_idx = 0;
@@ -523,6 +551,7 @@ fn p1fac<N: FactorNum>(
     let mut mon = MonContext::new(*n);
     let mut power = mon.to_mon(start_power);
     while mon.n > N::from(lower_n) {
+        // check first if the current number is prime so we don't do something unneccessary
         if is_prob_prime(mon.n) {
             *n = N::one();
             ret.push(mon.n);
@@ -541,14 +570,16 @@ fn p1fac<N: FactorNum>(
     (mon.from_mon(power), ret)
 }
 
+// implementation of probabilistic rabin-miller primality test
 fn is_prob_prime<N: FactorNum>(n: N) -> bool {
     if (n & N::one()).is_zero() {
         return false;
     }
     if n < N::from(128u8) {
+        // note: match instead of unwrap because of some debug trait missing
         let nu8 = match n.try_into() {
             Ok(x) => x,
-            Err(_) => panic!("Can't convert number < 128 into u8 for some reason???"),
+            Err(_) => unreachable!()
         };
         return PRIMES.binary_search(&nu8).is_ok();
     }
@@ -590,8 +621,10 @@ fn factor(mut num: u128, bound: u128) -> Vec<(u128, u8)> {
     let mut prime = 1;
     let sqrt = get_exact_root(num, 2).unwrap_or_else(|x| x);
     let bound = bound.min(sqrt) as u64;
+    // use u128 as long as the numbers are too big for u64
     let (power, maybe_prime128) = p1fac(&mut num, 2u128, &mut prime, &mut sieve, bound, u64::MAX);
     let maybe_prime64 = if let Ok(mut x) = u64::try_from(num) {
+        // then fall back to u64
         let new_power = power as u64 % x;
         let (_, maybe_prime64) = p1fac(&mut x, new_power, &mut prime, &mut sieve, bound, 1);
         if x != 1 {
@@ -627,6 +660,7 @@ fn factor(mut num: u128, bound: u128) -> Vec<(u128, u8)> {
     prime_factors
 }
 
+// given a factorization `facs`, finds all combination divisors of facs with low <= d <= high
 fn div_combs(mut cur: u128, facs: &[(u128, u8)], low: u128, high: u128) -> Vec<u128> {
     let mut ret = Vec::new();
     match facs.split_last() {
@@ -651,6 +685,7 @@ fn div_combs(mut cur: u128, facs: &[(u128, u8)], low: u128, high: u128) -> Vec<u
     ret
 }
 
+/// Finds all divisors of number with low <= d <= high
 pub fn divisors_range(number: u128, low: u128, high: u128) -> Vec<u128> {
     let switch_div = number / low > high;
     let (new_high, new_low) = if switch_div {

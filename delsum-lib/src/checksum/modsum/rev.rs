@@ -1,7 +1,23 @@
+//! This module contains the function(s) for reversing the parameters for a modular sum.
+//!
+//! Generally, to find out the parameters, the checksums and their width are needed, and 2 of the following (with at least one file):
+//! * value of `init`
+//! * value of `module`
+//! * a file with checksum
+//! * a different file with checksum
+//!
+//! Of course, giving more files will result in fewer false positives.
 use super::{ModSum, ModSumBuilder};
 use crate::checksum::{unresult_iter, CheckReverserError};
 use crate::factor::{divisors_range, gcd};
 use std::iter::Iterator;
+/// Find the parameters of a modsum algorithm.
+///
+/// `spec` contains the known parameters of the algorithm (by setting the corresponding values in the builder).
+/// `chk_bytes` are pairs of files and their checksums.
+/// `verbosity` makes the function output what it is doing
+///
+/// The `width` parameter of the builder has to be set.
 pub fn reverse_modsum(
     spec: &ModSumBuilder<u64>,
     // note: even though all the sums are supposed to be u64,
@@ -20,6 +36,7 @@ struct RevResult {
 }
 
 impl RevResult {
+    // iterate over all possible modules and calculate the corresponding init values
     fn iter(self) -> impl Iterator<Item = ModSum<u64>> {
         let Self {
             modlist,
@@ -42,6 +59,11 @@ impl RevResult {
     }
 }
 
+// If we have a file with the bytes [a, b, c, d] we have a checksum of the form (init + a + b + c + d) mod m.
+// By subtracting a + b + c + d from the checksum (without mod'ing by m because we don't know m yet), we get
+// init mod m.
+// If we have two files, we can take their difference and have a number that is 0 mod m, which means m divides this number.
+// The solutions are then the divisors m in the appropiate range.
 fn reverse(
     spec: &ModSumBuilder<u64>,
     chk_bytes: &[(&[u8], u128)],
@@ -62,10 +84,12 @@ fn reverse(
     log("summing files up");
     for (f, chk) in chk_bytes {
         min_sum = min_sum.max(*chk as u128);
+        // here we calculate (init mod m)
         sums.push(f.iter().copied().map(i128::from).sum::<i128>() - *chk as i128);
     }
     let mut module = 0;
     log("removing inits");
+    // here we find module by gcd'ing between the differences (init - init == 0 mod m)
     let init = find_largest_mod(&sums, spec.init, &mut module);
     if module == 0 {
         return Err(CheckReverserError::UnsuitableFiles(
@@ -73,6 +97,7 @@ fn reverse(
         ));
     }
     log("finding all possible factors");
+    // find all possible divisors
     let modlist = divisors_range(module, min_sum + 1, max_sum);
     Ok(RevResult {
         modlist,
@@ -84,6 +109,7 @@ fn reverse(
 pub(crate) fn find_largest_mod(sums: &[i128], maybe_init: Option<u64>, module: &mut u128) -> i128 {
     let init = match maybe_init {
         Some(i) => {
+            // if we already have init, we can just subtract that from the sum and get a multiple of m
             let init = i as i128;
             for s in sums {
                 *module = gcd(*module, (s + init).abs() as u128);
@@ -91,6 +117,7 @@ pub(crate) fn find_largest_mod(sums: &[i128], maybe_init: Option<u64>, module: &
             i as i128
         }
         None => {
+            // otherwise their difference will do, but we do get one gcd less
             for (s1, s2) in sums.iter().zip(sums.iter().skip(1)) {
                 *module = gcd(*module, (s1 - s2).abs() as u128);
             }

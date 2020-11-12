@@ -1,3 +1,13 @@
+//! A simple modular sum over bytes (i.e. `bytes.sum() % module`)
+//!
+//! There are a number of parameters:
+//! * width: The number of bits in the sum type, at most 64
+//! * module: The sum is taken modulo this number
+//! * init: The initial number
+//! * check: The checksum of "123456789" (optional, gets checked at construction)
+//! * name: An optional name that gets used for display purposes
+//!
+//! Note that a parameter to add at the end is not needed, since it is equivalent to `init`.
 pub mod rev;
 use crate::bitnum::Modnum;
 use crate::checksum::{CheckBuilderErr, Digest, LinearCheck};
@@ -5,16 +15,17 @@ use crate::keyval::KeyValIter;
 use std::fmt::Display;
 use std::str::FromStr;
 
-/// The builder for doing a simple modular sum over bytes (i.e. `bytes.sum() % module`)
+/// A builder to set the various parameters for the modsum algorithm.
 ///
-/// There are a number of parameters:
-/// * width: The number of bits in the sum type, at most 64
-/// * module: The sum is taken modulo this number
-/// * init: The initial number
-/// * check: The checksum of "123456789" (optional, gets checked at construction)
-/// * name: An optional name that gets used for display purposes
-///
-/// Note that a parameter to add at the end is not needed, since it is equivalent to `init`.
+/// Example:
+/// ```
+/// ModSum::<u8>::with_options()
+///     .width(8)
+///     .check(0xdd)
+///     .build()
+///     .is_ok();
+/// ```
+/// Note that module = 0 is assumed to be 2^width
 #[derive(Debug, Clone)]
 pub struct ModSumBuilder<S: Modnum> {
     width: Option<usize>,
@@ -88,6 +99,9 @@ impl<S: Modnum> ModSumBuilder<S> {
     }
 }
 
+/// A Modsum checksum algorithm.
+///
+/// Implements LinearCheck so that finding checksummed locations in a file is efficiently possible.
 #[derive(PartialEq, Eq)]
 pub struct ModSum<S: Modnum> {
     width: usize,
