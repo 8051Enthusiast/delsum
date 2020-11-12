@@ -107,6 +107,7 @@ fn part(opts: &Part) {
 fn check(opts: &Check) {
     let files = read_files(&opts.files);
     let models = read_models(&opts.model, &opts.model_file);
+    let is_single = models.len() <= 1;
     #[cfg(feature = "parallel")]
     let parallel = opts.parallel;
     #[cfg(not(feature = "parallel"))]
@@ -116,7 +117,11 @@ fn check(opts: &Check) {
             eprintln!("Could not process model '{}': {}", model, err);
             exit(1);
         });
-        println!("{}: {}", model, checksums.join(","))
+        if is_single {
+            println!("{}", checksums.join(","))
+        } else {
+            println!("{}: {}", model, checksums.join(","))
+        }
     };
     match parallel {
         true => {
