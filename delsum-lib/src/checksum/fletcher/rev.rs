@@ -165,7 +165,7 @@ fn reverse(
     let mut addout1 = BigInt::from(addout1);
     // here, we take the the checksums and remove the cumulative sum sums from them
     // the second value of each value is supposed to be the multiplicity of init in the sum
-    let mut cumusums = cumusum(width, chk_bytes, &module, swap);
+    let mut cumusums = cumusum(width, &files, &module, swap);
     if let Some(init) = spec.init {
         log("removing inits from upper sum");
         // if we have the parameter init already given, we can remove
@@ -191,7 +191,7 @@ fn reverse(
     addout1 = mod_red(&addout1, &module);
     addout2.0 = mod_red(&addout2.0, &module);
     // if we have checksums of width 7 with values 0x24, 0x51 and 0x64 we know that `module` has to be between 2^7 = 0x80 and 0x64
-    let (min, max) = chk_range(chk_bytes, width);
+    let (min, max) = chk_range(&files, width);
     log("try to find all possible module values");
     // therefore we try to find all divisors of module in that range
     let modules = divisors_range(module.try_into().unwrap(), min, max)

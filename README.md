@@ -114,7 +114,6 @@ The parameters are:
 * `swap`: The boolean flag which indicates that the regular sum should be in the higher half of the packed checksum. Defaults to `false`.
 
 Note that currently, only sums over bytes are supported so sums fletcher-32 can't be specified yet.
-Also, the `reverse` part does not appear to really work right now.
 
 `crc`
 =====
