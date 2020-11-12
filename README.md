@@ -140,6 +140,11 @@ apt-get install libgmp-dev libgf2x-dev libntl-dev
 
 You can also compile them yourselves, see (here)[https://shoup.net/ntl/doc/tour-gf2x.html].
 
+If you have `cargo` installed, it should then be possible to compile this in the project directory root with
+```
+cargo install --path .
+```
+
 License
 -------
 The code of this project is licensed under the MIT license.
