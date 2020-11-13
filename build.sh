@@ -7,7 +7,7 @@ GMP_VERSION=6.2.0
 NTL_VERSION=11.4.3
 
 TMP_DIR="$(mktemp -d)"
-PREFIX="$1"
+PREFIX="$PWD/output"
 echo Using PREFIX="$PREFIX"
 pushd "$TMP_DIR"
 mkdir -p "$PREFIX"
