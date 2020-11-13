@@ -32,6 +32,8 @@ jobs:
     steps:
       - uses: actions/checkout@v2    
       - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
       - run: sudo apt install m4 lzip
       - run: mkdir libout
       - run: bash build.sh 64
@@ -51,6 +53,8 @@ jobs:
     steps:
       - uses: actions/checkout@v2    
       - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
       - run: brew install m4 lzip
       - run: mkdir libout
       - run: bash build.sh 64
