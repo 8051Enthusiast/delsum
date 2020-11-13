@@ -7,14 +7,14 @@ GMP_VERSION=6.2.0
 NTL_VERSION=11.4.3
 
 TMP_DIR="$(mktemp -d)"
-PREFIX="$PWD/output"
+PREFIX="$1"
 echo Using PREFIX="$PREFIX"
 pushd "$TMP_DIR"
 mkdir out
 wget "$GF2X_LINK"
 tar xf gf2x-$GF2X_VERSION.tar.gz
 cd gf2x-$GF2X_VERSION
-./configure ABI="${1:-64}" --disable-shared --enable-static --disable-hardware-specific-code --prefix="$PREFIX"
+./configure --disable-shared --enable-static --disable-hardware-specific-code --prefix="$PREFIX"
 make -j "$(nproc)"
 make install
 cd ..
