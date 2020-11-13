@@ -17,7 +17,7 @@ jobs:
       - run: mkdir libout
       - shell: msys2 {0}
         run: bash build.sh 32
-      - run: DELSUM_STATIC_LIBS=1 DELSUM_NTL_LIB_PATH="$PREFIX/lib" C_INCLUDE_PATH="$PREFIX/include" cargo build --release
+      - run: DELSUM_STATIC_LIBS=1 DELSUM_NTL_LIB_PATH="./output/lib" C_INCLUDE_PATH="./output/include/include" cargo build --release
       - uses: actions/upload-artifact@v2
         with:
           name: delsum_win
