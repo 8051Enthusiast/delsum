@@ -26,6 +26,13 @@ jobs:
         run: |
           cd "$GITHUB_WORKSPACE"
           bash build.sh
+      - uses: actions/cache@v2
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - run: |
           $env:PATH = "C:\msys64\mingw64\bin;$env:PATH"
           echo "$env:PATH"
@@ -60,15 +67,23 @@ jobs:
         run: |
           cd "$GITHUB_WORKSPACE"
           bash build.sh
-      - run: |
-          export DELSUM_STATIC_LIBS=1
-          export DELSUM_NTL_LIB_PATH="$GITHUB_WORKSPACE/output/lib"
-          export DELSUM_NTL_INCLUDE="$GITHUB_WORKSPACE/output/include"
-          cargo build --release
-      - run: |
-          cargo install cargo-strip
-          cargo strip
-      - uses: actions/upload-artifact@v2
+      - uses: actions/cache@v2
         with:
-          name: delsum-linux
-          path: target/release/delsum
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - run: which cargo
+#      - run: |
+#          export DELSUM_STATIC_LIBS=1
+#          export DELSUM_NTL_LIB_PATH="$GITHUB_WORKSPACE/output/lib"
+#          export DELSUM_NTL_INCLUDE="$GITHUB_WORKSPACE/output/include"
+#          cargo build --release
+#      - run: |
+#          cargo install cargo-strip
+#          cargo strip
+#      - uses: actions/upload-artifact@v2
+#        with:
+#          name: delsum-linux
+#          path: target/release/delsum
