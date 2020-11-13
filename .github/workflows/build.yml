@@ -17,7 +17,7 @@ jobs:
       - run: mkdir libout
       - shell: msys2 {0}
         run: bash build.sh 64
-      - run: cargo build --release
+      - run: cargo build --target x86_64-unknown-linux-gnu --release
         env:
           DELSUM_STATIC_LIBS: 1
           DELSUM_NTL_LIB_PATH: "./output/lib"
@@ -25,20 +25,14 @@ jobs:
       - uses: actions/upload-artifact@v2
         with:
           name: delsum_win
-          path: target/release/delsum.exe
-  build_unix:
-    name: Build Unix Binaries
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+          path: target/x86_64-unknown-linux-gnu/release/delsum.exe
+  build_linux:
+    name: Build Linux Binary
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2    
       - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          target: x86_64-pc-windows-gnu
-          default: true
+      - run: sudo apt install m4 lzip
       - run: mkdir libout
       - run: bash build.sh 64
       - run: ls
@@ -49,5 +43,24 @@ jobs:
           C_INCLUDE_PATH: "./output/include"
       - uses: actions/upload-artifact@v2
         with:
-          name: delsum-${{ matrix.os }}
+          name: delsum-linux
+          path: target/release/delsum
+  build_macos:
+    name: Build MacOS Binary
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v2    
+      - uses: actions-rs/toolchain@v1
+      - run: brew install m4 lzip
+      - run: mkdir libout
+      - run: bash build.sh 64
+      - run: ls
+      - run: cargo build --release
+        env:
+          DELSUM_STATIC_LIBS: 1
+          DELSUM_NTL_LIB_PATH: "./output/lib"
+          C_INCLUDE_PATH: "./output/include"
+      - uses: actions/upload-artifact@v2
+        with:
+          name: delsum-macos
           path: target/release/delsum

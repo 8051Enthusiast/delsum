@@ -15,20 +15,20 @@ wget "$GF2X_LINK"
 tar xf gf2x-$GF2X_VERSION.tar.gz
 cd gf2x-$GF2X_VERSION
 ./configure ABI="${1:-64}" --disable-shared --enable-static --disable-hardware-specific-code --prefix="$PREFIX"
-make
+make -j "$(nproc)"
 make install
 cd ..
 wget https://gmplib.org/download/gmp/gmp-$GMP_VERSION.tar.lz
 tar xf gmp-$GMP_VERSION.tar.lz
 cd gmp-$GMP_VERSION
 ./configure --disable-shared --enable-static --prefix="$PREFIX"
-make
+make -j "$(nproc)"
 make install
 cd ..
 wget https://shoup.net/ntl/ntl-$NTL_VERSION.tar.gz
 tar xf ntl-$NTL_VERSION.tar.gz
 cd ntl-$NTL_VERSION/src
-./configure NTL_GF2X_LIB=on DEF_PREFIX="$PREFIX"
-make
+./configure NTL_GF2X_LIB=on DEF_PREFIX="$PREFIX" NATIVE=off
+make -j "$(nproc)"
 make install
 popd
