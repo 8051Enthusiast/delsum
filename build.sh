@@ -7,7 +7,7 @@ GMP_VERSION=6.2.0
 NTL_VERSION=11.4.3
 
 TMP_DIR="$(mktemp -d)"
-PREFIX="$TMP_DIR/out"
+PREFIX="$PWD/output"
 pushd "$TMP_DIR"
 mkdir out
 wget "$GF2X_LINK"
