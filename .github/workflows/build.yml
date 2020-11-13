@@ -4,6 +4,9 @@ jobs:
   build_windows:
     name: Build Windows Binary
     runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
     steps:
       - uses: actions/checkout@v2    
       - uses: actions-rs/toolchain@v1
