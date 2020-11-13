@@ -11,6 +11,7 @@ jobs:
           toolchain: stable
           target: x86_64-pc-windows-gnu
           default: true
+      - run: which cargo
       - uses: msys2/setup-msys2@v2
         with:
           install: gcc make wget lzip m4
@@ -33,20 +34,20 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-      - run: |
-          $env:PATH = "C:\msys64\mingw64\bin;$env:PATH"
-          echo "$env:PATH"
-          $env:DELSUM_STATIC_LIBS = 1
-          $env:DELSUM_NTL_LIB_PATH = "$env:GITHUB_WORKSPACE\output\lib"
-          $env:DELSUM_NTL_INCLUDE = "$env:GITHUB_WORKSPACE\output\include"
-          cargo build --release --target x86_64-pc-windows-gnu
-      - run: |
-          cargo install cargo-strip
-          cargo strip --target x86_64-pc-windows-gnu
-      - uses: actions/upload-artifact@v2
-        with:
-          name: delsum_win
-          path: 'target\x86_64-pc-windows-gnu\release\delsum.exe'
+#      - run: |
+#          $env:PATH = "C:\msys64\mingw64\bin;$env:PATH"
+#          echo "$env:PATH"
+#          $env:DELSUM_STATIC_LIBS = 1
+#          $env:DELSUM_NTL_LIB_PATH = "$env:GITHUB_WORKSPACE\output\lib"
+#          $env:DELSUM_NTL_INCLUDE = "$env:GITHUB_WORKSPACE\output\include"
+#          cargo build --release --target x86_64-pc-windows-gnu
+#      - run: |
+#          cargo install cargo-strip
+#          cargo strip --target x86_64-pc-windows-gnu
+#      - uses: actions/upload-artifact@v2
+#        with:
+#          name: delsum_win
+#          path: 'target\x86_64-pc-windows-gnu\release\delsum.exe'
   build_linux:
     name: Build Linux Binary
     runs-on: ubuntu-latest
@@ -74,16 +75,15 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-      - run: which cargo
-#      - run: |
-#          export DELSUM_STATIC_LIBS=1
-#          export DELSUM_NTL_LIB_PATH="$GITHUB_WORKSPACE/output/lib"
-#          export DELSUM_NTL_INCLUDE="$GITHUB_WORKSPACE/output/include"
-#          cargo build --release
-#      - run: |
-#          cargo install cargo-strip
-#          cargo strip
-#      - uses: actions/upload-artifact@v2
-#        with:
-#          name: delsum-linux
-#          path: target/release/delsum
+      - run: |
+          export DELSUM_STATIC_LIBS=1
+          export DELSUM_NTL_LIB_PATH="$GITHUB_WORKSPACE/output/lib"
+          export DELSUM_NTL_INCLUDE="$GITHUB_WORKSPACE/output/include"
+          cargo build --release
+      - run: |
+          cargo install cargo-strip
+          cargo strip
+      - uses: actions/upload-artifact@v2
+        with:
+          name: delsum-linux
+          path: target/release/delsum
