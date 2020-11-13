@@ -5,10 +5,6 @@ GF2X_VERSION=1.3.0
 GF2X_LINK="https://gitlab.inria.fr/gf2x/gf2x/uploads/c46b1047ba841c20d1225ae73ad6e4cd/gf2x-$GF2X_VERSION.tar.gz"
 GMP_VERSION=6.2.0
 NTL_VERSION=11.4.3
-ABI=64
-if [ -n "$1" ]; then
-	ABI=$1
-fi
 
 TMP_DIR="$(mktemp -d)"
 PREFIX="$TMP_DIR/out"
@@ -17,7 +13,7 @@ mkdir out
 wget "$GF2X_LINK"
 tar xf gf2x-$GF2X_VERSION.tar.gz
 cd gf2x-$GF2X_VERSION
-./configure ABI="$ABI" --disable-shared --enable-static --disable-hardware-specific-code --prefix="$PREFIX"
+./configure ABI="${1:-64}" --disable-shared --enable-static --disable-hardware-specific-code --prefix="$PREFIX"
 make
 make install
 cd ..

@@ -15,7 +15,7 @@ jobs:
         with:
           install: gcc make wget
       - run: cargo install cargo-strip
-      - run: bash build.sh
+      - run: bash build.sh 32
       - uses: actions/upload-artifact@v2
         with:
           name: delsum_win
