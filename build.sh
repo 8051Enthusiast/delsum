@@ -10,7 +10,7 @@ TMP_DIR="$(mktemp -d)"
 PREFIX="$1"
 echo Using PREFIX="$PREFIX"
 pushd "$TMP_DIR"
-mkdir out
+mkdir -p "$PREFIX"
 wget "$GF2X_LINK"
 tar xf gf2x-$GF2X_VERSION.tar.gz
 cd gf2x-$GF2X_VERSION

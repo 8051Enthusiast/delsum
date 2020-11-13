@@ -14,13 +14,12 @@ jobs:
       - uses: msys2/setup-msys2@v2
         with:
           install: gcc make wget lzip m4
-      - run: mkdir "$GITHUB_WORKSPACE/output"
       - shell: msys2 {0}
         run: bash build.sh $GITHUB_WORKSPACE/output
       - run: |
           export DELSUM_STATIC_LIBS=1
           export DELSUM_NTL_LIB_PATH="$GITHUB_WORKSPACE/output/lib"
-          export DELSUM_NTL_INCLUDE="$GITHUB_WORKSPACE/output/include
+          export DELSUM_NTL_INCLUDE="$GITHUB_WORKSPACE/output/include"
           cargo build --release
       - uses: actions/upload-artifact@v2
         with:
@@ -35,13 +34,11 @@ jobs:
         with:
           toolchain: stable
       - run: sudo apt install m4 lzip
-      - run: mkdir "$GITHUB_WORKSPACE/output"
       - run: bash build.sh $GITHUB_WORKSPACE/output
-      - run: ls
       - run: |
           export DELSUM_STATIC_LIBS=1
           export DELSUM_NTL_LIB_PATH="$GITHUB_WORKSPACE/output/lib"
-          export DELSUM_NTL_INCLUDE="$GITHUB_WORKSPACE/output/include
+          export DELSUM_NTL_INCLUDE="$GITHUB_WORKSPACE/output/include"
           cargo build --release
       - uses: actions/upload-artifact@v2
         with:
