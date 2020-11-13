@@ -13,11 +13,15 @@ jobs:
           default: true
       - uses: msys2/setup-msys2@v2
         with:
-          install: gcc make wget
+          install: gcc make wget lzip
       - run: mkdir libout
       - shell: msys2 {0}
         run: bash build.sh 64
-      - run: DELSUM_STATIC_LIBS=1 DELSUM_NTL_LIB_PATH="./output/lib" C_INCLUDE_PATH="./output/include/include" cargo build --release
+      - run: cargo build --release
+        env:
+          DELSUM_STATIC_LIBS: 1
+          DELSUM_NTL_LIB_PATH: "./output/lib"
+          C_INCLUDE_PATH: "./output/include"
       - uses: actions/upload-artifact@v2
         with:
           name: delsum_win
