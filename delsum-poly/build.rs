@@ -30,6 +30,8 @@ fn main() {
     // gmp is required for thread safety apparently?
     println!("cargo:rustc-link-lib={}=gmp", link_type);
     build
+        // needed for NTL
+        .flag_if_supported("-fpermissive")
         .file("src/poly.cc")
         .flag_if_supported("-std=c++14");
     build.compile("delsum_poly");

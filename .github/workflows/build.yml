@@ -14,7 +14,15 @@ jobs:
       - uses: msys2/setup-msys2@v2
         with:
           install: gcc make wget lzip m4
-      - shell: msys2 {0}
+      - name: Cache dependencies
+        id: cache-deps
+        uses: actions/cache@v2
+        with:
+          path: output
+          key: "${{ runner.os }}-deps"
+      - name: Build dependencies
+        if: steps.cache-deps.outputs.cache-hit != 'true'
+        shell: msys2 {0}
         run: |
           cd "$GITHUB_WORKSPACE"
           bash build.sh
@@ -39,7 +47,15 @@ jobs:
         with:
           toolchain: stable
       - run: sudo apt install m4 lzip
-      - run: |
+      - name: Cache dependencies
+        id: cache-deps
+        uses: actions/cache@v2
+        with:
+          path: output
+          key: "${{ runner.os }}-deps"
+      - name: Build dependencies
+        if: steps.cache-deps.outputs.cache-hit != 'true'
+        run: |
           cd "$GITHUB_WORKSPACE"
           bash build.sh
       - run: |
