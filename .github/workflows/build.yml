@@ -27,11 +27,11 @@ jobs:
           name: delsum_win
           path: target/release/delsum.exe
   build_unix:
-    name: Build Windows Binary
+    name: Build Unix Binaries
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
-    runs-on: {{ matrix.os }}
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v2    
       - uses: actions-rs/toolchain@v1
@@ -49,5 +49,5 @@ jobs:
           C_INCLUDE_PATH: "./output/include"
       - uses: actions/upload-artifact@v2
         with:
-          name: delsum-{{ matrix.os }}
+          name: delsum-${{ matrix.os }}
           path: target/release/delsum
