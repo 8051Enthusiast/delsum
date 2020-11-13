@@ -1,0 +1,22 @@
+name: Build Binary
+on: [push]
+jobs:
+  build_windows:
+    name: Build Windows Binary
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v2    
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: x86_64-pc-windows-gnu
+          default: true
+      - uses: msys2/setup-msys2@v2
+        with:
+          install: gcc make wget
+      - run: cargo install cargo-strip
+      - run: bash build.sh
+      - uses: actions/upload-artifact@v2
+        with:
+          name: delsum_win
+          path: target/release/delsum.exe

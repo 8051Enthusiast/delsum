@@ -1,8 +1,4 @@
 fn main() {
-    cxx_build::bridge("src/lib.rs")
-        .file("src/poly.cc")
-        .flag_if_supported("-std=c++14")
-        .compile("poly");
     println!("cargo:rerun-if-changed=src/lib.rs");
     println!("cargo:rerun-if-changed=include/poly.hh");
     println!("cargo:rerun-if-changed=src/poly.cc");
@@ -28,4 +24,12 @@ fn main() {
     println!("cargo:rustc-link-lib={}=gf2x", link_type);
     // gmp is required for thread safety apparently?
     println!("cargo:rustc-link-lib={}=gmp", link_type);
+    let mut build = cxx_build::bridge("src/lib.rs");
+    build
+        .file("src/poly.cc")
+        .flag_if_supported("-std=c++14");
+    if link_type == "static" {
+        build.static_flag(true);
+    }
+    build.compile("delsum_poly");
 }
