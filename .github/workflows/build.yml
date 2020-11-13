@@ -14,14 +14,14 @@ jobs:
       - uses: msys2/setup-msys2@v2
         with:
           install: gcc make wget lzip m4
-      - run: mkdir $GITHUB_WORKSPACE/output
+      - run: mkdir "$GITHUB_WORKSPACE/output"
       - shell: msys2 {0}
         run: bash build.sh $GITHUB_WORKSPACE/output
-      - run: cargo build --target x86_64-unknown-linux-gnu --release
-        env:
-          DELSUM_STATIC_LIBS: 1
-          DELSUM_NTL_LIB_PATH: "${{ env.GITHUB_WORKSPACE }}/output/lib"
-          DELSUM_NTL_INCLUDE: "${{ env.GITHUB_WORKSPACE }}/output/include"
+      - run: |
+        export DELSUM_STATIC_LIBS=1
+        export DELSUM_NTL_LIB_PATH="$GITHUB_WORKSPACE/output/lib"
+        export DELSUM_NTL_INCLUDE="$GITHUB_WORKSPACE/output/include
+        cargo build --release
       - uses: actions/upload-artifact@v2
         with:
           name: delsum_win
@@ -35,14 +35,14 @@ jobs:
         with:
           toolchain: stable
       - run: sudo apt install m4 lzip
-      - run: mkdir $GITHUB_WORKSPACE/output
+      - run: mkdir "$GITHUB_WORKSPACE/output"
       - run: bash build.sh $GITHUB_WORKSPACE/output
       - run: ls
-      - run: cargo build --release
-        env:
-          DELSUM_STATIC_LIBS: 1
-          DELSUM_NTL_LIB_PATH: "${{ env.GITHUB_WORKSPACE }}/output/lib"
-          DELSUM_NTL_INCLUDE: "${{ env.GITHUB_WORKSPACE }}/output/include"
+      - run: |
+        export DELSUM_STATIC_LIBS=1
+        export DELSUM_NTL_LIB_PATH="$GITHUB_WORKSPACE/output/lib"
+        export DELSUM_NTL_INCLUDE="$GITHUB_WORKSPACE/output/include
+        cargo build --release
       - uses: actions/upload-artifact@v2
         with:
           name: delsum-linux
