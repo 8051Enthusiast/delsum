@@ -27,6 +27,8 @@ jobs:
           cd "$GITHUB_WORKSPACE"
           bash build.sh
       - run: |
+          $env:PATH = "C:\msys64\mingw64\bin;$env:PATH"
+          echo "$env:PATH"
           $env:DELSUM_STATIC_LIBS = 1
           $env:DELSUM_NTL_LIB_PATH = "$env:GITHUB_WORKSPACE\output\lib"
           $env:DELSUM_NTL_INCLUDE = "$env:GITHUB_WORKSPACE\output\include"
