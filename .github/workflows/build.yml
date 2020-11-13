@@ -14,16 +14,17 @@ jobs:
       - uses: msys2/setup-msys2@v2
         with:
           install: gcc make wget lzip m4
-      - run: cargo install cargo-strip
       - shell: msys2 {0}
         run: |
           cd "$GITHUB_WORKSPACE"
           bash build.sh
       - run: |
-          export DELSUM_STATIC_LIBS=1
-          export DELSUM_NTL_LIB_PATH="$GITHUB_WORKSPACE\output\lib"
-          export DELSUM_NTL_INCLUDE="$GITHUB_WORKSPACE\output\include"
+          $env:DELSUM_STATIC_LIBS = 1
+          $env:DELSUM_NTL_LIB_PATH = "$env:GITHUB_WORKSPACE\output\lib"
+          $env:DELSUM_NTL_INCLUDE = "$env:GITHUB_WORKSPACE\output\include"
           cargo build --release
+      - run: |
+          cargo install cargo-strip
           cargo strip
       - uses: actions/upload-artifact@v2
         with:
@@ -38,7 +39,6 @@ jobs:
         with:
           toolchain: stable
       - run: sudo apt install m4 lzip
-      - run: cargo install cargo-strip
       - run: |
           cd "$GITHUB_WORKSPACE"
           bash build.sh
@@ -47,6 +47,8 @@ jobs:
           export DELSUM_NTL_LIB_PATH="$GITHUB_WORKSPACE/output/lib"
           export DELSUM_NTL_INCLUDE="$GITHUB_WORKSPACE/output/include"
           cargo build --release
+      - run: |
+          cargo install cargo-strip
           cargo strip
       - uses: actions/upload-artifact@v2
         with:
