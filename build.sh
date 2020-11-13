@@ -8,6 +8,7 @@ NTL_VERSION=11.4.3
 
 TMP_DIR="$(mktemp -d)"
 PREFIX="$PWD/output"
+echo Using PREFIX="$PREFIX"
 pushd "$TMP_DIR"
 mkdir out
 wget "$GF2X_LINK"

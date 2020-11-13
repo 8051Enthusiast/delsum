@@ -26,3 +26,28 @@ jobs:
         with:
           name: delsum_win
           path: target/release/delsum.exe
+  build_unix:
+    name: Build Windows Binary
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: {{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v2    
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: x86_64-pc-windows-gnu
+          default: true
+      - run: mkdir libout
+      - run: bash build.sh 64
+      - run: ls
+      - run: cargo build --release
+        env:
+          DELSUM_STATIC_LIBS: 1
+          DELSUM_NTL_LIB_PATH: "./output/lib"
+          C_INCLUDE_PATH: "./output/include"
+      - uses: actions/upload-artifact@v2
+        with:
+          name: delsum-{{ matrix.os }}
+          path: target/release/delsum

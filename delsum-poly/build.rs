@@ -28,8 +28,5 @@ fn main() {
     build
         .file("src/poly.cc")
         .flag_if_supported("-std=c++14");
-    if link_type == "static" {
-        build.static_flag(true);
-    }
     build.compile("delsum_poly");
 }
