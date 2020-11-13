@@ -4,9 +4,6 @@ jobs:
   build_windows:
     name: Build Windows Binary
     runs-on: windows-latest
-    defaults:
-      run:
-        shell: msys2 {0}
     steps:
       - uses: actions/checkout@v2    
       - uses: actions-rs/toolchain@v1
@@ -17,8 +14,10 @@ jobs:
       - uses: msys2/setup-msys2@v2
         with:
           install: gcc make wget
-      - run: cargo install cargo-strip
-      - run: bash build.sh 32
+      - run: mkdir libout
+      - shell: msys2 {0}
+        run: bash build.sh 32
+      - run: DELSUM_STATIC_LIBS=1 DELSUM_NTL_LIB_PATH="$PREFIX/lib" C_INCLUDE_PATH="$PREFIX/include" cargo build --release
       - uses: actions/upload-artifact@v2
         with:
           name: delsum_win

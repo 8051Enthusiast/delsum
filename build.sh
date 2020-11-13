@@ -31,5 +31,3 @@ cd ntl-$NTL_VERSION/src
 make
 make install
 popd
-DELSUM_STATIC_LIBS=1 DELSUM_NTL_LIB_PATH="$PREFIX/lib" C_INCLUDE_PATH="$PREFIX/include" cargo build --release
-cargo strip
