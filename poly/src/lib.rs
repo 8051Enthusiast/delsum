@@ -131,7 +131,7 @@ mod ffi {
         fn power(p: &Poly, n: i64) -> UniquePtr<Poly>;
         fn shift(p: &Poly, n: i64) -> UniquePtr<Poly>;
         fn copy_poly(p: &Poly) -> UniquePtr<Poly>;
-        fn factor(p: &Poly, verbosity: u64) -> UniquePtr<CxxVector<PolyI64Pair>>;
+        fn factor(p: &Poly, verbosity: i64) -> UniquePtr<CxxVector<PolyI64Pair>>;
         type PolyRem;
         fn new_polyrem(rem: &Poly, m: &Poly) -> UniquePtr<PolyRem>;
         fn add_to(self: &mut PolyRem, b: &PolyRem);
