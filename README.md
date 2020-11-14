@@ -140,6 +140,7 @@ It has the following parameters:
 Installing
 ----------
 There is a static x64 linux build [here](https://github.com/8051Enthusiast/delsum/releases), but keep in mind that it is compiled without most modern x86 extensions and therefore can't take advantage of some optimized routines in `gf2x` which makes CRC reversing a lot faster.
+I'm also too dumb for doing a Windows build, so sorry for that.
 
 This program links against the [`NTL`](https://shoup.net/ntl/), [`gf2x`](https://gitlab.inria.fr/gf2x/gf2x) and [`gmp`](https://gmplib.org/).
 
@@ -155,6 +156,12 @@ If you have `cargo` installed, it should then be possible to compile this in the
 ```
 cargo install --path .
 ```
+or, without downloading the repository, with
+```
+cargo install delsum
+```
+
+If you want to link the NTL library statically, you can set the environment variable `DELSUM_STATIC_LIBS=1` when running `cargo`.
 
 License
 -------
