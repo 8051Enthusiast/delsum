@@ -46,6 +46,9 @@ This just means that each combination is possible.
 In this case, one would have `1:5`, `1:10` and `6:10`.
 While `6:5` would theoretically also be a choice, it is not a valid one since it is backwards.
 
+By exploiting the linearity of the checksums, this whole process can be done in roughly loglinear time, but just keep in mind that
+it has a big (linear) space overhead and you might run out of memory if you run it on a bunch of 500MB files.
+
 One can also give a list of algorithms in a file as an input to `-M`.
 This can be useful, as it allows to simply put the most common few checksum algorithm in there and look if any algorithms in any part of the files has the desired checksum.
 For the available algorithms and how to specify them, see [here](#algorithms).
@@ -64,6 +67,13 @@ Example:
 $ delsum check -m 'crc width=32' -c 700b14f5,e1207917,79741cb2 file_a file_b file_c
 crc width=32 poly=0x4c11db7 init=0xffffffff xorout=0xffffffff refin=true refout=true
 ```
+
+You generally need 3 files, and for algorithms other than `modsum` at least one of the files needs to have a different length.
+It is also possible to specify some parameters of the algorithm (using for example `-m 'crc width=32 init=0'`), which needs fewer files or yields fewer false positives.
+
+If you have only files of a given length, but also only care about checksums of that length, for an algorithm not `modsum` you can simply set `init=0`.
+
+It is normally quite fast; for example the runtime for the CRC reversing algorithm is in most cases around `O(n*log^2(n)*log(log(n)))` where `n` is the filesize, which is thanks to the fast gcd algorithm implemented within the NTL and gf2x libraries.
 
 Algorithms
 ----------
@@ -129,7 +139,7 @@ It has the following parameters:
 
 Installing
 ----------
-I will try to provide static builds soon, but meanwhile you can compile it yourself.
+There is a static x64 linux build [here](https://github.com/8051Enthusiast/delsum/releases), but keep in mind that it is compiled without most modern x86 extensions and therefore can't take advantage of some optimized routines in `gf2x` which makes CRC reversing a lot faster.
 
 This program links against the [`NTL`](https://shoup.net/ntl/), [`gf2x`](https://gitlab.inria.fr/gf2x/gf2x) and [`gmp`](https://gmplib.org/).
 
@@ -138,7 +148,8 @@ If you're on a Debian-based system, you can install them with
 apt-get install libgmp-dev libgf2x-dev libntl-dev
 ```
 
-You can also compile them yourselves, see (here)[https://shoup.net/ntl/doc/tour-gf2x.html].
+You can also compile them yourselves, see [here](https://shoup.net/ntl/doc/tour-gf2x.html). This will generally make the fastest binary,
+as instruction set extensions can be used and there is also the possible of tuning the algorithm parameters.
 
 If you have `cargo` installed, it should then be possible to compile this in the project directory root with
 ```
