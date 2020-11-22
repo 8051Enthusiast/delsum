@@ -32,8 +32,8 @@ namespace poly
     };
 
     int64_t deg(const Poly &a);
-    std::unique_ptr<Poly> new_poly_shifted(rust::Slice<uint8_t> bytes, int64_t shift, bool msb_first);
-    std::unique_ptr<Poly> new_poly(rust::Slice<uint8_t> bytes);
+    std::unique_ptr<Poly> new_poly_shifted(rust::Slice<const uint8_t> bytes, int64_t shift, bool msb_first);
+    std::unique_ptr<Poly> new_poly(rust::Slice<const uint8_t> bytes);
     std::unique_ptr<Poly> new_zero();
     std::unique_ptr<Poly> copy_poly(const Poly &p);
     std::unique_ptr<Poly> add(const Poly &b, const Poly &c);

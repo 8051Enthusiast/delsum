@@ -56,7 +56,7 @@ namespace poly
         return std::make_unique<std::vector<PolyI64Pair>>(std::move(v));
     }
 
-    std::unique_ptr<Poly> new_poly_shifted(rust::Slice<uint8_t> bytes, int64_t shift, bool msb_first)
+    std::unique_ptr<Poly> new_poly_shifted(rust::Slice<const uint8_t> bytes, int64_t shift, bool msb_first)
     {
         auto lshift = i64_to_l(shift);
         auto ret = Poly();
@@ -77,7 +77,7 @@ namespace poly
         return std::make_unique<Poly>(ret);
     }
 
-    std::unique_ptr<Poly> new_poly(rust::Slice<uint8_t> bytes)
+    std::unique_ptr<Poly> new_poly(rust::Slice<const uint8_t> bytes)
     {
         return new_poly_shifted(bytes, 0, true);
     }
