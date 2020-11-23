@@ -20,7 +20,7 @@ impl Display for Poly {
 
 pub fn div_checked(a: &Poly, b: &Poly) -> Option<PolyPtr> {
     let mut r = copy_poly(a);
-    let succ = r.div_to_checked(b);
+    let succ = r.pin_mut().div_to_checked(b);
     if succ {
         Some(r)
     } else {
@@ -37,7 +37,7 @@ impl ops::Add for &Poly {
 }
 impl ops::AddAssign<&Poly> for PolyPtr {
     fn add_assign(&mut self, rhs: &Poly) {
-        self.add_to(rhs);
+        self.pin_mut().add_to(rhs);
     }
 }
 impl ops::Mul for &Poly {
@@ -49,7 +49,7 @@ impl ops::Mul for &Poly {
 }
 impl ops::MulAssign<&Poly> for PolyPtr {
     fn mul_assign(&mut self, rhs: &Poly) {
-        self.mul_to(rhs);
+        self.pin_mut().mul_to(rhs);
     }
 }
 impl ops::Div for &Poly {
@@ -61,7 +61,7 @@ impl ops::Div for &Poly {
 }
 impl ops::DivAssign<&Poly> for PolyPtr {
     fn div_assign(&mut self, rhs: &Poly) {
-        self.div_to(rhs);
+        self.pin_mut().div_to(rhs);
     }
 }
 impl ops::Rem for &Poly {
@@ -73,22 +73,22 @@ impl ops::Rem for &Poly {
 }
 impl ops::RemAssign<&Poly> for PolyPtr {
     fn rem_assign(&mut self, rhs: &Poly) {
-        self.rem_to(rhs);
+        self.pin_mut().rem_to(rhs);
     }
 }
 impl ops::AddAssign<&PolyRem> for PolyRemPtr {
     fn add_assign(&mut self, rhs: &PolyRem) {
-        self.add_to(rhs);
+        self.pin_mut().add_to(rhs);
     }
 }
 impl ops::MulAssign<&PolyRem> for PolyRemPtr {
     fn mul_assign(&mut self, rhs: &PolyRem) {
-        self.mul_to(rhs);
+        self.pin_mut().mul_to(rhs);
     }
 }
 impl ops::DivAssign<&PolyRem> for PolyRemPtr {
     fn div_assign(&mut self, rhs: &PolyRem) {
-        self.div_to(rhs);
+        self.pin_mut().div_to(rhs);
     }
 }
 
@@ -104,22 +104,23 @@ mod ffi {
         poly: UniquePtr<Poly>,
         l: i64,
     }
-    extern "C" {
-        // somehow this is not from workspace root but from whole package root?
+
+    unsafe extern "C++" {
         include!("delsum-poly/include/poly.hh");
+
         type Poly;
         fn new_poly_shifted(bytes: &[u8], shift: i64, msb_first: bool) -> UniquePtr<Poly>;
         fn new_poly(bytes: &[u8]) -> UniquePtr<Poly>;
         fn new_zero() -> UniquePtr<Poly>;
         fn to_bytes(self: &Poly, min_bytes: i64) -> UniquePtr<CxxVector<u8>>;
         fn deg(a: &Poly) -> i64;
-        fn add_to(self: &mut Poly, b: &Poly);
-        fn mul_to(self: &mut Poly, b: &Poly);
-        fn div_to(self: &mut Poly, b: &Poly);
-        fn gcd_to(self: &mut Poly, b: &Poly);
-        fn rem_to(self: &mut Poly, b: &Poly);
-        fn div_to_checked(self: &mut Poly, b: &Poly) -> bool;
-        fn sqr(self: &mut Poly);
+        fn add_to(self: Pin<&mut Poly>, b: &Poly);
+        fn mul_to(self: Pin<&mut Poly>, b: &Poly);
+        fn div_to(self: Pin<&mut Poly>, b: &Poly);
+        fn gcd_to(self: Pin<&mut Poly>, b: &Poly);
+        fn rem_to(self: Pin<&mut Poly>, b: &Poly);
+        fn div_to_checked(self: Pin<&mut Poly>, b: &Poly) -> bool;
+        fn sqr(self: Pin<&mut Poly>);
         fn coeff(self: &Poly, idx: i64) -> bool;
         fn eq(self: &Poly, b: &Poly) -> bool;
         fn is_zero(self: &Poly) -> bool;
@@ -127,18 +128,19 @@ mod ffi {
         fn mul(b: &Poly, c: &Poly) -> UniquePtr<Poly>;
         fn div(b: &Poly, c: &Poly) -> UniquePtr<Poly>;
         fn gcd(b: &Poly, c: &Poly) -> UniquePtr<Poly>;
-        fn xgcd(x: &mut Poly, y: &mut Poly, b: &Poly, c: &Poly) -> UniquePtr<Poly>;
+        fn xgcd(x: Pin<&mut Poly>, y: Pin<&mut Poly>, b: &Poly, c: &Poly) -> UniquePtr<Poly>;
         fn rem(b: &Poly, c: &Poly) -> UniquePtr<Poly>;
         fn power(p: &Poly, n: i64) -> UniquePtr<Poly>;
         fn shift(p: &Poly, n: i64) -> UniquePtr<Poly>;
         fn copy_poly(p: &Poly) -> UniquePtr<Poly>;
         fn factor(p: &Poly, verbosity: i64) -> UniquePtr<CxxVector<PolyI64Pair>>;
+
         type PolyRem;
         fn new_polyrem(rem: &Poly, m: &Poly) -> UniquePtr<PolyRem>;
-        fn add_to(self: &mut PolyRem, b: &PolyRem);
-        fn mul_to(self: &mut PolyRem, b: &PolyRem);
-        fn div_to(self: &mut PolyRem, b: &PolyRem);
-        fn sqr(self: &mut PolyRem);
+        fn add_to(self: Pin<&mut PolyRem>, b: &PolyRem);
+        fn mul_to(self: Pin<&mut PolyRem>, b: &PolyRem);
+        fn div_to(self: Pin<&mut PolyRem>, b: &PolyRem);
+        fn sqr(self: Pin<&mut PolyRem>);
         fn rep(self: &PolyRem) -> UniquePtr<Poly>;
         fn powermod(p: &PolyRem, n: i64) -> UniquePtr<PolyRem>;
         fn copy_polyrem(p: &PolyRem) -> UniquePtr<PolyRem>;

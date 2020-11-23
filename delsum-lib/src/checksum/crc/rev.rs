@@ -16,6 +16,7 @@ use delsum_poly::*;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use std::convert::TryInto;
+use std::pin::Pin;
 
 /// Find the parameters of a CRC algorithm.
 ///
@@ -131,7 +132,8 @@ impl RevInfo {
         let poly = spec.poly.map(|p| {
             let mut p = new_poly(&p.to_be_bytes());
             // add leading coefficient, which is omitted in binary form
-            p.add_to(&new_poly_shifted(&[1], width as i64, true));
+            p.pin_mut()
+                .add_to(&new_poly_shifted(&[1], width as i64, true));
             p
         });
         // while init and poly are unaffected by refout, xorout is not
@@ -279,10 +281,10 @@ fn rev_from_polys(
     log("finding poly");
     let (polys, mut hull) = find_polyhull(spec, polys, verbosity);
     log("finding init and refining poly");
-    let init = find_init(&spec.init, &mut hull, polys);
+    let init = find_init(&spec.init, hull.pin_mut(), polys);
     let polyhull_factors: Vec<_>;
     if deg(&hull) > 0 {
-        xorout.0.rem_to(&hull);
+        xorout.0.pin_mut().rem_to(&hull);
         log("factoring poly");
         polyhull_factors = factor(&hull, if verbosity > 1 { 1 } else { 0 })
             .into_iter()
@@ -308,7 +310,7 @@ fn remove_inits(init: &Poly, polys: &mut [InitPoly]) {
     for (p, l) in polys {
         match l {
             InitPlace::Single(d) => {
-                p.add_to(&shift(init, 8 * *d as i64));
+                p.pin_mut().add_to(&shift(init, 8 * *d as i64));
                 *l = InitPlace::None;
             }
             // note: this branch shouldn't happen, but it is also no problem if it happens
@@ -390,7 +392,7 @@ fn find_polyhull(spec: &RevInfo, polys: Vec<InitPoly>, verbosity: u64) -> (Vec<I
         match l {
             InitPlace::None => {
                 // if init is multiplied by 0, this is already a multiple of poly so we can gcd it to our estimate
-                hull.gcd_to(&p);
+                hull.pin_mut().gcd_to(&p);
             }
             _ => {
                 contain_init_vec.push((p, l));
@@ -440,7 +442,7 @@ fn find_polyhull(spec: &RevInfo, polys: Vec<InitPoly>, verbosity: u64) -> (Vec<I
         q_fac *= p;
         q_fac += &p_fac;
         // q_fac should now contain no init, so we can gcd it to the hull
-        hull.gcd_to(&q_fac);
+        hull.pin_mut().gcd_to(&q_fac);
         if deg(&hull) == 0 {
             return (contain_init_vec, hull);
         }
@@ -470,7 +472,7 @@ fn find_polyhull(spec: &RevInfo, polys: Vec<InitPoly>, verbosity: u64) -> (Vec<I
                 spec.refin, spec.refout, i, spec.width
             )
         }
-        x_to_2_to_n.sqr();
+        x_to_2_to_n.pin_mut().sqr();
         let mut fac = copy_polyrem(&x_to_2_to_n);
         fac += &x;
         // (fac = x^(2^n) + x)
@@ -480,7 +482,7 @@ fn find_polyhull(spec: &RevInfo, polys: Vec<InitPoly>, verbosity: u64) -> (Vec<I
     let reduced_prod = cumulative_prod.rep();
     drop(cumulative_prod);
     log("doing final gcd");
-    hull.gcd_to(&reduced_prod);
+    hull.pin_mut().gcd_to(&reduced_prod);
     log("removing trailing zeros");
     // we don't care about the factor X^k in the hull, since crc polys should
     // have the lowest bit set (why would you not??)
@@ -572,8 +574,12 @@ impl PrefactorMod {
         }
     }
 
-    fn new_file(mut file: PolyPtr, power: &mut MemoPower, hull: &mut Poly) -> Option<Self> {
-        file.rem_to(&hull);
+    fn new_file(
+        mut file: PolyPtr,
+        power: &mut MemoPower,
+        mut hull: Pin<&mut Poly>,
+    ) -> Option<Self> {
+        file.pin_mut().rem_to(&hull);
         let file_float = gcd(&file, &hull);
         let power_float = gcd(power.get_init_fac(), &hull);
         let common_float = gcd(&power_float, &file_float);
@@ -585,8 +591,8 @@ impl PrefactorMod {
             let hull_part = highest_power_gcd(&hull, &discrepancy);
             let file_part = gcd(&file_float, &hull_part);
             // since discrepancy divides file_part and file_part divides hull, resue file_part here
-            hull.div_to(&hull_part);
-            hull.mul_to(&file_part);
+            hull.as_mut().div_to(&hull_part);
+            hull.as_mut().mul_to(&file_part);
             if deg(&hull) <= 0 {
                 return None;
             }
@@ -601,7 +607,7 @@ impl PrefactorMod {
         Some(PrefactorMod {
             unknown: common_float,
             possible,
-            hull: copy_poly(hull),
+            hull: copy_poly(&hull),
         })
     }
 
@@ -610,16 +616,16 @@ impl PrefactorMod {
             return;
         }
         self.hull = copy_poly(hull);
-        self.unknown.gcd_to(hull);
+        self.unknown.pin_mut().gcd_to(hull);
         self.possible %= &self.valid();
     }
 
     // merge two different sets of solutions into one where the hull is the gcd of both
     // and all solutions are valid in both
-    fn merge(mut self, mut other: Self, hull: &mut Poly) -> Option<Self> {
-        self.update_hull(hull);
-        other.update_hull(hull);
-        self.adjust_compability(&mut other, hull);
+    fn merge(mut self, mut other: Self, mut hull: Pin<&mut Poly>) -> Option<Self> {
+        self.update_hull(&hull);
+        other.update_hull(&hull);
+        self.adjust_compability(&mut other, hull.as_mut());
         if deg(&hull) <= 0 {
             return None;
         }
@@ -628,7 +634,12 @@ impl PrefactorMod {
         let self_valid = self.valid();
         let other_valid = other.valid();
         // this is the chinese remainder theorem for non-coprime ideals
-        let common_valid = xgcd(&mut self_fac, &mut other_fac, &self_valid, &other_valid);
+        let common_valid = xgcd(
+            self_fac.pin_mut(),
+            other_fac.pin_mut(),
+            &self_valid,
+            &other_valid,
+        );
         self_fac *= &self_valid;
         self_fac *= &other.possible;
         other_fac *= &other_valid;
@@ -643,16 +654,16 @@ impl PrefactorMod {
     // in order to chinese remainder with a common factor, both polynomials modulo
     // the common factor need to be the same
     // if this is not the case, the hull is adjusted
-    fn adjust_compability(&mut self, other: &mut Self, hull: &mut Poly) {
+    fn adjust_compability(&mut self, other: &mut Self, mut hull: Pin<&mut Poly>) {
         let common_valid = gcd(&self.valid(), &other.valid());
         let actual_valid = gcd(&add(&self.possible, &other.possible), &common_valid);
-        hull.div_to(&common_valid);
-        hull.mul_to(&actual_valid);
+        hull.as_mut().div_to(&common_valid);
+        hull.as_mut().mul_to(&actual_valid);
         if deg(&hull) <= 0 {
             return;
         }
-        self.update_hull(hull);
-        other.update_hull(hull);
+        self.update_hull(&hull);
+        other.update_hull(&hull);
     }
 
     fn valid(&self) -> PolyPtr {
@@ -695,16 +706,23 @@ impl PrefactorMod {
     }
 }
 
-fn find_init(maybe_init: &Option<PolyPtr>, hull: &mut Poly, polys: Vec<InitPoly>) -> PrefactorMod {
+fn find_init(
+    maybe_init: &Option<PolyPtr>,
+    mut hull: Pin<&mut Poly>,
+    polys: Vec<InitPoly>,
+) -> PrefactorMod {
     if deg(&hull) <= 0 {
         return PrefactorMod::empty();
     }
-    let mut ret = PrefactorMod::new_init(maybe_init, hull);
+    let mut ret = PrefactorMod::new_init(maybe_init, &hull);
     let mut power = MemoPower::new(&hull);
     for (p, l) in polys {
         power.update_init_fac(&l);
-        let file_solutions = PrefactorMod::new_file(p, &mut power, hull);
-        ret = match file_solutions.map(|f| ret.merge(f, hull)).flatten() {
+        let file_solutions = PrefactorMod::new_file(p, &mut power, hull.as_mut());
+        ret = match file_solutions
+            .map(|f| ret.merge(f, hull.as_mut()))
+            .flatten()
+        {
             Some(valid) => valid,
             None => return PrefactorMod::empty(),
         }
@@ -718,8 +736,8 @@ fn highest_power_gcd(a: &Poly, b: &Poly) -> PolyPtr {
     let mut cur = b % a;
     while !cur.eq(&prev) {
         prev = copy_poly(&cur);
-        cur.sqr();
-        cur.gcd_to(a);
+        cur.pin_mut().sqr();
+        cur.pin_mut().gcd_to(a);
     }
     cur
 }
@@ -944,7 +962,7 @@ mod tests {
             let crc = crc_build.build().unwrap();
             let (poly_p, mut init_p, _) = get_polys_from_crc(&crc);
             let mut multiple_poly = mul(&poly_p, &new_poly(&poly_factor));
-            let mut init = find_init(&None, &mut multiple_poly, polys);
+            let mut init = find_init(&None, multiple_poly.pin_mut(), polys);
             if !rem(&multiple_poly, &poly_p).is_zero() {
                 return TestResult::failed();
             }

@@ -33,6 +33,8 @@ fn main() {
         // needed for NTL
         .flag_if_supported("-fpermissive")
         .file("src/poly.cc")
-        .flag_if_supported("-std=c++14");
+        .flag_if_supported("-std=c++14")
+        .flag_if_supported("-Wno-deprecated-copy")
+        .flag_if_supported("-Wno-unused-parameter");
     build.compile("delsum_poly");
 }
