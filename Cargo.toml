@@ -25,4 +25,4 @@ path = "src/bin.rs"
 [dependencies]
 rayon = { version = "1.1", optional = true }
 structopt = "0.3"
-delsum-lib = { path = "delsum-lib", default-features = false, version = "0.1" }
+delsum-lib = { path = "delsum-lib", default-features = false, version = "0.1.1" }
