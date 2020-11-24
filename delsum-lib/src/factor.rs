@@ -544,7 +544,7 @@ fn p1fac<N: FactorNum>(
     start_power: N,
     prime: &mut u64,
     sieve: &mut PrimeSieve,
-    mut bound: u64,
+    bound: u64,
     lower_n: u64,
 ) -> (N, Vec<N>) {
     let mut ret = Vec::new();
@@ -557,13 +557,11 @@ fn p1fac<N: FactorNum>(
             ret.push(mon.n);
             return (N::zero(), ret);
         }
-        let fac_op = next_factor(&mut mon, prime, &mut power, sieve, (bound + 1) >> 1);
+        let fac_op = next_factor(&mut mon, prime, &mut power, sieve, bound);
         let fac = match fac_op {
             Some(f) => f,
             None => break,
         };
-        let sqrt = get_exact_root(mon.n, 2).unwrap_or_else(|x| x);
-        bound = bound.min(sqrt.as_u64());
         ret.push(fac);
     }
     *n = mon.n;

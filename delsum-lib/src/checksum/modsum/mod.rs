@@ -103,7 +103,7 @@ impl<S: Modnum> ModSumBuilder<S> {
 /// A Modsum checksum algorithm.
 ///
 /// Implements LinearCheck so that finding checksummed locations in a file is efficiently possible.
-#[derive(PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct ModSum<S: Modnum> {
     width: usize,
     module: S,

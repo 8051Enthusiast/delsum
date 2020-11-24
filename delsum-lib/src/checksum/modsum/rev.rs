@@ -201,4 +201,52 @@ mod tests {
         }
         TestResult::from_bool(has_appeared)
     }
+    #[test]
+    fn error1() {
+        let modsum = ModSum::with_options()
+            .width(38)
+            .module(10)
+            .init(1)
+            .build()
+            .unwrap();
+        let f = vec![&[][..], &[0][..], &[30, 98, 74, 46, 90, 70, 18, 37, 44, 53, 53, 20, 47, 39][..]];
+        let chk_files: Vec<_> = f
+            .iter()
+            .map(|f| {
+                let checksum = modsum.digest(*f).unwrap() as u128;
+                (*f, checksum)
+            })
+            .collect();
+        let mut naive = ModSum::<u64>::with_options();
+        naive.width(38);
+        let m: Result<Vec<_>, _> = reverse_modsum(&naive, &chk_files, 0).collect();
+        if let Ok(x) = m {
+            assert!(x.contains(&modsum))
+        }
+    }
+    #[test]
+    fn error2() {
+        let modsum = ModSum::with_options()
+            .width(38)
+            .module(40)
+            .init(2)
+            .build()
+            .unwrap();
+        let f = vec![
+            &[61, 25, 35, 56, 90, 96, 75][..], &[8, 94, 62, 74][..], &[82, 11, 99, 46][..]
+        ];
+        let chk_files: Vec<_> = f
+            .iter()
+            .map(|f| {
+                let checksum = modsum.digest(*f).unwrap() as u128;
+                (*f, checksum)
+            })
+            .collect();
+        let mut naive = ModSum::<u64>::with_options();
+        naive.width(38);
+        let m: Result<Vec<_>, _> = reverse_modsum(&naive, &chk_files, 0).collect();
+        if let Ok(x) = m {
+            assert!(x.contains(&modsum))
+        }
+    }
 }
