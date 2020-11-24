@@ -146,17 +146,3 @@ mod ffi {
         fn copy_polyrem(p: &PolyRem) -> UniquePtr<PolyRem>;
     }
 }
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn degree() {
-        let p = new_poly(&[0xff, 0xff, 0xff, 0xff]);
-        assert_eq!(deg(&p), 31);
-        let q = add(&p, &p);
-        assert_eq!(deg(&q), -1);
-        let q = mul(&p, &p);
-        assert_eq!(deg(&q), 62);
-        assert_eq!(deg(&new_poly(&[0x80, 0, 0])), 23);
-    }
-}
