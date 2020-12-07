@@ -375,7 +375,7 @@ impl std::fmt::Display for CheckReverserError {
             MissingParameter(s) => write!(f, "Missing Parameters: {}", s),
             UnsuitableFiles(s) => write!(
                 f,
-                "Could not reverse because\
+                "Could not reverse because \
                 files are unsuitable: {}",
                 s
             ),
