@@ -97,8 +97,8 @@ fn reverse<'a>(
             "at least 3 parameters/files",
         ));
     }
-    if spec.init.is_some()
-        || chk_bytes.iter().map(|x| x.0.len()).max() == chk_bytes.iter().map(|x| x.0.len()).min()
+    if spec.init.is_none()
+        && chk_bytes.iter().map(|x| x.0.len()).max() == chk_bytes.iter().map(|x| x.0.len()).min()
     {
         return Err(CheckReverserError::UnsuitableFiles(
             "need at least one file with different length",
