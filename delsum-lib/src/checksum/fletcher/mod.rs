@@ -271,7 +271,7 @@ impl<S: BitNum> Digest for Fletcher<S> {
     fn init(&self) -> Self::Sum {
         self.to_compact((self.init, S::zero()))
     }
-    fn dig_byte(&self, sum: Self::Sum, byte: u8) -> Self::Sum {
+    fn dig_word(&self, sum: Self::Sum, byte: u8) -> Self::Sum {
         let (mut s, mut c) = self.from_compact(sum);
         s = (s + S::from(byte) % self.module) % self.module;
         c = (c + s) % self.module;

@@ -180,7 +180,7 @@ impl<S: Modnum> Digest for ModSum<S> {
     fn init(&self) -> Self::Sum {
         self.init
     }
-    fn dig_byte(&self, sum: Self::Sum, byte: u8) -> Self::Sum {
+    fn dig_word(&self, sum: Self::Sum, byte: u8) -> Self::Sum {
         sum.add_mod(&S::from(byte), &self.module)
     }
     fn finalize(&self, sum: Self::Sum) -> Self::Sum {

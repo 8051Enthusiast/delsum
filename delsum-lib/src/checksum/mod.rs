@@ -10,8 +10,8 @@ use std::io::Read;
 
 /// A basic trait for a checksum where
 /// * init gives an initial state
-/// * dig_byte processes a single byte
-/// * finalize is applied to get the final sum after all bytes are processed.
+/// * dig_word processes a single word
+/// * finalize is applied to get the final sum after all words are processed.
 ///
 /// They should be implemented in a way such that the digest default implementation
 /// corresponds to calculating the checksum.
@@ -26,24 +26,24 @@ pub trait Digest {
     /// is not really feasable because of the operations LinearCheck would need to do
     /// both on Sums and interal States, so a single Sum type must be enough.
     type Sum: Clone + Eq + Ord + std::fmt::Debug + Send + Sync + SumStr;
-    /// Gets an initial sum before the bytes are processed through the sum.
+    /// Gets an initial sum before the words are processed through the sum.
     ///
     /// For instance in the case of crc, the sum type is some integer and the returned value from
     /// this function could be 0xffffffff (e.g. in the bzip2 crc).
     fn init(&self) -> Self::Sum;
-    /// Processes a single byte from the text.
+    /// Processes a single word from the text.
     ///
-    /// For a crc, this corresponds to shifting, adding the byte and reducing.
-    fn dig_byte(&self, sum: Self::Sum, byte: u8) -> Self::Sum;
-    /// After all bytes are read, this function is called to do some finalization.
+    /// For a crc, this corresponds to shifting, adding the word and reducing.
+    fn dig_word(&self, sum: Self::Sum, byte: u8) -> Self::Sum;
+    /// After all words are read, this function is called to do some finalization.
     ///
     /// In the case of crc, this corresponds to adding a constant at the end
     /// (and maybe also adding some 0s to the end of the text).
     fn finalize(&self, sum: Self::Sum) -> Self::Sum;
-    /// Takes a reader and calculates the checksums of all bytes therein.
+    /// Takes a reader and calculates the checksums of all words therein.
     fn digest<R: Read>(&self, buf: R) -> Result<Self::Sum, std::io::Error> {
-        let sum = buf.bytes().try_fold(self.init(), |partsum, newbyte| {
-            newbyte.map(|x| self.dig_byte(partsum, x))
+        let sum = buf.bytes().try_fold(self.init(), |partsum, newword| {
+            newword.map(|x| self.dig_word(partsum, x))
         })?;
         Ok(self.finalize(sum))
     }
@@ -81,8 +81,8 @@ pub enum RelativeIndex {
 /// * `shift(s, shift_n(1)) == dig(s, 0u8)`
 /// * `shift(s, shift_n(1))` is bijective in the set of all valid `Sum` values
 /// * `shift(shift(s, shift_n(a)), shift_n(b)) == shift(s, shift_n(a+b))`
-/// * `add(dig_byte(s, 0u8), dig_byte(r, 0u8)) == dig_byte(add(s, r), 0u8)`
-/// * `dig_byte(s, k) == dig_byte(0, k) + dig_byte(s, 0u8)` (consequently, `dig_byte(0, 0u8) == 0`)
+/// * `add(dig_word(s, 0), dig_word(r, 0)) == dig_word(add(s, r), 0)`
+/// * `dig_word(s, k) == dig_word(0, k) + dig_word(s, 0)` (consequently, `dig_word(0, 0) == 0`)
 /// * for all sums `s`, `add(finalize(s), negate(s))` is constant (finalize adds a constant value to the sum)
 /// * all methods without default implementations (including those from `Digest`) should run in constant time (assuming constant `Shift`, `Sum` types)
 ///
@@ -100,7 +100,7 @@ pub trait LinearCheck: Digest + Send + Sync {
     fn add(&self, sum_a: Self::Sum, sum_b: &Self::Sum) -> Self::Sum;
     /// Gets inverse in the abelian group of `add` (see trait documentation for more).
     fn negate(&self, sum: Self::Sum) -> Self::Sum;
-    /// Acts as if applying `dig_byte(s, 0)` `n` times to to `s` (see trait documentation for more).
+    /// Acts as if applying `dig_word(s, 0)` `n` times to to `s` (see trait documentation for more).
     ///
     /// Please implement more efficient (equivalent) implementation for each type if possible.
     fn shift_n(&self, n: usize) -> Self::Shift {
@@ -128,7 +128,7 @@ pub trait LinearCheck: Digest + Send + Sync {
                 // from the startsums, we substract the init value of the checksum
                 start_presums.push(self.add(state.clone(), &neg_init));
             }
-            state = self.dig_byte(state, *c);
+            state = self.dig_word(state, *c);
             if end_range.contains(&i) {
                 // from the endsums, we finalize them and subtract the given final sum
                 let endstate = self.add(self.finalize(state.clone()), &self.negate(sum.clone()));
@@ -461,13 +461,13 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
         let shift3 = chk.shift_n(3);
         let shift4 = chk.inc_shift(shift3.clone());
         let mut new_sum = chk.init();
-        new_sum = chk.dig_byte(new_sum, b'T');
+        new_sum = chk.dig_word(new_sum, b'T');
         new_sum = chk.shift(new_sum, &shift3);
-        new_sum = chk.dig_byte(new_sum, b'E');
+        new_sum = chk.dig_word(new_sum, b'E');
         new_sum = chk.shift(new_sum, &shift3);
-        new_sum = chk.dig_byte(new_sum, b'S');
+        new_sum = chk.dig_word(new_sum, b'S');
         new_sum = chk.shift(new_sum, &shift4);
-        new_sum = chk.dig_byte(new_sum, b'T');
+        new_sum = chk.dig_word(new_sum, b'T');
         assert_eq!(test_sum, chk.finalize(new_sum));
     }
     pub fn test_find<L: LinearCheck>(chk: &L) {
@@ -521,7 +521,7 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
         let mut rng = rand::thread_rng();
         let mut s = chk.init();
         while test_values.len() < 100 {
-            s = chk.dig_byte(s, rng.gen());
+            s = chk.dig_word(s, rng.gen());
             if rng.gen_bool(0.01) {
                 test_values.push(s.clone());
             }
@@ -589,8 +589,8 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
     fn check_shift1<L: LinearCheck>(chk: &L, a: &L::Sum) {
         assert_eq!(
             chk.shift(a.clone(), &chk.shift_n(1)),
-            chk.dig_byte(a.clone(), 0u8),
-            "Shift1 Fail: shift({:x?}, shift_n1(1)) != dig_byte({:x?}, 0u8)",
+            chk.dig_word(a.clone(), 0u8),
+            "Shift1 Fail: shift({:x?}, shift_n1(1)) != dig_word({:x?}, 0u8)",
             a,
             a
         );
@@ -609,17 +609,17 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
     }
     fn check_dist<L: LinearCheck>(chk: &L, a: &L::Sum, b: &L::Sum) {
         assert_eq!(
-            chk.add(chk.dig_byte(a.clone(), 0u8), &chk.dig_byte(b.clone(), 0u8)),
-            chk.dig_byte(chk.add(a.clone(), b), 0u8),
-            "Distributivity Fail: dig_byte({:x?}, 0u8) + dig_byte({:x?}, 0u8) != dig_byte({:x?} + {:x?}, 0u8)", a, b, a, b
+            chk.add(chk.dig_word(a.clone(), 0u8), &chk.dig_word(b.clone(), 0u8)),
+            chk.dig_word(chk.add(a.clone(), b), 0u8),
+            "Distributivity Fail: dig_word({:x?}, 0u8) + dig_word({:x?}, 0u8) != dig_word({:x?} + {:x?}, 0u8)", a, b, a, b
         );
     }
     fn check_bil<L: LinearCheck>(chk: &L, e: &L::Sum, a: &L::Sum) {
         for k in 0u8..=255 {
             assert_eq!(
-                chk.dig_byte(a.clone(), k),
-                chk.add(chk.dig_byte(a.clone(), 0u8), &chk.dig_byte(e.clone(), k)),
-                "Bilinearity Fail: dig_byte({:x?}, {:#x}) != dig_byte({:x?}, 0u8) + dig_byte(0, {:#x}u8)", a, k, a ,k
+                chk.dig_word(a.clone(), k),
+                chk.add(chk.dig_word(a.clone(), 0u8), &chk.dig_word(e.clone(), k)),
+                "Bilinearity Fail: dig_word({:x?}, {:#x}) != dig_word({:x?}, 0u8) + dig_word(0, {:#x}u8)", a, k, a ,k
             )
         }
     }

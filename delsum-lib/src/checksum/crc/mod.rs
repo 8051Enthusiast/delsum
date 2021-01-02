@@ -266,7 +266,7 @@ impl<S: BitNum> Digest for CRC<S> {
         // because it is needed for the linearity conditions of LinearCheck.
         self.regularize(self.init)
     }
-    fn dig_byte(&self, sum: Self::Sum, byte: u8) -> Self::Sum {
+    fn dig_word(&self, sum: Self::Sum, byte: u8) -> Self::Sum {
         // sum is reflected both at beginning and end to do operations on it in unreflected state
         // (this could be prevented by implementing a proper implementation for the reflected case)
         let refsum = self.regularize(sum);
