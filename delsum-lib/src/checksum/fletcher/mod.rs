@@ -37,20 +37,18 @@
 //! Note that the `init` parameter, unlike the `addout` parameter, is not compact and is only added to the regular sum,
 //! as for the cumulative sum, it is equivalent to the addout (so you can just add the cumulative `init` to the cumulative `addout`).
 
-
 pub mod rev;
 use crate::bitnum::{BitNum, Modnum};
-use num_traits::{Zero, One};
 use crate::checksum::{CheckBuilderErr, Digest, LinearCheck};
 use crate::keyval::KeyValIter;
+use num_traits::{One, Zero};
 use std::fmt::Display;
 use std::str::FromStr;
-
 
 /// A builder for a fletcher.
 ///
 /// One can use it for specifying a fletcher algorithm, which can be used for checksumming.
-/// 
+///
 /// Example:
 /// ```
 /// # use delsum_lib::checksum::fletcher::Fletcher;
@@ -234,9 +232,13 @@ impl<Sum: Modnum> FromStr for FletcherBuilder<Sum> {
                 "width" => usize::from_str(&current_val).ok().map(|x| fletch.width(x)),
                 "module" => Sum::from_hex(&current_val).ok().map(|x| fletch.module(x)),
                 "init" => Sum::from_hex(&current_val).ok().map(|x| fletch.init(x)),
-                "addout" => Sum::Double::from_hex(&current_val).ok().map(|x| fletch.addout(x)),
+                "addout" => Sum::Double::from_hex(&current_val)
+                    .ok()
+                    .map(|x| fletch.addout(x)),
                 "swap" => bool::from_str(&current_val).ok().map(|x| fletch.swap(x)),
-                "check" => Sum::Double::from_hex(&current_val).ok().map(|x| fletch.check(x)),
+                "check" => Sum::Double::from_hex(&current_val)
+                    .ok()
+                    .map(|x| fletch.check(x)),
                 "name" => Some(fletch.name(&current_val)),
                 _ => return Err(CheckBuilderErr::UnknownKey(current_key)),
             };

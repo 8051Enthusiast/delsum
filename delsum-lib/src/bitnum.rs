@@ -126,13 +126,11 @@ pub trait Modnum: BitNum {
     fn mul_mod(self, rhs: &Self, modulo: &Self) -> Self {
         let dself = Self::Double::from(self);
         let drhs = Self::Double::from(*rhs);
-        Self::from_double(
-            if modulo.is_zero() {
-                dself * drhs
-            } else {
-                (dself * drhs) % Self::Double::from(*modulo)
-            }
-        )
+        Self::from_double(if modulo.is_zero() {
+            dself * drhs
+        } else {
+            (dself * drhs) % Self::Double::from(*modulo)
+        })
     }
     /// negate modulo number (if 0 then modulo is 2^n where n is the number of bits)
     fn neg_mod(self, modulo: &Self) -> Self {

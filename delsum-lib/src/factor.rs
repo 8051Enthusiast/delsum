@@ -577,7 +577,7 @@ fn is_prob_prime<N: FactorNum>(n: N) -> bool {
         // note: match instead of unwrap because of some debug trait missing
         let nu8 = match n.try_into() {
             Ok(x) => x,
-            Err(_) => unreachable!()
+            Err(_) => unreachable!(),
         };
         return PRIMES.binary_search(&nu8).is_ok();
     }
