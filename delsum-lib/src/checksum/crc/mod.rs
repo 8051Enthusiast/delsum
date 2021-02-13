@@ -266,22 +266,22 @@ impl<S: BitNum> Digest for CRC<S> {
         // because it is needed for the linearity conditions of LinearCheck.
         self.regularize(self.init)
     }
-    fn dig_word(&self, sum: Self::Sum, byte: u8) -> Self::Sum {
+    fn dig_word(&self, sum: Self::Sum, word: u64) -> Self::Sum {
         // sum is reflected both at beginning and end to do operations on it in unreflected state
         // (this could be prevented by implementing a proper implementation for the reflected case)
         let refsum = self.regularize(sum);
-        let inbyte = if self.refin {
-            byte.reverse_bits()
+        let inword = if self.refin {
+            word.reverse_bits() >> 56
         } else {
-            byte
+            word
         };
         self.regularize(if self.width <= 8 {
             // if the width is less than 8, we have to be careful not to do negative shift values
-            let overhang = (refsum << (8 - self.width)) ^ S::from(inbyte);
+            let overhang = (refsum << (8 - self.width)) ^ S::from(inword as u8);
             self.get_table_entry(overhang)
         } else {
             // your typical CRC reduction implemented through CRC lookup table
-            let overhang = refsum >> (self.width - 8) ^ S::from(inbyte);
+            let overhang = refsum >> (self.width - 8) ^ S::from(inword as u8);
             let l_remain = (refsum << 8) & self.mask;
             self.get_table_entry(overhang) ^ l_remain
         })

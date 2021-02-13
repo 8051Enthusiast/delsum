@@ -99,11 +99,10 @@ pub fn find_checksum_segments(
         (9..=16, "modsum") => find_segment_str::<ModSum<u16>>(rest, bytes, sum, rel),
         (17..=32, "modsum") => find_segment_str::<ModSum<u32>>(rest, bytes, sum, rel),
         (33..=64, "modsum") => find_segment_str::<ModSum<u64>>(rest, bytes, sum, rel),
-        (1..=8, "fletcher") => find_segment_str::<Fletcher<u8>>(rest, bytes, sum, rel),
-        (9..=16, "fletcher") => find_segment_str::<Fletcher<u16>>(rest, bytes, sum, rel),
-        (17..=32, "fletcher") => find_segment_str::<Fletcher<u32>>(rest, bytes, sum, rel),
-        (33..=64, "fletcher") => find_segment_str::<Fletcher<u64>>(rest, bytes, sum, rel),
-        (65..=128, "fletcher") => find_segment_str::<Fletcher<u128>>(rest, bytes, sum, rel),
+        (1..=16, "fletcher") => find_segment_str::<Fletcher<u8>>(rest, bytes, sum, rel),
+        (17..=32, "fletcher") => find_segment_str::<Fletcher<u16>>(rest, bytes, sum, rel),
+        (33..=64, "fletcher") => find_segment_str::<Fletcher<u32>>(rest, bytes, sum, rel),
+        (65..=128, "fletcher") => find_segment_str::<Fletcher<u64>>(rest, bytes, sum, rel),
         _ => Err(CheckBuilderErr::ValueOutOfRange("width")),
     }
 }
@@ -137,11 +136,10 @@ pub fn find_checksum(strspec: &str, bytes: &[Vec<u8>]) -> Result<Vec<String>, Ch
         (9..=16, "modsum") => get_checksums::<ModSum<u16>>(rest, bytes, width),
         (17..=32, "modsum") => get_checksums::<ModSum<u32>>(rest, bytes, width),
         (33..=64, "modsum") => get_checksums::<ModSum<u64>>(rest, bytes, width),
-        (1..=8, "fletcher") => get_checksums::<Fletcher<u8>>(rest, bytes, width),
-        (9..=16, "fletcher") => get_checksums::<Fletcher<u16>>(rest, bytes, width),
-        (17..=32, "fletcher") => get_checksums::<Fletcher<u32>>(rest, bytes, width),
-        (33..=64, "fletcher") => get_checksums::<Fletcher<u64>>(rest, bytes, width),
-        (65..=128, "fletcher") => get_checksums::<Fletcher<u128>>(rest, bytes, width),
+        (1..=16, "fletcher") => get_checksums::<Fletcher<u8>>(rest, bytes, width),
+        (17..=32, "fletcher") => get_checksums::<Fletcher<u16>>(rest, bytes, width),
+        (33..=64, "fletcher") => get_checksums::<Fletcher<u32>>(rest, bytes, width),
+        (65..=128, "fletcher") => get_checksums::<Fletcher<u64>>(rest, bytes, width),
         _ => Err(CheckBuilderErr::ValueOutOfRange("width")),
     }
 }
@@ -149,7 +147,7 @@ pub fn find_checksum(strspec: &str, bytes: &[Vec<u8>]) -> Result<Vec<String>, Ch
 enum BuilderEnum {
     CRC(CRCBuilder<u128>),
     ModSum(ModSumBuilder<u64>),
-    Fletcher(FletcherBuilder<u128>),
+    Fletcher(FletcherBuilder<u64>),
 }
 
 pub struct AlgorithmFinder<'a> {
@@ -159,7 +157,7 @@ pub struct AlgorithmFinder<'a> {
 }
 
 impl<'a> AlgorithmFinder<'a> {
-    pub fn find_all<'b>(&'b self) -> impl Iterator<Item = Result<String, CheckReverserError>> + 'b {
+    pub fn find_all(&'_ self) -> impl Iterator<Item = Result<String, CheckReverserError>> + '_ {
         let maybe_crc = if let BuilderEnum::CRC(crc) = &self.spec {
             Some(
                 checksum::crc::rev::reverse_crc(crc, self.pairs.as_slice(), self.verbosity)
@@ -200,9 +198,9 @@ impl<'a> AlgorithmFinder<'a> {
     }
 
     #[cfg(feature = "parallel")]
-    pub fn find_all_para<'b>(
-        &'b self,
-    ) -> impl ParallelIterator<Item = Result<String, CheckReverserError>> + 'b {
+    pub fn find_all_para(
+        &'_ self,
+    ) -> impl ParallelIterator<Item = Result<String, CheckReverserError>> + '_ {
         let maybe_crc = if let BuilderEnum::CRC(crc) = &self.spec {
             Some(
                 checksum::crc::rev::reverse_crc_para(crc, self.pairs.as_slice(), self.verbosity)
@@ -255,7 +253,7 @@ pub fn find_algorithm<'a>(
     let spec = match prefix.as_str() {
         "crc" => BuilderEnum::CRC(CRCBuilder::<u128>::from_str(rest)?),
         "modsum" => BuilderEnum::ModSum(ModSumBuilder::<u64>::from_str(rest)?),
-        "fletcher" => BuilderEnum::Fletcher(FletcherBuilder::<u128>::from_str(rest)?),
+        "fletcher" => BuilderEnum::Fletcher(FletcherBuilder::<u64>::from_str(rest)?),
         _ => unimplemented!(),
     };
     let sums = sum

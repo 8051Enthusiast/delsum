@@ -34,7 +34,7 @@ pub trait Digest {
     /// Processes a single word from the text.
     ///
     /// For a crc, this corresponds to shifting, adding the word and reducing.
-    fn dig_word(&self, sum: Self::Sum, byte: u8) -> Self::Sum;
+    fn dig_word(&self, sum: Self::Sum, word: u64) -> Self::Sum;
     /// After all words are read, this function is called to do some finalization.
     ///
     /// In the case of crc, this corresponds to adding a constant at the end
@@ -43,7 +43,7 @@ pub trait Digest {
     /// Takes a reader and calculates the checksums of all words therein.
     fn digest<R: Read>(&self, buf: R) -> Result<Self::Sum, std::io::Error> {
         let sum = buf.bytes().try_fold(self.init(), |partsum, newword| {
-            newword.map(|x| self.dig_word(partsum, x))
+            newword.map(|x| self.dig_word(partsum, x as u64))
         })?;
         Ok(self.finalize(sum))
     }
@@ -128,7 +128,7 @@ pub trait LinearCheck: Digest + Send + Sync {
                 // from the startsums, we substract the init value of the checksum
                 start_presums.push(self.add(state.clone(), &neg_init));
             }
-            state = self.dig_word(state, *c);
+            state = self.dig_word(state, *c as u64);
             if end_range.contains(&i) {
                 // from the endsums, we finalize them and subtract the given final sum
                 let endstate = self.add(self.finalize(state.clone()), &self.negate(sum.clone()));
@@ -461,13 +461,13 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
         let shift3 = chk.shift_n(3);
         let shift4 = chk.inc_shift(shift3.clone());
         let mut new_sum = chk.init();
-        new_sum = chk.dig_word(new_sum, b'T');
+        new_sum = chk.dig_word(new_sum, b'T' as u64);
         new_sum = chk.shift(new_sum, &shift3);
-        new_sum = chk.dig_word(new_sum, b'E');
+        new_sum = chk.dig_word(new_sum, b'E' as u64);
         new_sum = chk.shift(new_sum, &shift3);
-        new_sum = chk.dig_word(new_sum, b'S');
+        new_sum = chk.dig_word(new_sum, b'S' as u64);
         new_sum = chk.shift(new_sum, &shift4);
-        new_sum = chk.dig_word(new_sum, b'T');
+        new_sum = chk.dig_word(new_sum, b'T' as u64);
         assert_eq!(test_sum, chk.finalize(new_sum));
     }
     pub fn test_find<L: LinearCheck>(chk: &L) {
@@ -589,7 +589,7 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
     fn check_shift1<L: LinearCheck>(chk: &L, a: &L::Sum) {
         assert_eq!(
             chk.shift(a.clone(), &chk.shift_n(1)),
-            chk.dig_word(a.clone(), 0u8),
+            chk.dig_word(a.clone(), 0u64),
             "Shift1 Fail: shift({:x?}, shift_n1(1)) != dig_word({:x?}, 0u8)",
             a,
             a
@@ -609,16 +609,16 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
     }
     fn check_dist<L: LinearCheck>(chk: &L, a: &L::Sum, b: &L::Sum) {
         assert_eq!(
-            chk.add(chk.dig_word(a.clone(), 0u8), &chk.dig_word(b.clone(), 0u8)),
-            chk.dig_word(chk.add(a.clone(), b), 0u8),
+            chk.add(chk.dig_word(a.clone(), 0u64), &chk.dig_word(b.clone(), 0u64)),
+            chk.dig_word(chk.add(a.clone(), b), 0u64),
             "Distributivity Fail: dig_word({:x?}, 0u8) + dig_word({:x?}, 0u8) != dig_word({:x?} + {:x?}, 0u8)", a, b, a, b
         );
     }
     fn check_bil<L: LinearCheck>(chk: &L, e: &L::Sum, a: &L::Sum) {
-        for k in 0u8..=255 {
+        for k in 0u64..=255 {
             assert_eq!(
                 chk.dig_word(a.clone(), k),
-                chk.add(chk.dig_word(a.clone(), 0u8), &chk.dig_word(e.clone(), k)),
+                chk.add(chk.dig_word(a.clone(), 0u64), &chk.dig_word(e.clone(), k)),
                 "Bilinearity Fail: dig_word({:x?}, {:#x}) != dig_word({:x?}, 0u8) + dig_word(0, {:#x}u8)", a, k, a ,k
             )
         }

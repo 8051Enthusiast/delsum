@@ -1,5 +1,5 @@
-use num_traits::Num;
-use std::ops;
+use num_traits::{Num, One};
+use std::{convert::TryInto, ops};
 /// Me: can I have a trait for either u8, u16, u32, u64 or u128?
 /// Mom: We have a trait for either u8, u16, u32, u64 or u128 at home
 /// trait for either u8, u16, u32, u64 or u128 at home:
@@ -103,71 +103,86 @@ impl BitNum for u128 {
 /// For the modsum, we need a wider type for temporary reduction modulo some number,
 /// so this is implemented in this type (and there's probably no need for an u128 ModSum anyway)
 pub trait Modnum: BitNum {
-    fn add_mod(self, rhs: &Self, modulo: &Self) -> Self;
-    fn mul_mod(self, rhs: &Self, modulo: &Self) -> Self;
+    type Double: BitNum + ops::Rem<Output = Self::Double> + From<Self> + TryInto<Self>;
+    /// cuts Self::Double in half (ignores the upper half of bits)
+    fn from_double(n: Self::Double) -> Self {
+        let masked_n = n % (Self::Double::one() << (n.bits() / 2));
+        match masked_n.try_into() {
+            Ok(k) => k,
+            Err(_) => panic!("Half of Double does not fit into original type!"),
+        }
+    }
+    /// add numbers modulo some other number (if 0 then the modulo is 2^n where n is the number of bits)
+    fn add_mod(self, rhs: &Self, modulo: &Self) -> Self {
+        let dself = Self::Double::from(self);
+        let drhs = Self::Double::from(*rhs);
+        Self::from_double(if modulo.is_zero() {
+            dself + drhs
+        } else {
+            (dself + drhs) % Self::Double::from(*modulo)
+        })
+    }
+    /// multiply numbers modulo some other number (if 0 then the modulo is 2^n where n is the number of bits)
+    fn mul_mod(self, rhs: &Self, modulo: &Self) -> Self {
+        let dself = Self::Double::from(self);
+        let drhs = Self::Double::from(*rhs);
+        Self::from_double(
+            if modulo.is_zero() {
+                dself * drhs
+            } else {
+                (dself * drhs) % Self::Double::from(*modulo)
+            }
+        )
+    }
+    /// negate modulo number (if 0 then modulo is 2^n where n is the number of bits)
+    fn neg_mod(self, modulo: &Self) -> Self {
+        if modulo.is_zero() {
+            Self::zero().wrapping_sub(&self)
+        } else {
+            *modulo - self
+        }
+    }
+    /// convert from u64 with some modulo to the number (0 is again 2^n)
+    fn mod_from(n: u64, modulo: &Self) -> Self;
 }
 // the same stuff a bunch of times (not u128 because i can't be bothered)
 impl Modnum for u8 {
-    fn add_mod(self, rhs: &Self, modulo: &Self) -> Self {
+    type Double = u16;
+    fn mod_from(n: u64, modulo: &Self) -> Self {
         if *modulo != 0 {
-            ((u16::from(self) + u16::from(*rhs)) % u16::from(*modulo)) as u8
+            (n % *modulo as u64) as u8
         } else {
-            (u16::from(self) + u16::from(*rhs)) as u8
-        }
-    }
-    fn mul_mod(self, rhs: &Self, modulo: &Self) -> Self {
-        if *modulo != 0 {
-            ((u16::from(self) * u16::from(*rhs)) % u16::from(*modulo)) as u8
-        } else {
-            (u16::from(self) * u16::from(*rhs)) as u8
+            n as u8
         }
     }
 }
 impl Modnum for u16 {
-    fn add_mod(self, rhs: &Self, modulo: &Self) -> Self {
+    type Double = u32;
+    fn mod_from(n: u64, modulo: &Self) -> Self {
         if *modulo != 0 {
-            ((u32::from(self) + u32::from(*rhs)) % u32::from(*modulo)) as u16
+            (n % *modulo as u64) as u16
         } else {
-            (u32::from(self) + u32::from(*rhs)) as u16
-        }
-    }
-    fn mul_mod(self, rhs: &Self, modulo: &Self) -> Self {
-        if *modulo != 0 {
-            ((u32::from(self) * u32::from(*rhs)) % u32::from(*modulo)) as u16
-        } else {
-            (u32::from(self) * u32::from(*rhs)) as u16
+            n as u16
         }
     }
 }
 impl Modnum for u32 {
-    fn add_mod(self, rhs: &Self, modulo: &Self) -> Self {
+    type Double = u64;
+    fn mod_from(n: u64, modulo: &Self) -> Self {
         if *modulo != 0 {
-            ((u64::from(self) + u64::from(*rhs)) % u64::from(*modulo)) as u32
+            (n % *modulo as u64) as u32
         } else {
-            (u64::from(self) + u64::from(*rhs)) as u32
-        }
-    }
-    fn mul_mod(self, rhs: &Self, modulo: &Self) -> Self {
-        if *modulo != 0 {
-            ((u64::from(self) * u64::from(*rhs)) % u64::from(*modulo)) as u32
-        } else {
-            (u64::from(self) * u64::from(*rhs)) as u32
+            n as u32
         }
     }
 }
 impl Modnum for u64 {
-    fn add_mod(self, rhs: &Self, modulo: &Self) -> Self {
+    type Double = u128;
+    fn mod_from(n: u64, modulo: &Self) -> Self {
         if *modulo != 0 {
-            ((u128::from(self) + u128::from(*rhs)) % u128::from(*modulo)) as u64
+            n % *modulo
         } else {
-            (u128::from(self) + u128::from(*rhs)) as u64
-        }
-    }
-    fn mul_mod(self, rhs: &Self, modulo: &Self) -> Self {
-        if *modulo != 0 {
-            ((u128::from(self) * u128::from(*rhs)) % u128::from(*modulo)) as u64
-        } else {
-            (u128::from(self) * u128::from(*rhs)) as u64
+            n
         }
     }
 }

@@ -30,10 +30,10 @@ use std::iter::Iterator;
 ///
 /// The `width` parameter of the builder has to be set.
 pub fn reverse_fletcher<'a>(
-    spec: &FletcherBuilder<u128>,
+    spec: &FletcherBuilder<u64>,
     chk_bytes: &'a [(&[u8], u128)],
     verbosity: u64,
-) -> impl Iterator<Item = Result<Fletcher<u128>, CheckReverserError>> + 'a {
+) -> impl Iterator<Item = Result<Fletcher<u64>, CheckReverserError>> + 'a {
     let spec = spec.clone();
     let swap = spec
         .swap
@@ -50,10 +50,10 @@ pub fn reverse_fletcher<'a>(
 /// so don't expect too much speedup.
 #[cfg(feature = "parallel")]
 pub fn reverse_fletcher_para<'a>(
-    spec: &FletcherBuilder<u128>,
+    spec: &FletcherBuilder<u64>,
     chk_bytes: &'a [(&[u8], u128)],
     verbosity: u64,
-) -> impl ParallelIterator<Item = Result<Fletcher<u128>, CheckReverserError>> + 'a {
+) -> impl ParallelIterator<Item = Result<Fletcher<u64>, CheckReverserError>> + 'a {
     let spec = spec.clone();
     let swap = spec
         .swap
@@ -80,7 +80,7 @@ struct ReversingResult {
 }
 
 impl ReversingResult {
-    fn iter(self) -> impl Iterator<Item = Fletcher<u128>> {
+    fn iter(self) -> impl Iterator<Item = Fletcher<u64>> {
         let ReversingResult {
             inits,
             addout1,
@@ -93,7 +93,7 @@ impl ReversingResult {
             .into_iter()
             .map(move |m| {
                 let module = if m.is_zero() {
-                    0u128
+                    0u64
                 } else {
                     (&m).try_into().unwrap()
                 };
@@ -101,7 +101,7 @@ impl ReversingResult {
                     let addout = glue_sum(s1, s2, width, swap);
                     Fletcher::with_options()
                         .addout(addout)
-                        .init(i as u128)
+                        .init(i as u64)
                         .module(module)
                         .width(width)
                         .swap(swap)
@@ -140,7 +140,7 @@ impl ReversingResult {
 // From that, we can infer that init = 1 mod 4 or init = 3 mod 4 (see PrefactorMod for how exactly that is done).
 // Finding out addout2 is now as easy as subtracting 5*init from (5*init + addout2) mod m.
 fn reverse(
-    spec: &FletcherBuilder<u128>,
+    spec: &FletcherBuilder<u64>,
     chk_bytes: &[(&[u8], u128)],
     swap: bool,
     verbosity: u64,
@@ -237,7 +237,7 @@ fn chk_range(chks: &[(&[u8], u128)], width: usize) -> (u128, u128) {
 }
 
 fn find_regular_sum(
-    spec: &FletcherBuilder<u128>,
+    spec: &FletcherBuilder<u64>,
     files: &[(&[u8], u128)],
     swap: bool,
 ) -> (u128, i128) {
@@ -266,7 +266,7 @@ fn remove_init(sums: &mut Vec<(BigInt, usize)>, init: &BigInt) {
 }
 
 fn remove_addout2(
-    spec: &FletcherBuilder<u128>,
+    spec: &FletcherBuilder<u64>,
     mut sums: Vec<(BigInt, usize)>,
     module: &BigInt,
     swap: bool,
@@ -579,23 +579,26 @@ mod tests {
     use super::*;
     use crate::checksum::Digest;
     use quickcheck::{Arbitrary, TestResult};
-    impl Arbitrary for FletcherBuilder<u128> {
+    impl Arbitrary for FletcherBuilder<u64> {
         fn arbitrary<G: quickcheck::Gen>(g: &mut G) -> Self {
             let mut new_fletcher = Fletcher::with_options();
             let width = ((u8::arbitrary(g) % 63 + 2) * 2) as usize;
             new_fletcher.width(width as usize);
-            let mut module = u128::arbitrary(g) % (1 << (width / 2));
+            let mut module = 0;
             while module <= 1 {
-                module = u128::arbitrary(g) % (1 << (width / 2));
+                module = u64::arbitrary(g);
+                if width < 128 {
+                    module %= 1 << (width / 2);
+                }
             }
             new_fletcher.module(module);
-            let init = u64::arbitrary(g) as u128 % module;
+            let init = u64::arbitrary(g) % module;
             new_fletcher.init(init);
             let swap = bool::arbitrary(g);
             new_fletcher.swap(swap);
-            let addout1 = u64::arbitrary(g) as u128 % module;
-            let addout2 = u64::arbitrary(g) as u128 % module;
-            let addout = glue_sum(addout1 as u64, addout2 as u64, width, swap);
+            let addout1 = u64::arbitrary(g) as u64 % module;
+            let addout2 = u64::arbitrary(g) as u64 % module;
+            let addout = glue_sum(addout1, addout2, width, swap);
             new_fletcher.addout(addout);
             new_fletcher
         }
@@ -604,7 +607,7 @@ mod tests {
     fn fletcher16() {
         let f16 = Fletcher::with_options()
             .width(16)
-            .module(0xffu128)
+            .module(0xffu64)
             .addout(0x2233)
             .init(0x44)
             .build()
@@ -621,7 +624,7 @@ mod tests {
                 (*f, checksum)
             })
             .collect();
-        let mut naive = Fletcher::<u128>::with_options();
+        let mut naive = Fletcher::<u64>::with_options();
         naive.width(16).swap(false);
         let m: Result<Vec<_>, _> = reverse_fletcher(&naive, &chk_files, 0).collect();
         if let Ok(x) = m {
@@ -631,7 +634,7 @@ mod tests {
     #[quickcheck]
     fn qc_fletch_rev(
         mut files: Vec<Vec<u8>>,
-        fletch_build: FletcherBuilder<u128>,
+        fletch_build: FletcherBuilder<u64>,
         known: (bool, bool, bool, bool),
     ) -> TestResult {
         files.sort_by(|a, b| a.len().cmp(&b.len()).then(a.cmp(&b)).reverse());
@@ -639,7 +642,7 @@ mod tests {
             return TestResult::discard();
         }
         let fletcher = fletch_build.build().unwrap();
-        let mut naive = Fletcher::<u128>::with_options();
+        let mut naive = Fletcher::<u64>::with_options();
         naive.width(fletch_build.width.unwrap());
         if known.0 {
             naive.module(fletch_build.module.unwrap());
@@ -709,7 +712,7 @@ mod tests {
                 (*f, checksum)
             })
             .collect();
-        let mut naive = Fletcher::<u128>::with_options();
+        let mut naive = Fletcher::<u64>::with_options();
         naive.width(32);
         let m: Result<Vec<_>, _> = reverse_fletcher(&naive, &chk_files, 0).collect();
         if let Ok(x) = m {
@@ -740,7 +743,7 @@ mod tests {
                 (*f, checksum)
             })
             .collect();
-        let mut naive = Fletcher::<u128>::with_options();
+        let mut naive = Fletcher::<u64>::with_options();
         naive.width(102);
         let m: Result<Vec<_>, _> = reverse_fletcher(&naive, &chk_files, 0).collect();
         if let Ok(x) = m {
@@ -764,7 +767,7 @@ mod tests {
                 (*f, checksum)
             })
             .collect();
-        let mut naive = Fletcher::<u128>::with_options();
+        let mut naive = Fletcher::<u64>::with_options();
         naive.width(42);
         let m: Result<Vec<_>, _> = reverse_fletcher(&naive, &chk_files, 0).collect();
         if let Ok(x) = m {
@@ -796,7 +799,7 @@ mod tests {
                 (*f, checksum)
             })
             .collect();
-        let mut naive = Fletcher::<u128>::with_options();
+        let mut naive = Fletcher::<u64>::with_options();
         naive.width(126);
         let m: Result<Vec<_>, _> = reverse_fletcher(&naive, &chk_files, 0).collect();
         if let Ok(x) = m {
