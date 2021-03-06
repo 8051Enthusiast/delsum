@@ -8,8 +8,9 @@
 //!
 //! Of course, giving more files will result in fewer false positives.
 use super::{ModSum, ModSumBuilder};
-use crate::checksum::{unresult_iter, CheckReverserError};
+use crate::checksum::CheckReverserError;
 use crate::factor::{divisors_range, gcd};
+use crate::utils::unresult_iter;
 use std::iter::Iterator;
 /// Find the parameters of a modsum algorithm.
 ///

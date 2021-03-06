@@ -14,8 +14,9 @@
 //! It is probable that giving just two files + checksum might already be enough, but there will
 //! probably also be many some false positives.
 use super::{Fletcher, FletcherBuilder};
-use crate::checksum::{unresult_iter, CheckReverserError};
+use crate::checksum::CheckReverserError;
 use crate::factor::divisors_range;
+use crate::utils::unresult_iter;
 use num_bigint::BigInt;
 use num_traits::{one, zero, One, Signed, Zero};
 #[cfg(feature = "parallel")]

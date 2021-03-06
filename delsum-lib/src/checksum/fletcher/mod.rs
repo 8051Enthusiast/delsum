@@ -39,7 +39,7 @@
 
 pub mod rev;
 use crate::bitnum::{BitNum, Modnum};
-use crate::checksum::{CheckBuilderErr, Digest, LinearCheck};
+use crate::checksum::{CheckBuilderErr, Digest, LinearCheck, endian};
 use crate::keyval::KeyValIter;
 use num_traits::{One, Zero};
 use std::fmt::Display;
@@ -283,6 +283,11 @@ impl<S: Modnum> Digest for Fletcher<S> {
     }
     fn finalize(&self, sum: Self::Sum) -> Self::Sum {
         self.add(sum, &self.addout)
+    }
+
+    fn to_bytes(&self, s: Self::Sum) -> Vec<u8> {
+        // TODO: actually implement
+        endian::int_to_bytes(s, endian::Endian::Big, self.hwidth)
     }
 }
 

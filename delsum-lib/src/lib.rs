@@ -1,7 +1,8 @@
 mod bitnum;
 pub mod checksum;
-pub(crate) mod factor;
+mod factor;
 mod keyval;
+mod utils;
 use bitnum::BitNum;
 use checksum::{
     crc::{CRCBuilder, CRC},

@@ -10,7 +10,10 @@
 //! Note that a parameter to add at the end is not needed, since it is equivalent to `init`.
 pub mod rev;
 use crate::bitnum::Modnum;
-use crate::checksum::{CheckBuilderErr, Digest, LinearCheck};
+use crate::checksum::{
+    endian::{Endian, WordSpec},
+    CheckBuilderErr, Digest, LinearCheck,
+};
 use crate::keyval::KeyValIter;
 use std::fmt::Display;
 use std::str::FromStr;
@@ -32,6 +35,9 @@ pub struct ModSumBuilder<S: Modnum> {
     width: Option<usize>,
     module: Option<S>,
     init: Option<S>,
+    input_endian: Option<Endian>,
+    output_endian: Option<Endian>,
+    wordsize: Option<usize>,
     check: Option<S>,
     name: Option<String>,
 }
@@ -54,6 +60,21 @@ impl<S: Modnum> ModSumBuilder<S> {
     /// The initial value, optional, defaults to 0.
     pub fn init(&mut self, i: S) -> &mut Self {
         self.init = Some(i);
+        self
+    }
+    /// The endian of the words of the input file
+    pub fn inendian(&mut self, e: Endian) -> &mut Self {
+        self.input_endian = Some(e);
+        self
+    }
+    /// The number of bits in a word of the input file
+    pub fn wordsize(&mut self, n: usize) -> &mut Self {
+        self.wordsize = Some(n);
+        self
+    }
+    /// The endian of the checksum
+    pub fn outendian(&mut self, e: Endian) -> &mut Self {
+        self.output_endian = Some(e);
         self
     }
     /// The checksum of "123456789", gets checked on creation.
@@ -79,21 +100,34 @@ impl<S: Modnum> ModSumBuilder<S> {
         if module != S::zero() {
             init = init % module
         };
+        let wordsize = self.wordsize.unwrap_or(8);
+        if wordsize == 0 || wordsize % 8 != 0 || wordsize > 64 {
+            return Err(CheckBuilderErr::ValueOutOfRange("wordsize"));
+        }
+        let word_bytes = wordsize / 8;
+        let wordspec = WordSpec {
+            input_endian: self.input_endian.unwrap_or(Endian::Big),
+            word_bytes,
+            output_endian: self.output_endian.unwrap_or(Endian::Big),
+        };
         let s = ModSum {
             width,
             module,
             init,
+            wordspec,
             name: self.name.clone(),
         };
         match self.check {
             Some(c) => {
-                // tbh this check is rather useless,
-                // but so is this whole type of checksum
-                if s.digest(&b"123456789"[..]).unwrap() == c {
-                    Ok(s)
-                } else {
-                    Err(CheckBuilderErr::CheckFail)
+                let mut sum = s.init();
+                for &x in b"123456789" {
+                    sum = s.dig_word(sum, x as u64);
                 }
+                s.finalize(sum);
+                if sum == c {
+                    return Ok(s)
+                }
+                Err(CheckBuilderErr::CheckFail)
             }
             None => Ok(s),
         }
@@ -108,6 +142,7 @@ pub struct ModSum<S: Modnum> {
     width: usize,
     module: S,
     init: S,
+    wordspec: WordSpec,
     name: Option<String>,
 }
 
@@ -118,6 +153,9 @@ impl<S: Modnum> ModSum<S> {
             width: None,
             module: None,
             init: None,
+            input_endian: None,
+            output_endian: None,
+            wordsize: None,
             check: None,
             name: None,
         }
@@ -128,11 +166,20 @@ impl<Sum: Modnum> Display for ModSum<Sum> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.name {
             Some(n) => write!(f, "{}", n),
-            None => write!(
-                f,
-                "modsum width={} module={:#x} init={:#x}",
-                self.width, self.module, self.init
-            ),
+            None => {
+                write!(
+                    f,
+                    "modsum width={} module={:#x} init={:#x}",
+                    self.width, self.module, self.init
+                )?;
+                if self.wordspec.word_bytes != 1 {
+                    write!(f, " inendian={} wordsize={}", self.wordspec.input_endian, self.wordspec.word_bytes * 8)?;
+                };
+                if self.width > 8 {
+                    write!(f, " outendian={}", self.wordspec.output_endian)?;
+                }
+                Ok(())
+            },
         }
     }
 }
@@ -150,6 +197,9 @@ impl<Sum: Modnum> FromStr for ModSumBuilder<Sum> {
                 "width" => usize::from_str(&current_val).ok().map(|x| sum.width(x)),
                 "module" => Sum::from_hex(&current_val).ok().map(|x| sum.module(x)),
                 "init" => Sum::from_hex(&current_val).ok().map(|x| sum.init(x)),
+                "in_endian" => Endian::from_str(&current_val).ok().map(|x| sum.inendian(x)),
+                "wordsize" => usize::from_str(&current_val).ok().map(|x| sum.wordsize(x)),
+                "out_endian" => Endian::from_str(&current_val).ok().map(|x| sum.outendian(x)),
                 "name" => Some(sum.name(&current_val)),
                 _ => return Err(CheckBuilderErr::UnknownKey(current_key)),
             };
@@ -187,6 +237,19 @@ impl<S: Modnum> Digest for ModSum<S> {
     fn finalize(&self, sum: Self::Sum) -> Self::Sum {
         sum
     }
+    fn to_bytes(&self, s: Self::Sum) -> Vec<u8> {
+        self.wordspec.output_to_bytes(s, self.width)
+    }
+
+    fn digest(&self, buf: &[u8]) -> Result<Self::Sum, std::io::Error> {
+        if buf.len() % self.wordspec.word_bytes != 0 {
+            return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "Filesize must be a multiple of wordsize"));
+        }
+        let sum = self.wordspec.iter_words(buf).fold(self.init(), |partsum, newword| {
+            self.dig_word(partsum, newword)
+        });
+        Ok(self.finalize(sum))
+    }
 }
 
 impl<S: Modnum> LinearCheck for ModSum<S> {
@@ -219,7 +282,7 @@ mod tests {
     use crate::checksum::tests::{test_prop, test_shifts};
     use crate::checksum::{RelativeIndex, Relativity};
     #[test]
-    fn screw() {
+    fn modsum_8() {
         let s = ModSum::<u8>::with_options()
             .width(8)
             .check(0xdd)
@@ -236,7 +299,7 @@ mod tests {
         test_prop(&s);
     }
     #[test]
-    fn this() {
+    fn mod_17() {
         let s = ModSum::<u8>::with_options()
             .width(5)
             .module(17)
@@ -247,7 +310,7 @@ mod tests {
         test_prop(&s);
     }
     #[test]
-    fn checksum_type() {
+    fn ethsum() {
         let chk = ModSum::<u16>::with_options()
             .width(16)
             .init(0xff00)
@@ -260,17 +323,17 @@ mod tests {
         // 0xff*0x101 = 0xffff
         let many_255: Vec<_> = std::iter::repeat(0xffu8).take(0x101).collect();
         assert_eq!(chk.digest(many_255.as_slice()).unwrap(), 0xff00);
-        let x = Vec::from("implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR");
-        let y = Vec::from("This program comes with ABSOLUTELY NO WARRANTY; for details typ");
-        let merchantibility = chk.digest(b"MERCHANTABILITY".as_ref()).unwrap();
-        let ith_absolutely_ = chk.digest(b"ith ABSOLUTELY ".as_ref()).unwrap();
+        let x = Vec::from("implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR ");
+        let y = Vec::from("This program comes with ABSOLUTELY NO WARRANTY; for details type");
+        let merchantibility = chk.digest(b" MERCHANTABILITY".as_ref()).unwrap();
+        let ith_absolutely_ = chk.digest(b"with ABSOLUTELY ".as_ref()).unwrap();
         assert_eq!(
             chk.find_segments(
                 &[x, y],
                 &[merchantibility, ith_absolutely_],
                 Relativity::Start
             ),
-            vec![(vec![20], vec![RelativeIndex::FromStart(35)])]
+            vec![(vec![19], vec![RelativeIndex::FromStart(35)])]
         );
     }
 }

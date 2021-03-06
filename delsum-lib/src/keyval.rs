@@ -70,10 +70,12 @@ impl<'a> Iterator for KeyValIter<'a> {
                     State::Value
                 }
                 (State::Key, '=') => State::Equal,
-                (State::Key, 'A'..='Z')
+                (State::Key, 'A'..='Z' )
                 | (State::Key, 'a'..='z')
+                | (State::Key, '_')
                 | (State::Whitespace, 'A'..='Z')
-                | (State::Whitespace, 'a'..='z') => {
+                | (State::Whitespace, 'a'..='z')
+                | (State::Whitespace, '_') => {
                     current_key.push(c.to_ascii_lowercase());
                     State::Key
                 }

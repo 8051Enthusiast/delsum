@@ -1,6 +1,7 @@
 pub mod crc;
 pub mod fletcher;
 pub mod modsum;
+pub(crate) mod endian;
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -41,12 +42,14 @@ pub trait Digest {
     /// (and maybe also adding some 0s to the end of the text).
     fn finalize(&self, sum: Self::Sum) -> Self::Sum;
     /// Takes a reader and calculates the checksums of all words therein.
-    fn digest<R: Read>(&self, buf: R) -> Result<Self::Sum, std::io::Error> {
+    fn digest(&self, buf: &[u8]) -> Result<Self::Sum, std::io::Error> {
         let sum = buf.bytes().try_fold(self.init(), |partsum, newword| {
             newword.map(|x| self.dig_word(partsum, x as u64))
         })?;
         Ok(self.finalize(sum))
     }
+    /// Takes the sum and turns it into an array of bytes (may depend on configured endian)
+    fn to_bytes(&self, s: Self::Sum) -> Vec<u8>;
 }
 
 #[derive(Copy, Clone)]
@@ -381,7 +384,7 @@ impl std::fmt::Display for CheckReverserError {
             ),
             ChecksumFileMismatch => write!(
                 f,
-                "Number of files does not\
+                "Number of files does not \
                 match number of checksums"
             ),
         }
@@ -405,19 +408,7 @@ impl<T: crate::bitnum::BitNum> SumStr for T {
     }
 }
 
-/// Turns Result<Iterator, Error> into Iterator<Result<Iterator::Item, Error>> so that
-/// on Err, only the single error is iterated, and else the items of the iterator
-fn unresult_iter<I, E>(x: Result<I, E>) -> impl Iterator<Item = Result<I::Item, E>>
-where
-    I: std::iter::Iterator,
-    E: std::error::Error,
-{
-    let (i, e) = match x {
-        Ok(i) => (Some(i.map(Ok)), None),
-        Err(e) => (None, Some(std::iter::once(Err(e)))),
-    };
-    e.into_iter().flatten().chain(i.into_iter().flatten())
-}
+
 
 #[allow(dead_code)]
 #[cfg(test)]

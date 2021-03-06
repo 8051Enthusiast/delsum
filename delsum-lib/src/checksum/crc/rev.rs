@@ -11,7 +11,8 @@
 //! If `init` is not known, it is neccessary to know two checksums of files with different lengths.
 //! In case only checksums of files with a set length are required, setting `init = 0` is sufficient.
 use super::{CRCBuilder, CRC};
-use crate::checksum::{unresult_iter, CheckReverserError};
+use crate::checksum::CheckReverserError;
+use crate::utils::unresult_iter;
 use delsum_poly::*;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;

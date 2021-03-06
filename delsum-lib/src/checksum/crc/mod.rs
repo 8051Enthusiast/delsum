@@ -1,5 +1,5 @@
 pub mod rev;
-use super::{CheckBuilderErr, Digest, LinearCheck};
+use super::{CheckBuilderErr, Digest, LinearCheck, endian};
 use crate::bitnum::BitNum;
 use crate::keyval::KeyValIter;
 use std::fmt::Display;
@@ -288,6 +288,11 @@ impl<S: BitNum> Digest for CRC<S> {
     }
     fn finalize(&self, sum: Self::Sum) -> Self::Sum {
         sum ^ self.xorout
+    }
+
+    fn to_bytes(&self, s: Self::Sum) -> Vec<u8> {
+        // TODO: actually implement
+        endian::int_to_bytes(s, endian::Endian::Little, self.width)
     }
 }
 
