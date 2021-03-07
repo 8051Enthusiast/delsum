@@ -1,7 +1,7 @@
 pub mod crc;
+pub(crate) mod endian;
 pub mod fletcher;
 pub mod modsum;
-pub(crate) mod endian;
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -408,13 +408,12 @@ impl<T: crate::bitnum::BitNum> SumStr for T {
     }
 }
 
-
-
 #[allow(dead_code)]
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
     use crate::checksum::{RelativeIndex, Relativity};
+    use quickcheck::{Arbitrary, TestResult};
     use rand::Rng;
     static EXAMPLE_TEXT: &str = r#"Als Gregor Samsa eines Morgens aus unruhigen Träumen erwachte, fand er sich in
 seinem Bett zu einem ungeheueren Ungeziefer verwandelt. Er lag auf seinem
@@ -503,7 +502,7 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
     pub fn check_example<D: Digest>(chk: &D, sum: D::Sum) {
         assert_eq!(chk.digest(EXAMPLE_TEXT.as_bytes()).unwrap(), sum)
     }
-
+    // this was written before including quickcheck, hence this manual property testing implementation
     pub fn test_prop<L: LinearCheck>(chk: &L) {
         let mut test_values = Vec::new();
         test_values.push(chk.init());
@@ -623,5 +622,78 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
             a,
             &chk.finalize(e.clone())
         )
+    }
+    /// For generating files for tests so that there are at least 3 with one having a different length
+    /// and the individual lengths are multiples of 8 so that power-of-two wordsizes can be tested
+    #[derive(Clone, PartialEq, Eq, Debug)]
+    pub struct ReverseFileSet(Vec<Vec<u8>>);
+    impl Arbitrary for ReverseFileSet {
+        fn arbitrary<G: quickcheck::Gen>(g: &mut G) -> Self {
+            let n_files = usize::arbitrary(g) + 3;
+            let mut lengths = Vec::new();
+            for _ in 0..n_files {
+                lengths.push(usize::arbitrary(g) * 8);
+            }
+            if lengths.iter().all(|x| *x == lengths[0]) {
+                lengths[0] += 8;
+            }
+            let mut ret = Vec::with_capacity(n_files);
+            for new_len in lengths {
+                let mut cur_file = Vec::with_capacity(new_len);
+                for _ in 0..new_len {
+                    cur_file.push(u8::arbitrary(g));
+                }
+                ret.push(cur_file);
+            }
+            ret.sort_by(|a, b| a.len().cmp(&b.len()).then(a.cmp(&b)).reverse());
+            ReverseFileSet(ret)
+        }
+        fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
+            let vec = self.0.clone();
+            Box::new((0..=(vec.len() - 3)).map(move |x| ReverseFileSet(Vec::from(&vec[x..]))))
+        }
+    }
+    impl ReverseFileSet {
+        pub fn with_checksums<T: Digest>(&self, dig: &T) -> Vec<(&[u8], T::Sum)> {
+            self.0
+                .iter()
+                .map(|f| {
+                    let checksum = dig.digest(f.as_slice()).unwrap();
+                    (f.as_slice(), checksum)
+                })
+                .collect()
+        }
+        pub fn check_matching<T, I>(&self, reference: &T, result_iter: I) -> TestResult
+        where
+            T: Digest + Eq + std::fmt::Display,
+            I: Iterator<Item = Result<T, CheckReverserError>>,
+            T::Sum: std::fmt::LowerHex,
+        {
+            let chk_files = self.with_checksums(reference);
+            let mut has_appeared = false;
+            for modsum_loop in result_iter {
+                let modsum_loop = match modsum_loop {
+                    Err(_) => return TestResult::discard(),
+                    Ok(x) => x,
+                };
+                if &modsum_loop == reference {
+                    has_appeared = true;
+                }
+                for (file, original_check) in &chk_files {
+                    let checksum = modsum_loop.digest(*file).unwrap();
+                    if &checksum != original_check {
+                        eprintln!("expected checksum: {:x}", original_check);
+                        eprintln!("actual checksum: {:x}", checksum);
+                        eprintln!("modsum: {}", modsum_loop);
+                        return TestResult::failed();
+                    }
+                }
+            }
+            if !has_appeared {
+                eprintln!("{} has not appeared!", reference);
+                return TestResult::failed();
+            }
+            TestResult::passed()
+        }
     }
 }

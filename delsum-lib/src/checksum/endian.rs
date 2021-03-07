@@ -12,7 +12,7 @@ impl Display for Endian {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
             Endian::Little => "little",
-            Endian::Big => "big"
+            Endian::Big => "big",
         };
         write!(f, "{}", s)
     }
@@ -25,7 +25,7 @@ impl FromStr for Endian {
         match s.to_ascii_lowercase().as_ref() {
             "little" => Ok(Endian::Little),
             "big" => Ok(Endian::Big),
-            _ => Err(())
+            _ => Err(()),
         }
     }
 }
@@ -91,6 +91,25 @@ impl Default for WordSpec {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quickcheck::Arbitrary;
+    impl Arbitrary for Endian {
+        fn arbitrary<G: quickcheck::Gen>(g: &mut G) -> Self {
+            match bool::arbitrary(g) {
+                true => Endian::Big,    // big if true
+                false => Endian::Little,
+            }
+        }
+    }
+    impl Arbitrary for WordSpec {
+        fn arbitrary<G: quickcheck::Gen>(g: &mut G) -> Self {
+            let word_bytes = [8, 16, 32, 64][usize::arbitrary(g) % 4];
+            WordSpec {
+                input_endian: Endian::arbitrary(g),
+                word_bytes,
+                output_endian: Endian::arbitrary(g),
+            }
+        }
+    }
     #[test]
     fn itobyte() {
         assert_eq!(

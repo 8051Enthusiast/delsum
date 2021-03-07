@@ -8,9 +8,12 @@
 //!
 //! Of course, giving more files will result in fewer false positives.
 use super::{ModSum, ModSumBuilder};
-use crate::checksum::CheckReverserError;
+use crate::checksum::{
+    endian::{Endian, WordSpec},
+    CheckReverserError,
+};
 use crate::factor::{divisors_range, gcd};
-use crate::utils::unresult_iter;
+use crate::utils::{cart_prod, unresult_iter};
 use std::iter::Iterator;
 /// Find the parameters of a modsum algorithm.
 ///
@@ -19,21 +22,83 @@ use std::iter::Iterator;
 /// `verbosity` makes the function output what it is doing
 ///
 /// The `width` parameter of the builder has to be set.
-pub fn reverse_modsum(
+pub fn reverse_modsum<'a>(
     spec: &ModSumBuilder<u64>,
     // note: even though all the sums are supposed to be u64,
     // for ease of intercompability with other reverse function,
     // we take u128
-    chk_bytes: &[(&[u8], u128)],
+    chk_bytes: &'a [(&[u8], u128)],
     verbosity: u64,
-) -> impl Iterator<Item = Result<ModSum<u64>, CheckReverserError>> {
-    let res = reverse(spec, chk_bytes, verbosity).map(|x| x.iter());
-    unresult_iter(res)
+) -> impl Iterator<Item = Result<ModSum<u64>, CheckReverserError>> + 'a {
+    let spec = spec.clone();
+    discrete_combos(spec.clone(), false)
+        .into_iter()
+        .map(move |wordspec| {
+            let rev = match spec.width {
+                None => Err(CheckReverserError::MissingParameter("width")),
+                Some(width) => {
+                    let chk_words = chk_bytes
+                        .iter()
+                        .map(|(f, c)| (wordspec.iter_words(*f), *c))
+                        .collect();
+                    let revspec = RevSpec {
+                        width,
+                        init: spec.init,
+                        module: spec.module,
+                        wordspec,
+                    };
+                    reverse(revspec, chk_words, verbosity).map(|x| x.iter())
+                }
+            };
+            unresult_iter(rev)
+        })
+        .flatten()
 }
+
+// get the combinations of things like word width, endian
+// (basically things that we cannot solve for with arithmetic)
+fn discrete_combos(spec: ModSumBuilder<u64>, extended_search: bool) -> Vec<WordSpec> {
+    let widths = match spec.wordsize {
+        Some(x) => vec![x],
+        None if extended_search => vec![8, 16, 24, 32, 40, 48, 56, 64],
+        None => {
+            let mut x = vec![8, 16, 32, 64];
+            let idx = x.binary_search(&spec.width.unwrap()).unwrap_or_else(|e| e);
+            x.truncate(idx + 1);
+            x
+        }
+    };
+    let endian_ins = spec
+        .input_endian
+        .map(|x| vec![x])
+        .unwrap_or_else(|| vec![Endian::Little, Endian::Big]);
+    let endian_outs = spec
+        .output_endian
+        .map(|x| vec![x])
+        .unwrap_or_else(|| vec![Endian::Little, Endian::Big]);
+    let endians = cart_prod(&endian_ins, &endian_outs);
+    cart_prod(&widths, &endians)
+        .into_iter()
+        .map(|(w, (i, o))| WordSpec {
+            input_endian: i,
+            output_endian: o,
+            word_bytes: (w + 7) / 8,
+        })
+        .collect()
+}
+
+struct RevSpec {
+    width: usize,
+    init: Option<u64>,
+    module: Option<u64>,
+    wordspec: WordSpec,
+}
+
 struct RevResult {
     modlist: Vec<u128>,
     init: i128,
     width: usize,
+    wordspec: WordSpec,
 }
 
 impl RevResult {
@@ -43,6 +108,7 @@ impl RevResult {
             modlist,
             init,
             width,
+            wordspec,
         } = self;
         modlist.into_iter().map(move |module| {
             let init_negative = init < 0;
@@ -54,6 +120,9 @@ impl RevResult {
                 .width(width)
                 .module(module as u64)
                 .init(init as u64)
+                .inendian(wordspec.input_endian)
+                .outendian(wordspec.output_endian)
+                .wordsize(wordspec.word_bytes * 8)
                 .build()
                 .unwrap()
         })
@@ -66,8 +135,8 @@ impl RevResult {
 // If we have two files, we can take their difference and have a number that is 0 mod m, which means m divides this number.
 // The solutions are then the divisors m in the appropiate range.
 fn reverse(
-    spec: &ModSumBuilder<u64>,
-    chk_bytes: &[(&[u8], u128)],
+    spec: RevSpec,
+    chk_bytes: Vec<(impl Iterator<Item = u64>, u128)>,
     verbosity: u64,
 ) -> Result<RevResult, CheckReverserError> {
     let log = |s| {
@@ -75,20 +144,20 @@ fn reverse(
             eprintln!("<modsum> {}", s);
         }
     };
-    let spec = spec.clone();
-    let width = spec
-        .width
-        .ok_or(CheckReverserError::MissingParameter("width"))?;
+    let width = spec.width;
     let mut sums = Vec::<i128>::new();
     let max_sum = 1u128 << width;
     let mut min_sum = 0;
     log("summing files up");
     for (f, chk) in chk_bytes {
-        min_sum = min_sum.max(*chk as u128);
+        min_sum = min_sum.max(chk);
         // here we calculate (init mod m)
-        sums.push(f.iter().copied().map(i128::from).sum::<i128>() - *chk as i128);
+        sums.push(f.map(i128::from).sum::<i128>() - chk as i128);
     }
-    let mut module = 0;
+    let original_mod = spec
+        .module
+        .map(|x| if x == 0 { 1u128 << width } else { x as u128 });
+    let mut module = original_mod.unwrap_or(0) as u128;
     log("removing inits");
     // here we find module by gcd'ing between the differences (init - init == 0 mod m)
     let init = find_largest_mod(&sums, spec.init, &mut module);
@@ -99,11 +168,21 @@ fn reverse(
     }
     log("finding all possible factors");
     // find all possible divisors
-    let modlist = divisors_range(module, min_sum + 1, max_sum);
+    let modlist = match original_mod {
+        Some(x) => {
+            if x as u128 == module {
+                vec![module]
+            } else {
+                Vec::new()
+            }
+        }
+        None => divisors_range(module, min_sum + 1, max_sum),
+    };
     Ok(RevResult {
         modlist,
         init,
         width,
+        wordspec: spec.wordspec,
     })
 }
 
@@ -131,7 +210,7 @@ pub(crate) fn find_largest_mod(sums: &[i128], maybe_init: Option<u64>, module: &
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::checksum::Digest;
+    use crate::checksum::{tests::ReverseFileSet, Digest};
     use quickcheck::{Arbitrary, TestResult};
     impl Arbitrary for ModSumBuilder<u64> {
         fn arbitrary<G: quickcheck::Gen>(g: &mut G) -> Self {
@@ -150,20 +229,22 @@ mod tests {
                 u64::arbitrary(g)
             };
             new_modsum.init(init);
+            let wordspec = WordSpec::arbitrary(g);
+            let max_word_width = ((width + 7)/8).next_power_of_two() * 8;
+            new_modsum.wordsize(max_word_width.max(width) as usize);
+            new_modsum.inendian(wordspec.input_endian);
+            new_modsum.outendian(wordspec.output_endian);
             new_modsum
         }
     }
 
     #[quickcheck]
     fn qc_modsum_rev(
-        mut files: Vec<Vec<u8>>,
+        files: ReverseFileSet,
         modsum_build: ModSumBuilder<u64>,
         known: (bool, bool),
+        wordspec_known: (bool, bool, bool),
     ) -> TestResult {
-        files.sort_by(|a, b| a.len().cmp(&b.len()).then(a.cmp(&b)).reverse());
-        if files.iter().zip(files.iter().skip(1)).any(|(a, b)| a == b) || files.len() <= 2 {
-            return TestResult::discard();
-        }
         let modsum = modsum_build.build().unwrap();
         let mut naive = ModSum::<u64>::with_options();
         naive.width(modsum_build.width.unwrap());
@@ -173,34 +254,22 @@ mod tests {
         if known.1 {
             naive.init(modsum_build.init.unwrap());
         }
+        if wordspec_known.0 {
+            naive.wordsize(modsum_build.wordsize.unwrap());
+        }
+        if wordspec_known.1 {
+            naive.inendian(modsum_build.input_endian.unwrap());
+        }
+        if wordspec_known.2 {
+            naive.outendian(modsum_build.output_endian.unwrap());
+        }
         let chk_files: Vec<_> = files
-            .iter()
-            .map(|f| {
-                let checksum = modsum.digest(f.as_slice()).unwrap();
-                (f.as_slice(), checksum as u128)
-            })
+            .with_checksums(&modsum)
+            .into_iter()
+            .map(|(a, b)| (a, b as u128))
             .collect();
         let reverser = reverse_modsum(&naive, &chk_files, 0);
-        let mut has_appeared = false;
-        for modsum_loop in reverser {
-            let modsum_loop = match modsum_loop {
-                Err(_) => return TestResult::discard(),
-                Ok(x) => x,
-            };
-            if modsum_loop == modsum {
-                has_appeared = true;
-            }
-            for (file, original_check) in &chk_files {
-                let checksum = modsum_loop.digest(*file).unwrap();
-                if checksum as u128 != *original_check {
-                    eprintln!("expected checksum: {:x}", original_check);
-                    eprintln!("actual checksum: {:x}", checksum);
-                    eprintln!("modsum: {}", modsum_loop);
-                    return TestResult::failed();
-                }
-            }
-        }
-        TestResult::from_bool(has_appeared)
+        files.check_matching(&modsum, reverser)
     }
     #[test]
     fn error1() {
