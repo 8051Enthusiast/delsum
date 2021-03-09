@@ -37,16 +37,17 @@
 //! Note that the `init` parameter, unlike the `addout` parameter, is not compact and is only added to the regular sum,
 //! as for the cumulative sum, it is equivalent to the addout (so you can just add the cumulative `init` to the cumulative `addout`).
 
-pub mod rev;
+mod rev;
 use crate::bitnum::{BitNum, Modnum};
 use crate::checksum::{
-    endian::{Endian, WordSpec},
     CheckBuilderErr, Digest, LinearCheck,
 };
+use crate::endian::{Endian, WordSpec};
 use crate::keyval::KeyValIter;
 use num_traits::{One, Zero};
 use std::fmt::Display;
 use std::str::FromStr;
+pub use rev::{reverse_fletcher, reverse_fletcher_para};
 
 /// A builder for a fletcher.
 ///
@@ -54,7 +55,7 @@ use std::str::FromStr;
 ///
 /// Example:
 /// ```
-/// # use delsum_lib::checksum::fletcher::Fletcher;
+/// # use delsum_lib::fletcher::Fletcher;
 /// let adler32 = Fletcher::<u32>::with_options()
 ///     .width(32)
 ///     .init(1)
@@ -312,7 +313,7 @@ impl<Sum: Modnum> FromStr for Fletcher<Sum> {
     /// Example:
     ///
     /// ```
-    /// # use delsum_lib::checksum::fletcher::Fletcher;
+    /// # use delsum_lib::fletcher::Fletcher;
     /// # use std::str::FromStr;
     /// Fletcher::<u32>::from_str("width=32 init=1 module=0xfff1 name=\"adler-32\"").is_ok();
     /// ```

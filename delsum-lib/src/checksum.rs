@@ -1,13 +1,9 @@
-pub mod crc;
-pub(crate) mod endian;
-pub mod fletcher;
-pub mod modsum;
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use std::cmp::Ordering;
 use std::convert::TryFrom;
-use endian::WordSpec;
+use crate::endian::WordSpec;
 
 /// A basic trait for a checksum where
 /// * init gives an initial state

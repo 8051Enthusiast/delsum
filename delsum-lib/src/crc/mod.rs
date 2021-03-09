@@ -1,4 +1,4 @@
-pub mod rev;
+mod rev;
 use super::{
     endian::{Endian, WordSpec},
     CheckBuilderErr, Digest, LinearCheck,
@@ -7,6 +7,7 @@ use crate::bitnum::BitNum;
 use crate::keyval::KeyValIter;
 use std::fmt::Display;
 use std::str::FromStr;
+pub use rev::{reverse_crc, reverse_crc_para};
 /// A builder for a CRC algorithm.
 ///
 /// The Sum type is one of u8, u16, u32, u64 or u128 and must be able to hold `width` bits.

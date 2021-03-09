@@ -8,12 +8,10 @@
 //!
 //! Of course, giving more files will result in fewer false positives.
 use super::{ModSum, ModSumBuilder};
-use crate::checksum::{
-    endian::{bytes_to_int, wordspec_combos, WordSpec},
-    CheckReverserError,
-};
+use crate::checksum::CheckReverserError;
 use crate::factor::{divisors_range, gcd};
 use crate::utils::unresult_iter;
+use crate::endian::{bytes_to_int, wordspec_combos, WordSpec};
 use std::iter::Iterator;
 /// Find the parameters of a modsum algorithm.
 ///
@@ -187,9 +185,9 @@ pub(crate) fn find_largest_mod(sums: &[i128], maybe_init: Option<u64>, module: &
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::checksum::endian::Endian;
     use crate::checksum::tests::ReverseFileSet;
-    use quickcheck::{Arbitrary, TestResult, Gen};
+    use crate::endian::Endian;
+    use quickcheck::{Arbitrary, Gen, TestResult};
     impl Arbitrary for ModSumBuilder<u64> {
         fn arbitrary(g: &mut Gen) -> Self {
             let mut new_modsum = ModSum::with_options();

@@ -14,10 +14,8 @@
 //! It is probable that giving just two files + checksum might already be enough, but there will
 //! probably also be many some false positives.
 use super::{Fletcher, FletcherBuilder};
-use crate::checksum::{
-    endian::{bytes_to_int, wordspec_combos, WordSpec},
-    CheckReverserError,
-};
+use crate::checksum::CheckReverserError;
+use crate::endian::{bytes_to_int, wordspec_combos, WordSpec};
 use crate::factor::divisors_range;
 use crate::utils::{cart_prod, unresult_iter};
 use num_bigint::BigInt;
@@ -342,7 +340,7 @@ fn find_regular_sum(spec: &RevSpec, sums: &[i128], mut module: u128) -> (u128, i
         })
         .flatten();
     // delegate to the corresponding modsum function
-    let sum1_addout = super::super::modsum::rev::find_largest_mod(&sums, maybe_init, &mut module);
+    let sum1_addout = super::super::modsum::find_largest_mod(&sums, maybe_init, &mut module);
     (module, sum1_addout)
 }
 
@@ -644,7 +642,7 @@ fn xgcd(a: &BigInt, b: &BigInt) -> (BigInt, (BigInt, BigInt)) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::checksum::endian::{Endian, WordSpec};
+    use crate::endian::{Endian, WordSpec};
     use crate::checksum::tests::ReverseFileSet;
     use quickcheck::{Arbitrary, TestResult, Gen};
     impl Arbitrary for FletcherBuilder<u64> {

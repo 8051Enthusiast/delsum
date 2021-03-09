@@ -11,7 +11,7 @@
 //! If `init` is not known, it is neccessary to know two checksums of files with different lengths.
 //! In case only checksums of files with a set length are required, setting `init = 0` is sufficient.
 use super::{CRCBuilder, CRC};
-use crate::checksum::endian::{bytes_to_int, int_to_bytes, wordspec_combos, Endian, WordSpec};
+use crate::endian::{bytes_to_int, int_to_bytes, wordspec_combos, Endian, WordSpec};
 use crate::checksum::CheckReverserError;
 use crate::utils::{cart_prod, unresult_iter};
 use delsum_poly::*;
@@ -934,10 +934,8 @@ fn poly_to_u128(poly: &Poly) -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::checksum::{
-        crc::{CRCBuilder, CRC},
-        tests::ReverseFileSet,
-    };
+    use crate::checksum::tests::ReverseFileSet;
+    use crate::crc::{CRCBuilder, CRC};
     use quickcheck::{Arbitrary, TestResult, Gen};
     impl Arbitrary for CRCBuilder<u128> {
         fn arbitrary(g: &mut Gen) -> Self {

@@ -8,21 +8,21 @@
 //! * name: An optional name that gets used for display purposes
 //!
 //! Note that a parameter to add at the end is not needed, since it is equivalent to `init`.
-pub mod rev;
+mod rev;
 use crate::bitnum::Modnum;
-use crate::checksum::{
-    endian::{Endian, WordSpec},
-    CheckBuilderErr, Digest, LinearCheck,
-};
+use crate::checksum::{CheckBuilderErr, Digest, LinearCheck};
+use crate::endian::{Endian, WordSpec};
 use crate::keyval::KeyValIter;
 use std::fmt::Display;
 use std::str::FromStr;
+pub use rev::reverse_modsum;
+pub(crate) use rev::find_largest_mod;
 
 /// A builder to set the various parameters for the modsum algorithm.
 ///
 /// Example:
 /// ```
-/// # use delsum_lib::checksum::modsum::ModSum;
+/// # use delsum_lib::modsum::ModSum;
 /// ModSum::<u8>::with_options()
 ///     .width(8)
 ///     .check(0xdd)
@@ -175,8 +175,7 @@ impl<Sum: Modnum> Display for ModSum<Sum> {
                     write!(
                         f,
                         " in_endian={} wordsize={}",
-                        self.wordspec.input_endian,
-                        self.wordspec.wordsize,
+                        self.wordspec.input_endian, self.wordspec.wordsize,
                     )?;
                 };
                 if self.width > 8 {

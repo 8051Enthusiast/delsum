@@ -3,14 +3,18 @@ pub mod checksum;
 mod factor;
 mod keyval;
 mod utils;
+
+pub mod crc;
+pub(crate) mod endian;
+pub mod fletcher;
+pub mod modsum;
+
 use bitnum::BitNum;
-use checksum::{
-    crc::{CRCBuilder, CRC},
-    fletcher::{Fletcher, FletcherBuilder},
-    modsum::{ModSum, ModSumBuilder},
-    Digest, LinearCheck, RangePairs, Relativity,
-};
 use checksum::{CheckBuilderErr, CheckReverserError};
+use checksum::{Digest, LinearCheck, RangePairs, Relativity};
+use crc::{reverse_crc, reverse_crc_para, CRCBuilder, CRC};
+use fletcher::{reverse_fletcher, reverse_fletcher_para, Fletcher, FletcherBuilder};
+use modsum::{reverse_modsum, ModSum, ModSumBuilder};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use std::cmp::Ordering;
@@ -167,7 +171,7 @@ impl<'a> AlgorithmFinder<'a> {
     pub fn find_all(&'_ self) -> impl Iterator<Item = Result<String, CheckReverserError>> + '_ {
         let maybe_crc = if let BuilderEnum::CRC(crc) = &self.spec {
             Some(
-                checksum::crc::rev::reverse_crc(
+                reverse_crc(
                     crc,
                     self.pairs.as_slice(),
                     self.verbosity,
@@ -180,7 +184,7 @@ impl<'a> AlgorithmFinder<'a> {
         };
         let maybe_modsum = if let BuilderEnum::ModSum(modsum) = &self.spec {
             Some(
-                checksum::modsum::rev::reverse_modsum(
+                reverse_modsum(
                     modsum,
                     self.pairs.as_slice(),
                     self.verbosity,
@@ -193,7 +197,7 @@ impl<'a> AlgorithmFinder<'a> {
         };
         let maybe_fletcher = if let BuilderEnum::Fletcher(fletcher) = &self.spec {
             Some(
-                checksum::fletcher::rev::reverse_fletcher(
+                reverse_fletcher(
                     fletcher,
                     self.pairs.as_slice(),
                     self.verbosity,
@@ -217,7 +221,7 @@ impl<'a> AlgorithmFinder<'a> {
     ) -> impl ParallelIterator<Item = Result<String, CheckReverserError>> + '_ {
         let maybe_crc = if let BuilderEnum::CRC(crc) = &self.spec {
             Some(
-                checksum::crc::rev::reverse_crc_para(
+                reverse_crc_para(
                     crc,
                     self.pairs.as_slice(),
                     self.verbosity,
@@ -230,7 +234,7 @@ impl<'a> AlgorithmFinder<'a> {
         };
         let maybe_modsum = if let BuilderEnum::ModSum(modsum) = &self.spec {
             Some(
-                checksum::modsum::rev::reverse_modsum(
+                reverse_modsum(
                     modsum,
                     self.pairs.as_slice(),
                     self.verbosity,
@@ -244,7 +248,7 @@ impl<'a> AlgorithmFinder<'a> {
         };
         let maybe_fletcher = if let BuilderEnum::Fletcher(fletcher) = &self.spec {
             Some(
-                checksum::fletcher::rev::reverse_fletcher_para(
+                reverse_fletcher_para(
                     fletcher,
                     self.pairs.as_slice(),
                     self.verbosity,
