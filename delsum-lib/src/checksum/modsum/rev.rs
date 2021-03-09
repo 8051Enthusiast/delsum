@@ -189,9 +189,9 @@ mod tests {
     use super::*;
     use crate::checksum::endian::Endian;
     use crate::checksum::tests::ReverseFileSet;
-    use quickcheck::{Arbitrary, TestResult};
+    use quickcheck::{Arbitrary, TestResult, Gen};
     impl Arbitrary for ModSumBuilder<u64> {
-        fn arbitrary<G: quickcheck::Gen>(g: &mut G) -> Self {
+        fn arbitrary(g: &mut Gen) -> Self {
             let mut new_modsum = ModSum::with_options();
             let width = u8::arbitrary(g) % 64 + 1;
             new_modsum.width(width as usize);

@@ -49,8 +49,8 @@ impl PrimeSieve {
             // double
             .take(old_size)
             .collect();
-        for (i, &is_composite) in self.sieve.iter().enumerate().take(self.max_prime).skip(11) {
-            if is_composite {
+        for (i, is_composite) in self.sieve.iter().enumerate().take(self.max_prime).skip(11) {
+            if *is_composite {
                 continue;
             }
             // continue where we left off
@@ -81,7 +81,7 @@ impl PrimeSieve {
     fn next_prime(&mut self, p: usize) -> usize {
         let old_len = self.sieve.len();
         // find index of next prime
-        if let Some((i, _)) = self.sieve[p + 1..].iter().enumerate().find(|(_, x)| !**x) {
+        if let Some(i) = self.sieve[p + 1..].iter().enumerate().find(|(_, x)| !**x).map(|(a, _)| a) {
             let q = p + 1 + i;
             // add the new found prime to the sieve
             self.update(q);
@@ -89,7 +89,7 @@ impl PrimeSieve {
         }
         // if we did not find a next prime, extend the sieve
         self.extend();
-        match self.sieve[old_len..].iter().enumerate().find(|(_, x)| !**x) {
+        match self.sieve[old_len..].iter().enumerate().find(|(_, x)| !**x).map(|(a, b)| (a, *b)) {
             Some((j, _)) => {
                 self.update(old_len + j);
                 old_len + j
@@ -123,7 +123,7 @@ impl PrimeSieve {
         if n > self.max_prime as u64 {
             return None;
         }
-        self.sieve.get(n as usize).copied()
+        self.sieve.get(n as usize).map(|x| *x)
     }
 }
 struct PrimeIterator<'a> {
@@ -589,7 +589,7 @@ fn is_prob_prime<N: FactorNum>(n: N) -> bool {
     let minus_one = n.mod_neg(mon.one);
     // 32 rounds for a 2^-64 probability of false positive
     'a: for _ in 0..32 {
-        let mut witness = mon.to_mon(rng.gen_range(N::one() + N::one(), n1));
+        let mut witness = mon.to_mon(rng.gen_range((N::one() + N::one())..n1));
         witness = mon.mon_powermod(witness, d.into());
         if witness == mon.one || witness == minus_one {
             continue;

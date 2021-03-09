@@ -646,9 +646,9 @@ mod tests {
     use super::*;
     use crate::checksum::endian::{Endian, WordSpec};
     use crate::checksum::tests::ReverseFileSet;
-    use quickcheck::{Arbitrary, TestResult};
+    use quickcheck::{Arbitrary, TestResult, Gen};
     impl Arbitrary for FletcherBuilder<u64> {
-        fn arbitrary<G: quickcheck::Gen>(g: &mut G) -> Self {
+        fn arbitrary(g: &mut Gen) -> Self {
             let mut new_fletcher = Fletcher::with_options();
             let width = ((u8::arbitrary(g) % 63 + 2) * 2) as usize;
             new_fletcher.width(width as usize);

@@ -132,9 +132,9 @@ impl Default for WordSpec {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quickcheck::Arbitrary;
+    use quickcheck::{Arbitrary, Gen};
     impl Arbitrary for Endian {
-        fn arbitrary<G: quickcheck::Gen>(g: &mut G) -> Self {
+        fn arbitrary(g: &mut Gen) -> Self {
             match bool::arbitrary(g) {
                 true => Endian::Big, // big if true
                 false => Endian::Little,
@@ -142,7 +142,7 @@ mod tests {
         }
     }
     impl Arbitrary for WordSpec {
-        fn arbitrary<G: quickcheck::Gen>(g: &mut G) -> Self {
+        fn arbitrary(g: &mut Gen) -> Self {
             let wordsize = [8, 16, 32, 64][usize::arbitrary(g) % 4];
             WordSpec {
                 input_endian: Endian::arbitrary(g),

@@ -887,7 +887,7 @@ fn bytes_to_poly(
     let new_bytes = reorder_poly_bytes(bytes, refin, wordspec);
     let mut poly = new_poly_shifted(&new_bytes, width as i64);
     let sum = bytes_to_int(&checksum, wordspec.output_endian);
-    let check_mask = 1u128.checked_shl(width as u32).unwrap().wrapping_sub(1);
+    let check_mask = 1u128.wrapping_shl(width as u32).wrapping_sub(1);
     if (!check_mask & sum) != 0 {
         return None;
     }
@@ -938,13 +938,23 @@ mod tests {
         crc::{CRCBuilder, CRC},
         tests::ReverseFileSet,
     };
-    use quickcheck::{Arbitrary, TestResult};
+    use quickcheck::{Arbitrary, TestResult, Gen};
     impl Arbitrary for CRCBuilder<u128> {
-        fn arbitrary<G: quickcheck::Gen>(g: &mut G) -> Self {
+        fn arbitrary(g: &mut Gen) -> Self {
             let width = (u8::arbitrary(g) % 128) + 1;
-            let poly = (u128::arbitrary(g) % (1 << width)) | 1;
-            let init = u128::arbitrary(g) % (1 << width);
-            let xorout = u128::arbitrary(g) % (1 << width);
+            let poly;
+            let init;
+            let xorout;
+            if width != 128 {
+                poly = (u128::arbitrary(g) % (1 << width)) | 1;
+                init = u128::arbitrary(g) % (1 << width);
+                xorout = u128::arbitrary(g) % (1 << width);
+            }
+            else {
+                poly = u128::arbitrary(g) | 1;
+                init = u128::arbitrary(g);
+                xorout = u128::arbitrary(g);
+            };
             let mut builder = CRC::<u128>::with_options();
             builder
                 .width(usize::from(width))
@@ -952,7 +962,7 @@ mod tests {
                 .init(init)
                 .xorout(xorout);
             let combos = discrete_combos(&builder, false);
-            let ((refin, refout), wordspec) = combos[usize::arbitrary(g) % combos.len()];
+            let ((refin, refout), wordspec) = *g.choose(&combos).unwrap();
             builder
                 .refout(refout)
                 .refin(refin)

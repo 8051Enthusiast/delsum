@@ -417,7 +417,7 @@ impl<T: crate::bitnum::BitNum> Checksum for T {
 pub(crate) mod tests {
     use super::*;
     use crate::checksum::{RelativeIndex, Relativity};
-    use quickcheck::{Arbitrary, TestResult};
+    use quickcheck::{Arbitrary, TestResult, Gen};
     use rand::Rng;
     static EXAMPLE_TEXT: &str = r#"Als Gregor Samsa eines Morgens aus unruhigen Träumen erwachte, fand er sich in
 seinem Bett zu einem ungeheueren Ungeziefer verwandelt. Er lag auf seinem
@@ -632,11 +632,17 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
     #[derive(Clone, PartialEq, Eq, Debug)]
     pub struct ReverseFileSet(pub Vec<Vec<u8>>);
     impl Arbitrary for ReverseFileSet {
-        fn arbitrary<G: quickcheck::Gen>(g: &mut G) -> Self {
-            let n_files = usize::arbitrary(g) + 3;
+        fn arbitrary(g: &mut Gen) -> Self {
+            let new_size = |q: &mut Gen| {
+                let s = q.size()/8;
+                8 * (usize::arbitrary(q) % s)
+            };
+            println!("{}", g.size());
+            let n_files = (usize::arbitrary(g) % g.size()) + 3;
+            println!("{}", n_files);
             let mut lengths = Vec::new();
             for _ in 0..n_files {
-                lengths.push(usize::arbitrary(g) * 8);
+                lengths.push(new_size(g));
             }
             if lengths.iter().all(|x| *x == lengths[0]) {
                 lengths[0] += 8;
