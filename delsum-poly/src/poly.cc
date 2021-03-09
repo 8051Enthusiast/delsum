@@ -56,30 +56,21 @@ namespace poly
         return std::make_unique<std::vector<PolyI64Pair>>(std::move(v));
     }
 
-    std::unique_ptr<Poly> new_poly_shifted(rust::Slice<const uint8_t> bytes, int64_t shift, bool msb_first)
+    std::unique_ptr<Poly> new_poly_shifted(rust::Slice<const uint8_t> bytes, int64_t shift)
     {
         auto lshift = i64_to_l(shift);
-        auto ret = Poly();
-        ret.int_pol = NTL::GF2X();
-        ret.int_pol.SetLength(lshift + bytes.length() * 8);
-        for (size_t i = 0; i < bytes.length(); i++)
-        {
-            auto current_byte = bytes.data()[bytes.length() - 1 - i];
-            for (int j = 0; j < 8; j++)
-            {
-                auto bit_pos = msb_first ? j : (7 - j);
-                auto current_bit = (current_byte >> bit_pos) & 1;
-                auto bit_index = lshift + 8 * i + j;
-                ret.int_pol[bit_index] = current_bit;
-            }
+        auto poly = NTL::GF2XFromBytes(bytes.data(), bytes.length());
+        if (lshift != 0) {
+            poly <<= lshift;
         }
-        ret.int_pol.normalize();
-        return std::make_unique<Poly>(ret);
+        auto ret = Poly();
+        ret.int_pol = poly;
+        return std::make_unique<Poly>(std::move(ret));
     }
 
     std::unique_ptr<Poly> new_poly(rust::Slice<const uint8_t> bytes)
     {
-        return new_poly_shifted(bytes, 0, true);
+        return new_poly_shifted(bytes, 0);
     }
     std::unique_ptr<Poly> new_zero()
     {

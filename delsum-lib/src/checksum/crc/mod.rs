@@ -1,5 +1,8 @@
 pub mod rev;
-use super::{CheckBuilderErr, Digest, LinearCheck, endian};
+use super::{
+    endian::{Endian, WordSpec},
+    CheckBuilderErr, Digest, LinearCheck,
+};
 use crate::bitnum::BitNum;
 use crate::keyval::KeyValIter;
 use std::fmt::Display;
@@ -28,6 +31,9 @@ pub struct CRCBuilder<Sum: BitNum> {
     xorout: Option<Sum>,
     refin: Option<bool>,
     refout: Option<bool>,
+    input_endian: Option<Endian>,
+    output_endian: Option<Endian>,
+    wordsize: Option<usize>,
     check: Option<Sum>,
     name: Option<String>,
 }
@@ -63,6 +69,21 @@ impl<Sum: BitNum> CRCBuilder<Sum> {
         self.refout = Some(o);
         self
     }
+    /// The endian of the words of the input file
+    pub fn inendian(&mut self, e: Endian) -> &mut Self {
+        self.input_endian = Some(e);
+        self
+    }
+    /// The number of bits in a word of the input file
+    pub fn wordsize(&mut self, n: usize) -> &mut Self {
+        self.wordsize = Some(n);
+        self
+    }
+    /// The endian of the checksum
+    pub fn outendian(&mut self, e: Endian) -> &mut Self {
+        self.output_endian = Some(e);
+        self
+    }
     /// Sets the `check` parameter, no check is done if this is left out.
     pub fn check(&mut self, c: Sum) -> &mut Self {
         self.check = Some(c);
@@ -88,7 +109,6 @@ impl<Sum: BitNum> CRCBuilder<Sum> {
         };
         let init = self.init.unwrap_or_else(Sum::zero);
         let xorout = self.xorout.unwrap_or_else(Sum::zero);
-        let refin = self.refin.unwrap_or(false);
         let refout = self.refout.unwrap_or(false);
         // the type needs at least 8 bit so that we can comfortably add bytes to it
         // (i guess it is kind of already impliead by the from<u8> trait)
@@ -108,6 +128,22 @@ impl<Sum: BitNum> CRCBuilder<Sum> {
         if xorout & !mask != Sum::zero() {
             return Err(CheckBuilderErr::ValueOutOfRange("xorout"));
         }
+        let wordsize = self.wordsize.unwrap_or(8);
+        if wordsize == 0 || wordsize % 8 != 0 || wordsize > 64 {
+            return Err(CheckBuilderErr::ValueOutOfRange("wordsize"));
+        }
+        let (input_endian, refin) = match (self.input_endian, self.refin) {
+            (Some(e), Some(r)) => (e, r),
+            (Some(Endian::Little), None) | (None, Some(false)) | (None, None) => {
+                (Endian::Little, false)
+            }
+            (Some(Endian::Big), None) | (None, Some(true)) => (Endian::Big, true),
+        };
+        let wordspec = WordSpec {
+            input_endian,
+            wordsize,
+            output_endian: self.output_endian.unwrap_or(Endian::Big),
+        };
         let crc = CRC {
             width,
             poly,
@@ -115,6 +151,7 @@ impl<Sum: BitNum> CRCBuilder<Sum> {
             xorout,
             refin,
             refout,
+            wordspec,
             mask,
             name: self.name.clone(),
             table: CRC::<Sum>::generate_crc_table(poly, width),
@@ -141,6 +178,7 @@ pub struct CRC<Sum: BitNum> {
     refin: bool,
     refout: bool,
     poly: Sum,
+    wordspec: WordSpec,
     mask: Sum,
     width: usize,
     name: Option<String>,
@@ -151,11 +189,24 @@ impl<Sum: BitNum> Display for CRC<Sum> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.name {
             Some(n) => write!(f, "{}", n),
-            None => write!(
-                f,
-                "crc width={} poly={:#x} init={:#x} xorout={:#x} refin={} refout={}",
-                self.width, self.poly, self.init, self.xorout, self.refin, self.refout
-            ),
+            None => {
+                write!(
+                    f,
+                    "crc width={} poly={:#x} init={:#x} xorout={:#x} refin={} refout={}",
+                    self.width, self.poly, self.init, self.xorout, self.refin, self.refout
+                )?;
+                if self.wordspec.word_bytes() != 1 {
+                    write!(
+                        f,
+                        " wordsize={}",
+                        self.wordspec.wordsize
+                    )?;
+                };
+                if self.width > 8 {
+                    write!(f, " outendian={}", self.wordspec.output_endian)?;
+                };
+                Ok(())
+            }
         }
     }
 }
@@ -170,6 +221,9 @@ impl<Sum: BitNum> CRC<Sum> {
             width: None,
             refin: None,
             refout: None,
+            input_endian: None,
+            output_endian: None,
+            wordsize: None,
             check: None,
             name: None,
         }
@@ -230,6 +284,11 @@ impl<Sum: BitNum> FromStr for CRCBuilder<Sum> {
                 "xorout" => Sum::from_hex(&current_val).ok().map(|x| crc.xorout(x)),
                 "refin" => bool::from_str(&current_val).ok().map(|x| crc.refin(x)),
                 "refout" => bool::from_str(&current_val).ok().map(|x| crc.refout(x)),
+                "in_endian" => Endian::from_str(&current_val).ok().map(|x| crc.inendian(x)),
+                "wordsize" => usize::from_str(&current_val).ok().map(|x| crc.wordsize(x)),
+                "out_endian" => Endian::from_str(&current_val)
+                    .ok()
+                    .map(|x| crc.outendian(x)),
                 "residue" => Some(&mut crc),
                 "check" => Sum::from_hex(&current_val).ok().map(|x| crc.check(x)),
                 "name" => Some(crc.name(&current_val)),
@@ -269,30 +328,37 @@ impl<S: BitNum> Digest for CRC<S> {
     fn dig_word(&self, sum: Self::Sum, word: u64) -> Self::Sum {
         // sum is reflected both at beginning and end to do operations on it in unreflected state
         // (this could be prevented by implementing a proper implementation for the reflected case)
-        let refsum = self.regularize(sum);
+        let mut refsum = self.regularize(sum);
         let inword = if self.refin {
-            word.reverse_bits() >> 56
+            word.reverse_bits() >> (64 - self.wordspec.wordsize)
         } else {
             word
         };
-        self.regularize(if self.width <= 8 {
-            // if the width is less than 8, we have to be careful not to do negative shift values
-            let overhang = (refsum << (8 - self.width)) ^ S::from(inword as u8);
-            self.get_table_entry(overhang)
-        } else {
-            // your typical CRC reduction implemented through CRC lookup table
-            let overhang = refsum >> (self.width - 8) ^ S::from(inword as u8);
-            let l_remain = (refsum << 8) & self.mask;
-            self.get_table_entry(overhang) ^ l_remain
-        })
+        for x in (0..self.wordspec.word_bytes()).rev() {
+            let inbyte = (inword >> (x * 8)) as u8;
+            refsum = if self.width <= 8 {
+                // if the width is less than 8, we have to be careful not to do negative shift values
+                let overhang = (refsum << (8 - self.width)) ^ S::from(inbyte);
+                self.get_table_entry(overhang)
+            } else {
+                // your typical CRC reduction implemented through CRC lookup table
+                let overhang = refsum >> (self.width - 8) ^ S::from(inbyte);
+                let l_remain = (refsum << 8) & self.mask;
+                self.get_table_entry(overhang) ^ l_remain
+            }
+        }
+        self.regularize(refsum)
     }
     fn finalize(&self, sum: Self::Sum) -> Self::Sum {
         sum ^ self.xorout
     }
 
     fn to_bytes(&self, s: Self::Sum) -> Vec<u8> {
-        // TODO: actually implement
-        endian::int_to_bytes(s, endian::Endian::Little, self.width)
+        self.wordspec.output_to_bytes(s, self.width)
+    }
+
+    fn wordspec(&self) -> WordSpec {
+        self.wordspec
     }
 }
 

@@ -1,5 +1,6 @@
 use delsum_lib::checksum::{RelativeIndex, Relativity};
 use delsum_lib::{find_algorithm, find_checksum, find_checksum_segments};
+use hex::{FromHex, FromHexError, ToHex};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use std::ffi::OsString;
@@ -21,8 +22,22 @@ fn reverse(opts: &Reverse) {
     let files = read_files(&opts.files);
     let models = read_models(&opts.model, &opts.model_file);
     let byte_slices: Vec<_> = files.iter().map(Vec::<u8>::as_slice).collect();
+    let checksums = match read_checksums(&opts.checksums) {
+        Ok(x) => x,
+        Err(e) => {
+            eprintln!("Could not read checksums: {}", e);
+            exit(1);
+        }
+    };
     let algorithms = |model: &str| {
-        find_algorithm(&model, &byte_slices, &opts.checksums, opts.verbose).unwrap_or_else(|err| {
+        find_algorithm(
+            &model,
+            &byte_slices,
+            &checksums,
+            opts.verbose,
+            opts.extended_search,
+        )
+        .unwrap_or_else(|err| {
             eprintln!("Could not process model '{}': {}", model, err);
             exit(1);
         })
@@ -61,16 +76,22 @@ fn part(opts: &Part) {
     } else {
         Relativity::End
     };
+    let checksums = match read_checksums(&opts.checksums) {
+        Ok(x) => x,
+        Err(e) => {
+            eprintln!("Could not read checksums: {}", e);
+            exit(1);
+        }
+    };
     #[cfg(feature = "parallel")]
     let parallel = opts.parallel;
     #[cfg(not(feature = "parallel"))]
     let parallel = false;
     let subsum_print = |model| {
-        let segs =
-            find_checksum_segments(model, &files, &opts.checksums, rel).unwrap_or_else(|err| {
-                eprintln!("Could not process model '{}': {}", model, err);
-                exit(1);
-            });
+        let segs = find_checksum_segments(model, &files, &checksums, rel).unwrap_or_else(|err| {
+            eprintln!("Could not process model '{}': {}", model, err);
+            exit(1);
+        });
         if !segs.is_empty() {
             let mut list = String::new();
             list.push_str(&format!("{}:\n", model));
@@ -118,9 +139,24 @@ fn check(opts: &Check) {
             exit(1);
         });
         if is_single {
-            println!("{}", checksums.join(","))
+            println!(
+                "{}",
+                checksums
+                    .iter()
+                    .map(|x| x.encode_hex())
+                    .collect::<Vec<String>>()
+                    .join(",")
+            )
         } else {
-            println!("{}: {}", model, checksums.join(","))
+            println!(
+                "{}: {}",
+                model,
+                checksums
+                    .iter()
+                    .map(|x| x.encode_hex())
+                    .collect::<Vec<String>>()
+                    .join(",")
+            )
         }
     };
     match parallel {
@@ -132,6 +168,11 @@ fn check(opts: &Check) {
             models.iter().for_each(|x| print_sums(x));
         }
     }
+}
+
+/// reads a bunch of checksums in hex separated by ','
+fn read_checksums(s: &str) -> Result<Vec<Vec<u8>>, FromHexError> {
+    s.split(',').map(|x| x.trim()).map(Vec::from_hex).collect()
 }
 
 #[derive(Debug, StructOpt)]
@@ -183,6 +224,9 @@ struct Reverse {
     /// Use the checksum algorithm given by the model string
     #[structopt(short, long)]
     model: Option<String>,
+    /// Extend the search to parameter combinations that are unlikely
+    #[structopt(short, long)]
+    extended_search: bool,
     /// Read model strings line-by-line from given file
     #[structopt(short = "M", long)]
     model_file: Option<OsString>,

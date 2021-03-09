@@ -109,7 +109,7 @@ mod ffi {
         include!("delsum-poly/include/poly.hh");
 
         type Poly;
-        fn new_poly_shifted(bytes: &[u8], shift: i64, msb_first: bool) -> UniquePtr<Poly>;
+        fn new_poly_shifted(bytes: &[u8], shift: i64) -> UniquePtr<Poly>;
         fn new_poly(bytes: &[u8]) -> UniquePtr<Poly>;
         fn new_zero() -> UniquePtr<Poly>;
         fn to_bytes(self: &Poly, min_bytes: i64) -> UniquePtr<CxxVector<u8>>;

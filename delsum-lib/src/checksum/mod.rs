@@ -7,7 +7,7 @@ pub mod modsum;
 use rayon::prelude::*;
 use std::cmp::Ordering;
 use std::convert::TryFrom;
-use std::io::Read;
+use endian::WordSpec;
 
 /// A basic trait for a checksum where
 /// * init gives an initial state
@@ -26,7 +26,7 @@ pub trait Digest {
     /// and gets converted to a Sum by finalize
     /// is not really feasable because of the operations LinearCheck would need to do
     /// both on Sums and interal States, so a single Sum type must be enough.
-    type Sum: Clone + Eq + Ord + std::fmt::Debug + Send + Sync + SumStr;
+    type Sum: Clone + Eq + Ord + std::fmt::Debug + Send + Sync + Checksum;
     /// Gets an initial sum before the words are processed through the sum.
     ///
     /// For instance in the case of crc, the sum type is some integer and the returned value from
@@ -41,15 +41,19 @@ pub trait Digest {
     /// In the case of crc, this corresponds to adding a constant at the end
     /// (and maybe also adding some 0s to the end of the text).
     fn finalize(&self, sum: Self::Sum) -> Self::Sum;
-    /// Takes a reader and calculates the checksums of all words therein.
-    fn digest(&self, buf: &[u8]) -> Result<Self::Sum, std::io::Error> {
-        let sum = buf.bytes().try_fold(self.init(), |partsum, newword| {
-            newword.map(|x| self.dig_word(partsum, x as u64))
-        })?;
-        Ok(self.finalize(sum))
-    }
     /// Takes the sum and turns it into an array of bytes (may depend on configured endian)
     fn to_bytes(&self, s: Self::Sum) -> Vec<u8>;
+    /// Iterate over the words of a file so that digest calculates the checksum
+    fn wordspec(&self) -> WordSpec;
+    /// Takes a reader and calculates the checksums of all words therein.
+    fn digest(&self, buf: &[u8]) -> Result<Self::Sum, std::io::Error> {
+        let wordspec = self.wordspec();
+        if buf.len() % wordspec.word_bytes() != 0 {
+            return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof))
+        }
+        let sum = wordspec.iter_words(buf).fold(self.init(), |c, s| self.dig_word(c, s));
+        Ok(self.finalize(sum))
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -392,13 +396,13 @@ impl std::fmt::Display for CheckReverserError {
 }
 impl std::error::Error for CheckReverserError {}
 
-/// Trait for displaying checksum outputs
-pub trait SumStr {
+/// Trait for checksums
+pub trait Checksum {
     fn to_width_str(&self, width: usize) -> String;
 }
 
 // default implementation for normal numbers
-impl<T: crate::bitnum::BitNum> SumStr for T {
+impl<T: crate::bitnum::BitNum> Checksum for T {
     fn to_width_str(&self, width: usize) -> String {
         if width == 0 {
             return String::new();
@@ -626,7 +630,7 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
     /// For generating files for tests so that there are at least 3 with one having a different length
     /// and the individual lengths are multiples of 8 so that power-of-two wordsizes can be tested
     #[derive(Clone, PartialEq, Eq, Debug)]
-    pub struct ReverseFileSet(Vec<Vec<u8>>);
+    pub struct ReverseFileSet(pub Vec<Vec<u8>>);
     impl Arbitrary for ReverseFileSet {
         fn arbitrary<G: quickcheck::Gen>(g: &mut G) -> Self {
             let n_files = usize::arbitrary(g) + 3;
@@ -650,15 +654,15 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
         }
         fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
             let vec = self.0.clone();
-            Box::new((0..=(vec.len() - 3)).map(move |x| ReverseFileSet(Vec::from(&vec[x..]))))
+            Box::new((1..=(vec.len() - 3)).map(move |x| ReverseFileSet(Vec::from(&vec[x..]))))
         }
     }
     impl ReverseFileSet {
-        pub fn with_checksums<T: Digest>(&self, dig: &T) -> Vec<(&[u8], T::Sum)> {
+        pub fn with_checksums<T: Digest>(&self, dig: &T) -> Vec<(&[u8], Vec<u8>)> {
             self.0
                 .iter()
                 .map(|f| {
-                    let checksum = dig.digest(f.as_slice()).unwrap();
+                    let checksum = dig.to_bytes(dig.digest(f.as_slice()).unwrap());
                     (f.as_slice(), checksum)
                 })
                 .collect()
@@ -671,7 +675,10 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
         {
             let chk_files = self.with_checksums(reference);
             let mut has_appeared = false;
-            for modsum_loop in result_iter {
+            for (count, modsum_loop) in result_iter.enumerate() {
+                if count > 10000 {
+                    return TestResult::discard()
+                }
                 let modsum_loop = match modsum_loop {
                     Err(_) => return TestResult::discard(),
                     Ok(x) => x,
@@ -680,11 +687,20 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
                     has_appeared = true;
                 }
                 for (file, original_check) in &chk_files {
-                    let checksum = modsum_loop.digest(*file).unwrap();
+                    let checksum = modsum_loop.to_bytes(modsum_loop.digest(*file).unwrap());
                     if &checksum != original_check {
-                        eprintln!("expected checksum: {:x}", original_check);
-                        eprintln!("actual checksum: {:x}", checksum);
-                        eprintln!("modsum: {}", modsum_loop);
+                        eprint!("expected checksum: ");
+                        for x in original_check {
+                            eprint!("{:02x}", x);
+                        }
+                        eprintln!();
+                        eprint!("actual checksum: ");
+                        for x in checksum {
+                            eprint!("{:02x}", x);
+                        }
+                        eprintln!();
+                        eprintln!("checksum: {}", modsum_loop);
+                        eprintln!("original checksum: {}", reference);
                         return TestResult::failed();
                     }
                 }

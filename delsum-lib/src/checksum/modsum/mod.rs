@@ -104,10 +104,9 @@ impl<S: Modnum> ModSumBuilder<S> {
         if wordsize == 0 || wordsize % 8 != 0 || wordsize > 64 {
             return Err(CheckBuilderErr::ValueOutOfRange("wordsize"));
         }
-        let word_bytes = wordsize / 8;
         let wordspec = WordSpec {
             input_endian: self.input_endian.unwrap_or(Endian::Big),
-            word_bytes,
+            wordsize,
             output_endian: self.output_endian.unwrap_or(Endian::Big),
         };
         let s = ModSum {
@@ -125,7 +124,7 @@ impl<S: Modnum> ModSumBuilder<S> {
                 }
                 s.finalize(sum);
                 if sum == c {
-                    return Ok(s)
+                    return Ok(s);
                 }
                 Err(CheckBuilderErr::CheckFail)
             }
@@ -172,14 +171,19 @@ impl<Sum: Modnum> Display for ModSum<Sum> {
                     "modsum width={} module={:#x} init={:#x}",
                     self.width, self.module, self.init
                 )?;
-                if self.wordspec.word_bytes != 1 {
-                    write!(f, " inendian={} wordsize={}", self.wordspec.input_endian, self.wordspec.word_bytes * 8)?;
+                if self.wordspec.word_bytes() != 1 {
+                    write!(
+                        f,
+                        " inendian={} wordsize={}",
+                        self.wordspec.input_endian,
+                        self.wordspec.wordsize,
+                    )?;
                 };
                 if self.width > 8 {
                     write!(f, " outendian={}", self.wordspec.output_endian)?;
                 }
                 Ok(())
-            },
+            }
         }
     }
 }
@@ -199,7 +203,9 @@ impl<Sum: Modnum> FromStr for ModSumBuilder<Sum> {
                 "init" => Sum::from_hex(&current_val).ok().map(|x| sum.init(x)),
                 "in_endian" => Endian::from_str(&current_val).ok().map(|x| sum.inendian(x)),
                 "wordsize" => usize::from_str(&current_val).ok().map(|x| sum.wordsize(x)),
-                "out_endian" => Endian::from_str(&current_val).ok().map(|x| sum.outendian(x)),
+                "out_endian" => Endian::from_str(&current_val)
+                    .ok()
+                    .map(|x| sum.outendian(x)),
                 "name" => Some(sum.name(&current_val)),
                 _ => return Err(CheckBuilderErr::UnknownKey(current_key)),
             };
@@ -241,14 +247,8 @@ impl<S: Modnum> Digest for ModSum<S> {
         self.wordspec.output_to_bytes(s, self.width)
     }
 
-    fn digest(&self, buf: &[u8]) -> Result<Self::Sum, std::io::Error> {
-        if buf.len() % self.wordspec.word_bytes != 0 {
-            return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "Filesize must be a multiple of wordsize"));
-        }
-        let sum = self.wordspec.iter_words(buf).fold(self.init(), |partsum, newword| {
-            self.dig_word(partsum, newword)
-        });
-        Ok(self.finalize(sum))
+    fn wordspec(&self) -> WordSpec {
+        self.wordspec
     }
 }
 

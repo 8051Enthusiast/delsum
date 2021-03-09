@@ -14,14 +14,17 @@
 //! It is probable that giving just two files + checksum might already be enough, but there will
 //! probably also be many some false positives.
 use super::{Fletcher, FletcherBuilder};
-use crate::checksum::CheckReverserError;
+use crate::checksum::{
+    endian::{bytes_to_int, wordspec_combos, WordSpec},
+    CheckReverserError,
+};
 use crate::factor::divisors_range;
-use crate::utils::unresult_iter;
+use crate::utils::{cart_prod, unresult_iter};
 use num_bigint::BigInt;
 use num_traits::{one, zero, One, Signed, Zero};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
-use std::convert::TryInto;
+use std::convert::{TryFrom, TryInto};
 use std::iter::Iterator;
 /// Find the parameters of a fletcher algorithm.
 ///
@@ -32,16 +35,20 @@ use std::iter::Iterator;
 /// The `width` parameter of the builder has to be set.
 pub fn reverse_fletcher<'a>(
     spec: &FletcherBuilder<u64>,
-    chk_bytes: &'a [(&[u8], u128)],
+    chk_bytes: &[(&'a [u8], Vec<u8>)],
     verbosity: u64,
+    extended_search: bool,
 ) -> impl Iterator<Item = Result<Fletcher<u64>, CheckReverserError>> + 'a {
     let spec = spec.clone();
-    let swap = spec
-        .swap
-        .map(|x| vec![x])
-        .unwrap_or_else(|| vec![false, true]);
-    swap.into_iter()
-        .map(move |s| unresult_iter(reverse(&spec, chk_bytes, s, verbosity).map(|x| x.iter())))
+    let mut files = chk_bytes.to_owned();
+    files.sort_unstable_by(|a, b| a.0.len().cmp(&b.0.len()).reverse());
+    discrete_combos(spec.clone(), extended_search)
+        .into_iter()
+        .map(move |x| {
+            unresult_iter(
+                reverse_discrete(spec.clone(), files.clone(), x, verbosity).map(|y| y.iter()),
+            )
+        })
         .flatten()
 }
 
@@ -52,43 +59,102 @@ pub fn reverse_fletcher<'a>(
 #[cfg(feature = "parallel")]
 pub fn reverse_fletcher_para<'a>(
     spec: &FletcherBuilder<u64>,
-    chk_bytes: &'a [(&[u8], u128)],
+    chk_bytes: &[(&'a [u8], Vec<u8>)],
     verbosity: u64,
+    extended_search: bool,
 ) -> impl ParallelIterator<Item = Result<Fletcher<u64>, CheckReverserError>> + 'a {
     let spec = spec.clone();
+    let mut files = chk_bytes.to_owned();
+    files.sort_unstable_by(|a, b| a.0.len().cmp(&b.0.len()).reverse());
+    discrete_combos(spec.clone(), extended_search)
+        .into_par_iter()
+        .map(move |x| {
+            unresult_iter(
+                reverse_discrete(spec.clone(), files.clone(), x, verbosity).map(|y| y.iter()),
+            )
+            .par_bridge()
+        })
+        .flatten()
+}
+
+fn discrete_combos(spec: FletcherBuilder<u64>, extended_search: bool) -> Vec<(bool, WordSpec)> {
     let swap = spec
         .swap
         .map(|x| vec![x])
         .unwrap_or_else(|| vec![false, true]);
-    swap.into_par_iter()
-        .map(move |s| {
-            unresult_iter(reverse(&spec, chk_bytes, s, verbosity).map(|x| x.iter())).par_bridge()
+    let wordspecs = wordspec_combos(
+        spec.wordsize,
+        spec.input_endian,
+        spec.output_endian,
+        spec.width.unwrap(),
+        extended_search,
+    );
+    cart_prod(&swap, &wordspecs)
+}
+
+fn reverse_discrete(
+    spec: FletcherBuilder<u64>,
+    chk_bytes: Vec<(&[u8], Vec<u8>)>,
+    loop_element: (bool, WordSpec),
+    verbosity: u64,
+) -> Result<RevResult, CheckReverserError> {
+    let width = spec
+        .width
+        .ok_or(CheckReverserError::MissingParameter("width"))?;
+    let wordspec = loop_element.1;
+    let chk_words: Vec<_> = chk_bytes
+        .iter()
+        .map(|(f, c)| {
+            (
+                wordspec.iter_words(*f),
+                bytes_to_int::<u128>(c, wordspec.output_endian),
+            )
         })
-        .flatten()
+        .collect();
+    let rev = RevSpec {
+        width,
+        addout: spec.addout,
+        init: spec.init,
+        module: spec.module,
+        swap: loop_element.0,
+        wordspec: loop_element.1,
+    };
+    reverse(rev, chk_words, verbosity)
+}
+
+struct RevSpec {
+    width: usize,
+    addout: Option<u128>,
+    init: Option<u64>,
+    module: Option<u64>,
+    swap: bool,
+    wordspec: WordSpec,
 }
 
 // contains the information needed for iterating over the possible algorithms
 // `inits` is a solution set of the form `a*x ≡ y mod m`, and init still has to
 // be subtracted from addout1 and addout2
 #[derive(Debug, Clone)]
-struct ReversingResult {
+struct RevResult {
     inits: PrefactorMod,
     addout1: BigInt,
     addout2: (BigInt, usize),
     modules: Vec<BigInt>,
     width: usize,
     swap: bool,
+    wordspec: WordSpec,
 }
 
-impl ReversingResult {
+impl RevResult {
     fn iter(self) -> impl Iterator<Item = Fletcher<u64>> {
-        let ReversingResult {
+        let RevResult {
             inits,
             addout1,
             addout2,
             modules,
             width,
             swap,
+            wordspec,
         } = self;
         modules
             .into_iter()
@@ -106,6 +172,9 @@ impl ReversingResult {
                         .module(module)
                         .width(width)
                         .swap(swap)
+                        .inendian(wordspec.input_endian)
+                        .outendian(wordspec.output_endian)
+                        .wordsize(wordspec.wordsize)
                         .build()
                         .unwrap()
                 })
@@ -141,32 +210,28 @@ impl ReversingResult {
 // From that, we can infer that init = 1 mod 4 or init = 3 mod 4 (see PrefactorMod for how exactly that is done).
 // Finding out addout2 is now as easy as subtracting 5*init from (5*init + addout2) mod m.
 fn reverse(
-    spec: &FletcherBuilder<u64>,
-    chk_bytes: &[(&[u8], u128)],
-    swap: bool,
+    spec: RevSpec,
+    chk_bytes: Vec<(impl Iterator<Item = u64>, u128)>,
     verbosity: u64,
-) -> Result<ReversingResult, CheckReverserError> {
+) -> Result<RevResult, CheckReverserError> {
     let log = |s| {
         if verbosity > 0 {
             eprintln!("<fletcher> {}", s);
         }
     };
-    let mut files = chk_bytes.to_owned();
-    // we sort the files in reverse length because the remove_addout2 function reverses their order
-    files.sort_unstable_by(|a, b| a.0.len().cmp(&b.0.len()).reverse());
-    let spec = spec.clone();
-    let width = spec
-        .width
-        .ok_or(CheckReverserError::MissingParameter("width"))?;
+    let width = spec.width;
+    let swap = spec.swap;
+    let wordspec = spec.wordspec;
+    let (min, max, mut cumusums, regsums) = summarize(chk_bytes, width, swap);
     log("finding parameters of lower sum");
     // finding the parameters of the lower sum is pretty much a separate problem already
     // handled in modsum, so we delegate to that
-    let (module, addout1) = find_regular_sum(&spec, &files, swap);
+    let module = spec.module.unwrap_or(0) as u128;
+    let (module, addout1) = find_regular_sum(&spec, &regsums, module);
     let mut module = BigInt::from(module);
     let mut addout1 = BigInt::from(addout1);
     // here, we take the the checksums and remove the cumulative sum sums from them
     // the second value of each value is supposed to be the multiplicity of init in the sum
-    let mut cumusums = cumusum(width, &files, &module, swap);
     if let Some(init) = spec.init {
         log("removing inits from upper sum");
         // if we have the parameter init already given, we can remove
@@ -176,7 +241,7 @@ fn reverse(
     log("removing upper sum addout");
     // take the difference between neighboring files if addout2 is not given, to remove the constant addout from the sums
     // if we already have addout2 given, we don't take the difference between two files, but between each file and given addout2
-    let (red_files, mut addout2) = remove_addout2(&spec, cumusums, &module, swap);
+    let (red_files, mut addout2) = remove_addout2(&spec, cumusums, &module);
     log("refining the module");
     // here we try to find `module` and reduce the sums by module
     let boneless_files = refine_module(&mut module, red_files);
@@ -192,20 +257,31 @@ fn reverse(
     addout1 = mod_red(&addout1, &module);
     addout2.0 = mod_red(&addout2.0, &module);
     // if we have checksums of width 7 with values 0x24, 0x51 and 0x64 we know that `module` has to be between 2^7 = 0x80 and 0x64
-    let (min, max) = chk_range(&files, width);
     log("try to find all possible module values");
     // therefore we try to find all divisors of module in that range
-    let modules = divisors_range(module.try_into().unwrap(), min, max)
-        .into_iter()
-        .map(BigInt::from)
-        .collect();
-    Ok(ReversingResult {
+
+    let modules = match spec.module {
+        None => divisors_range(module.try_into().unwrap(), min, max)
+            .into_iter()
+            .map(BigInt::from)
+            .collect(),
+        Some(m) if BigInt::from(m) == module => vec![module],
+        Some(m) => {
+            if BigInt::from(m) == module && m as u128 > min && m as u128 <= max {
+                vec![module]
+            } else {
+                Vec::new()
+            }
+        }
+    };
+    Ok(RevResult {
         inits,
         addout1,
         addout2,
         modules,
         width,
         swap,
+        wordspec,
     })
 }
 
@@ -225,34 +301,45 @@ fn glue_sum(mut s1: u64, mut s2: u64, width: usize, swap: bool) -> u128 {
     (s1 as u128) | ((s2 as u128) << (width / 2))
 }
 
-fn chk_range(chks: &[(&[u8], u128)], width: usize) -> (u128, u128) {
+fn summarize(
+    chks: Vec<(impl Iterator<Item = u64>, u128)>,
+    width: usize,
+    swap: bool,
+) -> (u128, u128, Vec<(BigInt, usize)>, Vec<i128>) {
+    let mut regsums = Vec::new();
+    let mut cumusums = Vec::new();
     let mut min = 2;
-    for (_, sum) in chks {
-        // swap does not matter
-        let (s1, s2) = split_sum(*sum, width, false);
+    for (words, chk) in chks {
+        let (s1, s2) = split_sum(chk, width, swap);
         min = min.max(s1 as u128 + 1);
         min = min.max(s2 as u128 + 1);
+        let mut current_sum: BigInt = zero();
+        let mut cumusum: BigInt = zero();
+        let mut size = 0usize;
+        for word in words {
+            size += 1;
+            current_sum += BigInt::from(word);
+            cumusum += &current_sum;
+        }
+        let (check1, check2) = split_sum(chk, width, swap);
+        regsums.push(
+            i128::try_from(current_sum).expect("Unexpected overflow in sum") - check1 as i128,
+        );
+        cumusums.push((BigInt::from(check2) - cumusum, size));
     }
     let max = 1 << (width / 2);
-    (min, max)
+    (min, max, cumusums, regsums)
 }
 
-fn find_regular_sum(
-    spec: &FletcherBuilder<u64>,
-    files: &[(&[u8], u128)],
-    swap: bool,
-) -> (u128, i128) {
-    let width = spec.width.unwrap();
-    let mut sums = Vec::new();
-    for (f, chk) in files.iter() {
-        let (chk_lo, _) = split_sum(*chk, width, swap);
-        sums.push(f.iter().copied().map(i128::from).sum::<i128>() - chk_lo as i128);
-    }
-    let mut module = 0;
+fn find_regular_sum(spec: &RevSpec, sums: &[i128], mut module: u128) -> (u128, i128) {
+    let width = spec.width;
     // init is here actually addout1 + init, which we can only know if we have both values
     let maybe_init = spec
         .addout
-        .map(|x| spec.init.map(|y| y as u64 + split_sum(x, width, swap).0))
+        .map(|x| {
+            spec.init
+                .map(|y| y as u64 + split_sum(x, width, spec.swap).0)
+        })
         .flatten();
     // delegate to the corresponding modsum function
     let sum1_addout = super::super::modsum::rev::find_largest_mod(&sums, maybe_init, &mut module);
@@ -267,12 +354,12 @@ fn remove_init(sums: &mut Vec<(BigInt, usize)>, init: &BigInt) {
 }
 
 fn remove_addout2(
-    spec: &FletcherBuilder<u64>,
+    spec: &RevSpec,
     mut sums: Vec<(BigInt, usize)>,
     module: &BigInt,
-    swap: bool,
 ) -> (Vec<(BigInt, usize)>, (BigInt, usize)) {
-    let width = spec.width.unwrap();
+    let width = spec.width;
+    let swap = spec.swap;
     let maybe_addout = spec
         .addout
         .map(|x| BigInt::from(split_sum(x, width, swap).1));
@@ -334,27 +421,6 @@ fn refine_module(module: &mut BigInt, sums: Vec<(BigInt, usize)>) -> Vec<(BigInt
         .collect()
 }
 
-fn cumusum(
-    width: usize,
-    chk_bytes: &[(&[u8], u128)],
-    module: &BigInt,
-    swap: bool,
-) -> Vec<(BigInt, usize)> {
-    let mut sums = Vec::new();
-    for (bytes, chk) in chk_bytes {
-        let mut current_sum: BigInt = zero();
-        let mut cumusum: BigInt = zero();
-        for byte in *bytes {
-            current_sum += BigInt::from(*byte);
-            cumusum += &current_sum;
-        }
-        cumusum = mod_red(&cumusum, module);
-        let (_, check) = split_sum(*chk, width, swap);
-        sums.push((BigInt::from(check) - cumusum, bytes.len()));
-    }
-    sums
-}
-
 // modular reduction, because % is just wrong
 fn mod_red(n: &BigInt, module: &BigInt) -> BigInt {
     if module.is_zero() {
@@ -382,7 +448,7 @@ fn find_init(
         // get the set of inits that solve l*init ≡ p mod module
         let file_solutions = PrefactorMod::from_sum(&p, l, module);
         // merge the solutions with the other solutions
-        ret = match file_solutions.map(|f| ret.merge(f)).flatten() {
+        ret = match file_solutions.map(|f| ret.merge(f)) {
             Some(valid) => valid,
             None => return PrefactorMod::empty(),
         }
@@ -433,7 +499,7 @@ impl PrefactorMod {
             module: module.clone(),
         }
     }
-    fn merge(mut self, mut a: PrefactorMod) -> Option<PrefactorMod> {
+    fn merge(mut self, mut a: PrefactorMod) -> PrefactorMod {
         if self.module != a.module {
             let module = gcd(&self.module, &a.module);
             self.update_module(&module);
@@ -453,7 +519,7 @@ impl PrefactorMod {
         self_fac /= &common_valid;
         self.possible = self_fac;
         self.unknown = gcd(&self.unknown, &a.unknown);
-        Some(self)
+        self
     }
     fn update_module(&mut self, module: &BigInt) -> bool {
         if &self.module == module {
@@ -578,7 +644,8 @@ fn xgcd(a: &BigInt, b: &BigInt) -> (BigInt, (BigInt, BigInt)) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::checksum::Digest;
+    use crate::checksum::endian::{Endian, WordSpec};
+    use crate::checksum::tests::ReverseFileSet;
     use quickcheck::{Arbitrary, TestResult};
     impl Arbitrary for FletcherBuilder<u64> {
         fn arbitrary<G: quickcheck::Gen>(g: &mut G) -> Self {
@@ -601,6 +668,11 @@ mod tests {
             let addout2 = u64::arbitrary(g) as u64 % module;
             let addout = glue_sum(addout1, addout2, width, swap);
             new_fletcher.addout(addout);
+            let wordspec = WordSpec::arbitrary(g);
+            let max_word_width = ((width + 15) / 16).next_power_of_two() * 8;
+            new_fletcher.wordsize(max_word_width.min(wordspec.wordsize) as usize);
+            new_fletcher.inendian(wordspec.input_endian);
+            new_fletcher.outendian(wordspec.output_endian);
             new_fletcher
         }
     }
@@ -613,36 +685,25 @@ mod tests {
             .init(0x44)
             .build()
             .unwrap();
-        let f = vec![
-            &[145u8, 43, 41, 159, 51, 200, 25, 53, 53, 75, 100, 41, 99][..],
-            &[238, 92, 59, 96, 189, 61, 241, 51][..],
-            &[33, 241, 149, 112, 184][..],
-        ];
-        let chk_files: Vec<_> = f
-            .iter()
-            .map(|f| {
-                let checksum: u128 = f16.digest(*f).unwrap();
-                (*f, checksum)
-            })
-            .collect();
+        let f = ReverseFileSet(vec![
+            vec![145u8, 43, 41, 159, 51, 200, 25, 53, 53, 75, 100, 41, 99],
+            vec![238, 92, 59, 96, 189, 61, 241, 51],
+            vec![33, 241, 149, 112, 184],
+        ]);
         let mut naive = Fletcher::<u64>::with_options();
         naive.width(16).swap(false);
-        let m: Result<Vec<_>, _> = reverse_fletcher(&naive, &chk_files, 0).collect();
-        if let Ok(x) = m {
-            assert_eq!(vec![f16], x)
-        }
+        let chk_files: Vec<_> = f.with_checksums(&f16);
+        let reverser = reverse_fletcher(&naive, &chk_files, 0, false);
+        assert!(!f.check_matching(&f16, reverser).is_failure());
     }
     #[quickcheck]
     fn qc_fletch_rev(
-        mut files: Vec<Vec<u8>>,
+        files: ReverseFileSet,
         fletch_build: FletcherBuilder<u64>,
         known: (bool, bool, bool, bool),
+        wordspec_known: (bool, bool, bool),
     ) -> TestResult {
-        files.sort_by(|a, b| a.len().cmp(&b.len()).then(a.cmp(&b)).reverse());
-        if files.iter().zip(files.iter().skip(1)).any(|(a, b)| a == b) || files.len() <= 3 {
-            return TestResult::discard();
-        }
-        let fletcher = fletch_build.build().unwrap();
+        let fletcher = fletch_build.build().expect("Could not build checksum");
         let mut naive = Fletcher::<u64>::with_options();
         naive.width(fletch_build.width.unwrap());
         if known.0 {
@@ -657,34 +718,18 @@ mod tests {
         if known.3 {
             naive.swap(fletch_build.swap.unwrap());
         }
-        let chk_files: Vec<_> = files
-            .iter()
-            .map(|f| {
-                let checksum = fletcher.digest(f.as_slice()).unwrap();
-                (f.as_slice(), checksum)
-            })
-            .collect();
-        let reverser = reverse_fletcher(&naive, &chk_files, 0);
-        let mut has_appeared = false;
-        for fletch_loop in reverser {
-            let fletch_loop = match fletch_loop {
-                Ok(x) => x,
-                Err(_) => return TestResult::discard(),
-            };
-            if !has_appeared && fletch_loop == fletcher {
-                has_appeared = true;
-            }
-            for (file, original_check) in &chk_files {
-                let checksum = fletch_loop.digest(*file).unwrap();
-                if checksum != *original_check {
-                    eprintln!("expected checksum: {:x}", original_check);
-                    eprintln!("actual checksum: {:x}", checksum);
-                    eprintln!("fletcher: {}", fletch_loop);
-                    return TestResult::failed();
-                }
-            }
+        if wordspec_known.0 {
+            naive.wordsize(fletch_build.wordsize.unwrap());
         }
-        TestResult::from_bool(has_appeared)
+        if wordspec_known.1 {
+            naive.inendian(fletch_build.input_endian.unwrap());
+        }
+        if wordspec_known.2 {
+            naive.outendian(fletch_build.output_endian.unwrap());
+        }
+        let chk_files: Vec<_> = files.with_checksums(&fletcher);
+        let reverser = reverse_fletcher(&naive, &chk_files, 0, false);
+        files.check_matching(&fletcher, reverser)
     }
     #[test]
     fn error1() {
@@ -696,29 +741,21 @@ mod tests {
             .swap(true)
             .build()
             .unwrap();
-        let f = vec![
-            &[
+        let f = ReverseFileSet(vec![
+            vec![
                 0, 0, 0, 0, 0, 65, 0, 66, 59, 32, 3, 54, 55, 0, 58, 13, 66, 41, 0, 82, 29, 43, 35,
                 20, 36, 50, 81, 10, 37, 33, 50, 21, 45, 70, 65, 18, 49, 22, 60, 35, 83, 0, 75, 87,
                 59, 7, 76, 66, 44, 34, 23, 3, 1, 50, 71, 48, 30, 34, 41, 46, 6, 32, 5,
-            ][..],
-            &[0, 0, 0, 0, 5, 55, 38, 55, 6, 50, 11, 43, 43, 16][..],
-            &[0, 0, 0, 0, 0, 0, 0, 10, 51, 59, 21, 29][..],
-            &[0, 0, 0, 37, 79, 42, 10][..],
-        ];
-        let chk_files: Vec<_> = f
-            .iter()
-            .map(|f| {
-                let checksum: u128 = f16.digest(*f).unwrap();
-                (*f, checksum)
-            })
-            .collect();
+            ],
+            vec![0, 0, 0, 0, 5, 55, 38, 55, 6, 50, 11, 43, 43, 16],
+            vec![0, 0, 0, 0, 0, 0, 0, 10, 51, 59, 21, 29],
+            vec![0, 0, 0, 37, 79, 42, 10],
+        ]);
+        let chk_files: Vec<_> = f.with_checksums(&f16);
         let mut naive = Fletcher::<u64>::with_options();
         naive.width(32);
-        let m: Result<Vec<_>, _> = reverse_fletcher(&naive, &chk_files, 0).collect();
-        if let Ok(x) = m {
-            assert_eq!(x, vec![f16]);
-        }
+        let reverser = reverse_fletcher(&naive, &chk_files, 0, false);
+        assert!(!f.check_matching(&f16, reverser).is_failure());
     }
     #[test]
     fn error2() {
@@ -729,27 +766,19 @@ mod tests {
             .init(0x35)
             .build()
             .unwrap();
-        let f = vec![
-            &[
+        let f = ReverseFileSet(vec![
+            vec![
                 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 0, 14, 54, 2, 0, 0, 3, 52, 23, 55, 10, 86, 40,
-            ][..],
-            &[0, 48, 93, 15, 0, 0, 27, 58, 20, 22, 69, 42, 30, 74][..],
-            &[10, 94, 63, 27, 37, 41, 58, 33, 57, 77][..],
-            &[0, 11, 24][..],
-        ];
-        let chk_files: Vec<_> = f
-            .iter()
-            .map(|f| {
-                let checksum: u128 = f16.digest(*f).unwrap();
-                (*f, checksum)
-            })
-            .collect();
+            ],
+            vec![0, 48, 93, 15, 0, 0, 27, 58, 20, 22, 69, 42, 30, 74],
+            vec![10, 94, 63, 27, 37, 41, 58, 33, 57, 77],
+            vec![0, 11, 24],
+        ]);
+        let chk_files = f.with_checksums(&f16);
         let mut naive = Fletcher::<u64>::with_options();
         naive.width(102);
-        let m: Result<Vec<_>, _> = reverse_fletcher(&naive, &chk_files, 0).collect();
-        if let Ok(x) = m {
-            assert_eq!(x, vec![f16]);
-        }
+        let reverser = reverse_fletcher(&naive, &chk_files, 0, false);
+        assert!(!f.check_matching(&f16, reverser).is_failure());
     }
     #[test]
     fn error3() {
@@ -760,20 +789,17 @@ mod tests {
             .init(0)
             .build()
             .unwrap();
-        let f = vec![&[48, 29, 22][..], &[50, 0, 48][..], &[47, 24][..], &[][..]];
-        let chk_files: Vec<_> = f
-            .iter()
-            .map(|f| {
-                let checksum: u128 = f16.digest(*f).unwrap();
-                (*f, checksum)
-            })
-            .collect();
+        let f = ReverseFileSet(vec![
+            vec![48, 29, 22],
+            vec![50, 0, 48],
+            vec![47, 24],
+            vec![],
+        ]);
+        let chk_files = f.with_checksums(&f16);
         let mut naive = Fletcher::<u64>::with_options();
         naive.width(42);
-        let m: Result<Vec<_>, _> = reverse_fletcher(&naive, &chk_files, 0).collect();
-        if let Ok(x) = m {
-            assert!(x.contains(&f16))
-        }
+        let reverser = reverse_fletcher(&naive, &chk_files, 0, false);
+        assert!(!f.check_matching(&f16, reverser).is_failure());
     }
     #[test]
     fn error4() {
@@ -784,27 +810,48 @@ mod tests {
             .init(0x31)
             .build()
             .unwrap();
-        let f = vec![
-            &[
+        let f = ReverseFileSet(vec![
+            vec![
                 0, 0, 0, 0, 0, 0, 37, 37, 10, 0, 63, 70, 18, 75, 57, 62, 64, 74, 87, 0, 20, 10, 76,
                 65, 99, 19, 5, 22, 0, 69,
-            ][..],
-            &[3, 23, 71, 58, 32, 10, 0, 51, 88, 59, 1, 85][..],
-            &[87, 21][..],
-            &[][..],
-        ];
-        let chk_files: Vec<_> = f
-            .iter()
-            .map(|f| {
-                let checksum: u128 = f16.digest(*f).unwrap();
-                (*f, checksum)
-            })
-            .collect();
+            ],
+            vec![3, 23, 71, 58, 32, 10, 0, 51, 88, 59, 1, 85],
+            vec![87, 21],
+            vec![],
+        ]);
+        let chk_files = f.with_checksums(&f16);
         let mut naive = Fletcher::<u64>::with_options();
         naive.width(126);
-        let m: Result<Vec<_>, _> = reverse_fletcher(&naive, &chk_files, 0).collect();
-        if let Ok(x) = m {
-            assert_eq!(x, vec![f16])
-        }
+        let reverser = reverse_fletcher(&naive, &chk_files, 0, false);
+        assert!(!f.check_matching(&f16, reverser).is_failure());
+    }
+    #[test]
+    fn error5() {
+        let f16 = Fletcher::with_options()
+            .width(42)
+            .module(6u64)
+            .addout(0x000000)
+            .init(0)
+            .swap(false)
+            .inendian(Endian::Big)
+            .outendian(Endian::Little)
+            .wordsize(64)
+            .build()
+            .unwrap();
+        let f = ReverseFileSet(vec![
+            vec![65, 51, 46, 37, 4, 12, 65, 44],
+            vec![45, 78, 4, 14, 70, 24, 19, 45],
+            vec![],
+        ]);
+        let chk_files = f.with_checksums(&f16);
+        let mut naive = Fletcher::<u64>::with_options();
+        naive
+            .width(42)
+            .swap(false)
+            .inendian(Endian::Big)
+            .outendian(Endian::Little)
+            .wordsize(64);
+        let reverser = reverse_fletcher(&naive, &chk_files, 0, false);
+        assert!(!f.check_matching(&f16, reverser).is_failure());
     }
 }

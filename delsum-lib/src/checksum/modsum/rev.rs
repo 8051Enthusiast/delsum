@@ -9,11 +9,11 @@
 //! Of course, giving more files will result in fewer false positives.
 use super::{ModSum, ModSumBuilder};
 use crate::checksum::{
-    endian::{Endian, WordSpec},
+    endian::{bytes_to_int, wordspec_combos, WordSpec},
     CheckReverserError,
 };
 use crate::factor::{divisors_range, gcd};
-use crate::utils::{cart_prod, unresult_iter};
+use crate::utils::unresult_iter;
 use std::iter::Iterator;
 /// Find the parameters of a modsum algorithm.
 ///
@@ -24,67 +24,44 @@ use std::iter::Iterator;
 /// The `width` parameter of the builder has to be set.
 pub fn reverse_modsum<'a>(
     spec: &ModSumBuilder<u64>,
-    // note: even though all the sums are supposed to be u64,
-    // for ease of intercompability with other reverse function,
-    // we take u128
-    chk_bytes: &'a [(&[u8], u128)],
+    chk_bytes: &'a [(&[u8], Vec<u8>)],
     verbosity: u64,
+    extended_search: bool,
 ) -> impl Iterator<Item = Result<ModSum<u64>, CheckReverserError>> + 'a {
     let spec = spec.clone();
-    discrete_combos(spec.clone(), false)
-        .into_iter()
-        .map(move |wordspec| {
-            let rev = match spec.width {
-                None => Err(CheckReverserError::MissingParameter("width")),
-                Some(width) => {
-                    let chk_words = chk_bytes
-                        .iter()
-                        .map(|(f, c)| (wordspec.iter_words(*f), *c))
-                        .collect();
-                    let revspec = RevSpec {
-                        width,
-                        init: spec.init,
-                        module: spec.module,
-                        wordspec,
-                    };
-                    reverse(revspec, chk_words, verbosity).map(|x| x.iter())
-                }
-            };
-            unresult_iter(rev)
-        })
-        .flatten()
-}
-
-// get the combinations of things like word width, endian
-// (basically things that we cannot solve for with arithmetic)
-fn discrete_combos(spec: ModSumBuilder<u64>, extended_search: bool) -> Vec<WordSpec> {
-    let widths = match spec.wordsize {
-        Some(x) => vec![x],
-        None if extended_search => vec![8, 16, 24, 32, 40, 48, 56, 64],
-        None => {
-            let mut x = vec![8, 16, 32, 64];
-            let idx = x.binary_search(&spec.width.unwrap()).unwrap_or_else(|e| e);
-            x.truncate(idx + 1);
-            x
-        }
-    };
-    let endian_ins = spec
-        .input_endian
-        .map(|x| vec![x])
-        .unwrap_or_else(|| vec![Endian::Little, Endian::Big]);
-    let endian_outs = spec
-        .output_endian
-        .map(|x| vec![x])
-        .unwrap_or_else(|| vec![Endian::Little, Endian::Big]);
-    let endians = cart_prod(&endian_ins, &endian_outs);
-    cart_prod(&widths, &endians)
-        .into_iter()
-        .map(|(w, (i, o))| WordSpec {
-            input_endian: i,
-            output_endian: o,
-            word_bytes: (w + 7) / 8,
-        })
-        .collect()
+    wordspec_combos(
+        spec.wordsize,
+        spec.input_endian,
+        spec.output_endian,
+        spec.width.unwrap(),
+        extended_search,
+    )
+    .into_iter()
+    .map(move |wordspec| {
+        let rev = match spec.width {
+            None => Err(CheckReverserError::MissingParameter("width")),
+            Some(width) => {
+                let chk_words: Vec<_> = chk_bytes
+                    .iter()
+                    .map(|(f, c)| {
+                        (
+                            wordspec.iter_words(*f),
+                            bytes_to_int(c, wordspec.output_endian),
+                        )
+                    })
+                    .collect();
+                let revspec = RevSpec {
+                    width,
+                    init: spec.init,
+                    module: spec.module,
+                    wordspec,
+                };
+                reverse(revspec, chk_words, verbosity).map(|x| x.iter())
+            }
+        };
+        unresult_iter(rev)
+    })
+    .flatten()
 }
 
 struct RevSpec {
@@ -122,7 +99,7 @@ impl RevResult {
                 .init(init as u64)
                 .inendian(wordspec.input_endian)
                 .outendian(wordspec.output_endian)
-                .wordsize(wordspec.word_bytes * 8)
+                .wordsize(wordspec.wordsize)
                 .build()
                 .unwrap()
         })
@@ -170,7 +147,7 @@ fn reverse(
     // find all possible divisors
     let modlist = match original_mod {
         Some(x) => {
-            if x as u128 == module {
+            if x as u128 == module && x > min_sum && x <= max_sum {
                 vec![module]
             } else {
                 Vec::new()
@@ -210,7 +187,8 @@ pub(crate) fn find_largest_mod(sums: &[i128], maybe_init: Option<u64>, module: &
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::checksum::{tests::ReverseFileSet, Digest};
+    use crate::checksum::endian::Endian;
+    use crate::checksum::tests::ReverseFileSet;
     use quickcheck::{Arbitrary, TestResult};
     impl Arbitrary for ModSumBuilder<u64> {
         fn arbitrary<G: quickcheck::Gen>(g: &mut G) -> Self {
@@ -230,8 +208,8 @@ mod tests {
             };
             new_modsum.init(init);
             let wordspec = WordSpec::arbitrary(g);
-            let max_word_width = ((width + 7)/8).next_power_of_two() * 8;
-            new_modsum.wordsize(max_word_width.max(width) as usize);
+            let max_word_width = ((width as usize + 7) / 8).next_power_of_two() * 8;
+            new_modsum.wordsize(max_word_width.min(wordspec.wordsize) as usize);
             new_modsum.inendian(wordspec.input_endian);
             new_modsum.outendian(wordspec.output_endian);
             new_modsum
@@ -263,12 +241,8 @@ mod tests {
         if wordspec_known.2 {
             naive.outendian(modsum_build.output_endian.unwrap());
         }
-        let chk_files: Vec<_> = files
-            .with_checksums(&modsum)
-            .into_iter()
-            .map(|(a, b)| (a, b as u128))
-            .collect();
-        let reverser = reverse_modsum(&naive, &chk_files, 0);
+        let chk_files: Vec<_> = files.with_checksums(&modsum);
+        let reverser = reverse_modsum(&naive, &chk_files, 0, false);
         files.check_matching(&modsum, reverser)
     }
     #[test]
@@ -279,21 +253,15 @@ mod tests {
             .init(1)
             .build()
             .unwrap();
-        let f = vec![
-            &[][..],
-            &[0][..],
-            &[30, 98, 74, 46, 90, 70, 18, 37, 44, 53, 53, 20, 47, 39][..],
-        ];
-        let chk_files: Vec<_> = f
-            .iter()
-            .map(|f| {
-                let checksum = modsum.digest(*f).unwrap() as u128;
-                (*f, checksum)
-            })
-            .collect();
+        let f = ReverseFileSet(vec![
+            vec![],
+            vec![0],
+            vec![30, 98, 74, 46, 90, 70, 18, 37, 44, 53, 53, 20, 47, 39],
+        ]);
+        let chk_files: Vec<_> = f.with_checksums(&modsum);
         let mut naive = ModSum::<u64>::with_options();
         naive.width(38);
-        let m: Result<Vec<_>, _> = reverse_modsum(&naive, &chk_files, 0).collect();
+        let m: Result<Vec<_>, _> = reverse_modsum(&naive, &chk_files, 0, false).collect();
         if let Ok(x) = m {
             assert!(x.contains(&modsum))
         }
@@ -306,23 +274,42 @@ mod tests {
             .init(2)
             .build()
             .unwrap();
-        let f = vec![
-            &[61, 25, 35, 56, 90, 96, 75][..],
-            &[8, 94, 62, 74][..],
-            &[82, 11, 99, 46][..],
-        ];
-        let chk_files: Vec<_> = f
-            .iter()
-            .map(|f| {
-                let checksum = modsum.digest(*f).unwrap() as u128;
-                (*f, checksum)
-            })
-            .collect();
+        let f = ReverseFileSet(vec![
+            vec![61, 25, 35, 56, 90, 96, 75],
+            vec![8, 94, 62, 74],
+            vec![82, 11, 99, 46],
+        ]);
+        let chk_files: Vec<_> = f.with_checksums(&modsum);
         let mut naive = ModSum::<u64>::with_options();
         naive.width(38);
-        let m: Result<Vec<_>, _> = reverse_modsum(&naive, &chk_files, 0).collect();
+        let m: Result<Vec<_>, _> = reverse_modsum(&naive, &chk_files, 0, false).collect();
         if let Ok(x) = m {
             assert!(x.contains(&modsum))
         }
+    }
+    #[test]
+    fn error_preset_module() {
+        let modsum = ModSum::with_options()
+            .width(45)
+            .module(75u64)
+            .init(38)
+            .inendian(Endian::Big)
+            .outendian(Endian::Big)
+            .wordsize(64)
+            .build()
+            .unwrap();
+        let f = ReverseFileSet(vec![
+            vec![
+                33, 34, 85, 19, 55, 8, 87, 34, 35, 87, 39, 6, 16, 86, 80, 55, 69, 46, 64, 64, 14,
+                17, 25, 59,
+            ],
+            vec![93, 77, 50, 93, 18, 85, 12, 23, 32, 3, 7, 76, 90, 45, 70, 65],
+            vec![93, 26, 87, 27, 97, 36, 78, 48],
+        ]);
+        let chk_files: Vec<_> = f.with_checksums(&modsum);
+        let mut naive = ModSum::<u64>::with_options();
+        naive.width(45).module(75);
+        let m = reverse_modsum(&naive, &chk_files, 0, false);
+        assert!(!f.check_matching(&modsum, m).is_failure())
     }
 }

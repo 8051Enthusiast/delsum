@@ -11,8 +11,9 @@
 //! If `init` is not known, it is neccessary to know two checksums of files with different lengths.
 //! In case only checksums of files with a set length are required, setting `init = 0` is sufficient.
 use super::{CRCBuilder, CRC};
+use crate::checksum::endian::{bytes_to_int, int_to_bytes, wordspec_combos, Endian, WordSpec};
 use crate::checksum::CheckReverserError;
-use crate::utils::unresult_iter;
+use crate::utils::{cart_prod, unresult_iter};
 use delsum_poly::*;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -28,65 +29,122 @@ use std::pin::Pin;
 /// The `width` parameter of the builder has to be set.
 pub fn reverse_crc<'a>(
     spec: &CRCBuilder<u128>,
-    chk_bytes: &'a [(&[u8], u128)],
+    chk_bytes: &'a [(&[u8], Vec<u8>)],
     verbosity: u64,
+    extended_search: bool,
 ) -> impl Iterator<Item = Result<CRC<u128>, CheckReverserError>> + 'a {
     let spec = spec.clone();
-    let ref_combinations: Vec<_> = ref_comb(spec.refin, spec.refout);
+    let mut files = chk_bytes.to_owned();
+    files.sort_unstable_by(|a, b| a.0.len().cmp(&b.0.len()).reverse());
+    let ref_combinations: Vec<_> = discrete_combos(&spec, extended_search);
     ref_combinations
         .into_iter()
-        .map(move |(refin, refout)| {
-            unresult_iter(reverse(&spec, chk_bytes, verbosity, refin, refout))
+        .map(move |((refin, refout), wordspec)| {
+            unresult_iter(reverse(
+                &spec,
+                files.clone(),
+                verbosity,
+                refin,
+                refout,
+                wordspec,
+            ))
         })
         .flatten()
+        .filter_map(|x| {
+            // .transpose() but for Err
+            match x {
+                Ok(a) => Some(Ok(a)),
+                Err(Some(e)) => Some(Err(e)),
+                Err(None) => None,
+            }
+        })
 }
 
 /// Parallel version of reverse_crc.
-///
-/// Note that this is parallel only because it tries the 4 combinations of refin, refout
-/// at once when not given, giving at most a 4x speedup.
 #[cfg(feature = "parallel")]
 pub fn reverse_crc_para<'a>(
     spec: &CRCBuilder<u128>,
-    chk_bytes: &'a [(&[u8], u128)],
+    chk_bytes: &'a [(&[u8], Vec<u8>)],
     verbosity: u64,
+    extended_search: bool,
 ) -> impl ParallelIterator<Item = Result<CRC<u128>, CheckReverserError>> + 'a {
     let spec = spec.clone();
-    let ref_combinations: Vec<_> = ref_comb(spec.refin, spec.refout);
+    let mut files = chk_bytes.to_owned();
+    files.sort_unstable_by(|a, b| a.0.len().cmp(&b.0.len()).reverse());
+    let ref_combinations: Vec<_> = discrete_combos(&spec, extended_search);
     ref_combinations
         .into_par_iter()
-        .map(move |(refin, refout)| {
-            unresult_iter(reverse(&spec, chk_bytes, verbosity, refin, refout)).par_bridge()
+        .map(move |((refin, refout), wordspec)| {
+            unresult_iter(reverse(
+                &spec,
+                files.clone(),
+                verbosity,
+                refin,
+                refout,
+                wordspec,
+            ))
+            .par_bridge()
         })
         .flatten()
+        .filter_map(|x| match x {
+            Ok(a) => Some(Ok(a)),
+            Err(Some(e)) => Some(Err(e)),
+            Err(None) => None,
+        })
 }
 
-// find all combinations of refin, refout using both bool values when a parameter is not given
-fn ref_comb(maybe_refin: Option<bool>, maybe_refout: Option<bool>) -> Vec<(bool, bool)> {
-    let refins = maybe_refin
+// find all combinations of refin, refout and wordspecs using all values when a parameter is not given
+fn discrete_combos(
+    spec: &CRCBuilder<u128>,
+    extended_search: bool,
+) -> Vec<((bool, bool), WordSpec)> {
+    let width = spec.width.expect("Missing width argument");
+    let refins = spec
+        .refin
         .map(|x| vec![x])
         .unwrap_or_else(|| vec![false, true]);
-    let refouts = maybe_refout
-        .map(|x| vec![x])
-        .unwrap_or_else(|| vec![false, true]);
-    refins
-        .iter()
-        .map(|&x| refouts.iter().map(move |&y| (x, y)))
-        .flatten()
-        .collect()
+    let mut ret = Vec::new();
+    for refin in refins {
+        let refouts = spec.refout.map(|x| vec![x]).unwrap_or_else(|| {
+            if extended_search {
+                vec![false, true]
+            } else {
+                vec![refin]
+            }
+        });
+        let input_endian = spec.input_endian.or_else(|| {
+            Some(match refin {
+                // big if true since for little, it is equivalent to wordsize=8 which is the same as big
+                true => Endian::Big,
+                // same for the reverse
+                false => Endian::Little,
+            })
+        });
+        let refs = cart_prod(&[refin], &refouts);
+        let wordspecs = wordspec_combos(
+            spec.wordsize,
+            input_endian,
+            spec.output_endian,
+            width,
+            extended_search,
+        );
+        ret.append(&mut cart_prod(&refs, &wordspecs));
+    }
+    ret
 }
 
 // wrapper to call rev_from_polys with polynomial arguments
 fn reverse<'a>(
     spec: &CRCBuilder<u128>,
-    chk_bytes: &'a [(&[u8], u128)],
+    chk_bytes: Vec<(&'a [u8], Vec<u8>)>,
     verbosity: u64,
     refin: bool,
     refout: bool,
-) -> Result<impl Iterator<Item = CRC<u128>> + 'a, CheckReverserError> {
+    wordspec: WordSpec,
+) -> Result<impl Iterator<Item = CRC<u128>> + 'a, Option<CheckReverserError>> {
     let width = match spec.width {
         Some(x) => x,
-        None => return Err(CheckReverserError::MissingParameter("width")),
+        None => return Err(Some(CheckReverserError::MissingParameter("width"))),
     };
     // check for errors in the parameters
     if 3 > chk_bytes.len()
@@ -94,26 +152,36 @@ fn reverse<'a>(
         + spec.xorout.is_some() as usize
         + spec.poly.is_some() as usize
     {
-        return Err(CheckReverserError::MissingParameter(
+        return Err(Some(CheckReverserError::MissingParameter(
             "at least 3 parameters/files",
-        ));
+        )));
     }
     if spec.init.is_none()
         && chk_bytes.iter().map(|x| x.0.len()).max() == chk_bytes.iter().map(|x| x.0.len()).min()
     {
-        return Err(CheckReverserError::UnsuitableFiles(
+        return Err(Some(CheckReverserError::UnsuitableFiles(
             "need at least one file with different length",
-        ));
+        )));
     }
     // convert the files to polynomials
-    let mut polys: Vec<_> = chk_bytes
+    let maybe_polys: Option<Vec<_>> = chk_bytes
         .iter()
-        .map(|(b, c)| (bytes_to_poly(b, *c, width as u8, refin, refout), b.len()))
+        .map(|(b, c)| {
+            if b.len() * 8 % wordspec.wordsize != 0 {
+                None
+            } else {
+                bytes_to_poly(b, c, width as u8, refin, refout, wordspec).map(|p| (p, b.len()))
+            }
+        })
         .collect();
+    let mut polys = match maybe_polys {
+        Some(x) => x,
+        None => return Err(None),
+    };
     // sort by reverse file length
     polys.sort_by(|(fa, la), (fb, lb)| la.cmp(&lb).then(deg(fa).cmp(&deg(fb)).reverse()));
     // convert parameters to polynomials
-    let revinfo = RevInfo::from_builder(spec, refin, refout);
+    let revinfo = RevInfo::from_builder(spec, refin, refout, wordspec);
     rev_from_polys(&revinfo, &polys, verbosity).map(|x| x.iter())
 }
 
@@ -124,23 +192,30 @@ struct RevInfo {
     poly: Option<PolyPtr>,
     refin: bool,
     refout: bool,
+    wordspec: WordSpec,
 }
 
 impl RevInfo {
-    fn from_builder(spec: &CRCBuilder<u128>, refin: bool, refout: bool) -> Self {
+    // this is responsible for converting integer values to polynomial values
+    // and returning a RevInfo that can be used for further reversing
+    fn from_builder(
+        spec: &CRCBuilder<u128>,
+        refin: bool,
+        refout: bool,
+        wordspec: WordSpec,
+    ) -> Self {
         let width = spec.width.unwrap();
-        let init = spec.init.map(|i| new_poly(&i.to_be_bytes()));
+        let init = spec.init.map(|i| new_poly(&i.to_le_bytes()));
         let poly = spec.poly.map(|p| {
-            let mut p = new_poly(&p.to_be_bytes());
+            let mut p = new_poly(&p.to_le_bytes());
             // add leading coefficient, which is omitted in binary form
-            p.pin_mut()
-                .add_to(&new_poly_shifted(&[1], width as i64, true));
+            p.pin_mut().add_to(&new_poly_shifted(&[1], width as i64));
             p
         });
         // while init and poly are unaffected by refout, xorout is not
         let xorout = spec
             .xorout
-            .map(|x| new_poly(&cond_reverse(width as u8, x, refout).to_be_bytes()));
+            .map(|x| new_poly(&cond_reverse(width as u8, x, refout).to_le_bytes()));
         RevInfo {
             width,
             init,
@@ -148,6 +223,7 @@ impl RevInfo {
             poly,
             refin,
             refout,
+            wordspec,
         }
     }
 }
@@ -159,6 +235,7 @@ struct RevResult {
     width: usize,
     refin: bool,
     refout: bool,
+    wordspec: WordSpec,
 }
 
 impl RevResult {
@@ -171,6 +248,7 @@ impl RevResult {
             width,
             refin,
             refout,
+            wordspec,
         } = self;
         polys
             .into_iter()
@@ -180,10 +258,8 @@ impl RevResult {
                     .iter_inits(&pol, &xorout)
                     .map(move |(poly_p, init_p, xorout_p)| {
                         // convert polynomial parameters to a CRC<u128>
-                        let poly = poly_to_u128(&add(
-                            &poly_p,
-                            &new_poly_shifted(&[1], width as i64, true),
-                        ));
+                        let poly =
+                            poly_to_u128(&add(&poly_p, &new_poly_shifted(&[1], width as i64)));
                         let init = poly_to_u128(&init_p);
                         let xorout = cond_reverse(width as u8, poly_to_u128(&xorout_p), refout);
                         CRC::<u128>::with_options()
@@ -193,6 +269,9 @@ impl RevResult {
                             .xorout(xorout)
                             .refin(refin)
                             .refout(refout)
+                            .inendian(wordspec.input_endian)
+                            .outendian(wordspec.output_endian)
+                            .wordsize(wordspec.wordsize)
                             .build()
                             .unwrap()
                     })
@@ -257,7 +336,7 @@ fn rev_from_polys(
     spec: &RevInfo,
     arg_polys: &[(PolyPtr, usize)],
     verbosity: u64,
-) -> Result<RevResult, CheckReverserError> {
+) -> Result<RevResult, Option<CheckReverserError>> {
     let log = |s| {
         if verbosity > 0 {
             eprintln!(
@@ -280,7 +359,7 @@ fn rev_from_polys(
     log("removing xorouts");
     let (polys, mut xorout) = remove_xorouts(&spec.xorout, polys);
     log("finding poly");
-    let (polys, mut hull) = find_polyhull(spec, polys, verbosity);
+    let (polys, mut hull) = find_polyhull(spec, polys, verbosity)?;
     log("finding init and refining poly");
     let init = find_init(&spec.init, hull.pin_mut(), polys);
     let polyhull_factors: Vec<_>;
@@ -304,6 +383,7 @@ fn rev_from_polys(
         width: spec.width,
         refin: spec.refin,
         refout: spec.refout,
+        wordspec: spec.wordspec,
     })
 }
 
@@ -373,7 +453,11 @@ fn remove_xorouts(
     (ret_vec, xor_ret)
 }
 
-fn find_polyhull(spec: &RevInfo, polys: Vec<InitPoly>, verbosity: u64) -> (Vec<InitPoly>, PolyPtr) {
+fn find_polyhull(
+    spec: &RevInfo,
+    polys: Vec<InitPoly>,
+    verbosity: u64,
+) -> Result<(Vec<InitPoly>, PolyPtr), Option<CheckReverserError>> {
     let log = |s| {
         if verbosity > 1 {
             eprintln!(
@@ -400,13 +484,13 @@ fn find_polyhull(spec: &RevInfo, polys: Vec<InitPoly>, verbosity: u64) -> (Vec<I
             }
         }
         if deg(&hull) == 0 {
-            return (contain_init_vec, hull);
+            return Ok((contain_init_vec, hull));
         }
     }
 
     log("gcd'ing different length files together");
     for ((p, l), (q, m)) in contain_init_vec.iter().zip(contain_init_vec.iter().skip(1)) {
-        let power_8n = |n: usize| new_poly_shifted(&[1], 8 * n as i64, true);
+        let power_8n = |n: usize| new_poly_shifted(&[1], 8 * n as i64);
         // this essentially tries to cancel out the init in the checksums
         // if you have a*init and b*init, you can get 0 by calculating b*a*init - a*b*init
         // this is almost done here, except for cancelling unneccessary common X^k between a and b
@@ -445,14 +529,15 @@ fn find_polyhull(spec: &RevInfo, polys: Vec<InitPoly>, verbosity: u64) -> (Vec<I
         // q_fac should now contain no init, so we can gcd it to the hull
         hull.pin_mut().gcd_to(&q_fac);
         if deg(&hull) == 0 {
-            return (contain_init_vec, hull);
+            return Ok((contain_init_vec, hull));
         }
     }
 
     if hull.is_zero() {
         // nothing i can do to help now really
-        eprintln!("Error: very unlucky choice of input files, skipping crc reversing");
-        return (contain_init_vec, new_poly(&[1]));
+        return Err(Some(CheckReverserError::UnsuitableFiles(
+            "Duplicate files or unluckiest person alive",
+        )));
     }
 
     log("removing factors with degree*multiplicity > width");
@@ -494,7 +579,7 @@ fn find_polyhull(spec: &RevInfo, polys: Vec<InitPoly>, verbosity: u64) -> (Vec<I
             break;
         }
     }
-    (contain_init_vec, hull)
+    Ok((contain_init_vec, hull))
 }
 
 // we don't actually ever convert the factors represented by a
@@ -691,7 +776,7 @@ impl PrefactorMod {
         let poly_copy = copy_poly(red_poly);
         // iterate over all polynomials p mod red_unknown and calculate possible + valid*p
         (0u128..1 << deg(&red_unknown)).map(move |p| {
-            let mut current_init = new_polyrem(&new_poly(&p.to_be_bytes()), &poly_copy);
+            let mut current_init = new_polyrem(&new_poly(&p.to_le_bytes()), &poly_copy);
             current_init *= &mod_valid;
             current_init += &mod_init;
             // also calculate the corresponding xorouts while we're at it
@@ -791,12 +876,40 @@ fn find_prod_comb(
     ret.pop().unwrap()
 }
 
-fn bytes_to_poly(bytes: &[u8], checksum: u128, width: u8, refin: bool, refout: bool) -> PolyPtr {
-    let mut poly = new_poly_shifted(bytes, width as i64, !refin);
+fn bytes_to_poly(
+    bytes: &[u8],
+    checksum: &[u8],
+    width: u8,
+    refin: bool,
+    refout: bool,
+    wordspec: WordSpec,
+) -> Option<PolyPtr> {
+    let new_bytes = reorder_poly_bytes(bytes, refin, wordspec);
+    let mut poly = new_poly_shifted(&new_bytes, width as i64);
+    let sum = bytes_to_int(&checksum, wordspec.output_endian);
     let check_mask = 1u128.checked_shl(width as u32).unwrap().wrapping_sub(1);
-    let check = check_mask & cond_reverse(width, checksum, refout);
-    poly += &new_poly(&check.to_be_bytes());
-    poly
+    if (!check_mask & sum) != 0 {
+        return None;
+    }
+    let check = cond_reverse(width, sum, refout);
+    poly += &new_poly(&check.to_le_bytes());
+    Some(poly)
+}
+
+fn reorder_poly_bytes(bytes: &[u8], refin: bool, wordspec: WordSpec) -> Vec<u8> {
+    wordspec
+        .iter_words(bytes)
+        .rev()
+        .map(|n| {
+            let n_ref = if refin {
+                n.reverse_bits() >> (64 - wordspec.wordsize)
+            } else {
+                n
+            };
+            int_to_bytes(n_ref, Endian::Little, wordspec.wordsize)
+        })
+        .flatten()
+        .collect()
 }
 
 fn cond_reverse(width: u8, value: u128, refout: bool) -> u128 {
@@ -823,201 +936,39 @@ mod tests {
     use super::*;
     use crate::checksum::{
         crc::{CRCBuilder, CRC},
-        Digest,
+        tests::ReverseFileSet,
     };
     use quickcheck::{Arbitrary, TestResult};
-    use std::convert::TryInto;
     impl Arbitrary for CRCBuilder<u128> {
         fn arbitrary<G: quickcheck::Gen>(g: &mut G) -> Self {
             let width = (u8::arbitrary(g) % 128) + 1;
             let poly = (u128::arbitrary(g) % (1 << width)) | 1;
             let init = u128::arbitrary(g) % (1 << width);
             let xorout = u128::arbitrary(g) % (1 << width);
-            let refout = bool::arbitrary(g);
-            let refin = bool::arbitrary(g);
             let mut builder = CRC::<u128>::with_options();
             builder
                 .width(usize::from(width))
                 .poly(poly)
                 .init(init)
-                .xorout(xorout)
+                .xorout(xorout);
+            let combos = discrete_combos(&builder, false);
+            let ((refin, refout), wordspec) = combos[usize::arbitrary(g) % combos.len()];
+            builder
                 .refout(refout)
-                .refin(refin);
+                .refin(refin)
+                .wordsize(wordspec.wordsize)
+                .outendian(wordspec.output_endian)
+                .inendian(wordspec.input_endian);
             builder
         }
     }
-    fn get_polys_from_crc(crc: &CRC<u128>) -> (PolyPtr, PolyPtr, PolyPtr) {
-        (
-            add(
-                &new_poly(&crc.poly.to_be_bytes()),
-                &new_poly_shifted(&[1], crc.width as i64, true),
-            ),
-            new_poly(&crc.init.to_be_bytes()),
-            new_poly(&cond_reverse(crc.width as u8, crc.xorout, crc.refout).to_be_bytes()),
-        )
-    }
-    fn prepare_xoroutless(
-        files: &mut [Vec<u8>],
-        crc_build: &CRCBuilder<u128>,
-        remove_xorout: bool,
-    ) -> Option<Vec<InitPoly>> {
-        let crc = crc_build.build().ok()?;
-        files.sort_by(|a, b| a.len().cmp(&b.len()).then(a.cmp(&b)).reverse());
-        if files.iter().zip(files.iter().skip(1)).any(|(a, b)| a == b) || files.len() <= 3 {
-            return None;
-        }
-        let (_, _, xorout_p) = get_polys_from_crc(&crc);
-        let maybe_xorout = if remove_xorout { Some(xorout_p) } else { None };
-        let mut polys = Vec::new();
-        for file in files {
-            let check = crc.digest(file.as_slice()).unwrap();
-            let file_poly = bytes_to_poly(&file, check, crc.width as u8, crc.refin, crc.refout);
-            polys.push((file_poly, InitPlace::Single(file.len())));
-        }
-        let (polys, _) = remove_xorouts(&maybe_xorout, polys);
-        Some(polys)
-    }
-    #[quickcheck]
-    fn test_remove_init(files: Vec<Vec<u8>>, crc_build: CRCBuilder<u128>) -> TestResult {
-        let crc = match crc_build.build() {
-            Ok(c) => c,
-            Err(_) => return TestResult::discard(),
-        };
-        let (poly_p, init_p, _) = get_polys_from_crc(&crc);
-        let mut polys = Vec::new();
-        for file in files {
-            let check = crc.digest(file.as_slice()).unwrap() ^ crc.xorout;
-            let file_poly = bytes_to_poly(&file, check, crc.width as u8, crc.refin, crc.refout);
-            polys.push((file_poly, InitPlace::Single(file.len())));
-        }
-        remove_inits(&init_p, &mut polys);
-        TestResult::from_bool(polys.iter().all(|p| rem(&p.0, &poly_p).is_zero()))
-    }
-    #[quickcheck]
-    fn test_remove_xorout(
-        files: Vec<Vec<u8>>,
-        mut crc_build: CRCBuilder<u128>,
-        known: bool,
-    ) -> TestResult {
-        if files.is_empty() {
-            return TestResult::discard();
-        }
-        let do_stuff = |builder: &CRCBuilder<u128>| {
-            let crc = builder.build().unwrap();
-            let mut polys = Vec::new();
-            for file in &files {
-                let check = crc.digest(file.as_slice()).unwrap();
-                let file_poly = bytes_to_poly(file, check, crc.width as u8, crc.refin, crc.refout);
-                polys.push((file_poly, InitPlace::Single(file.len())));
-            }
-            let maybe_xorout = if known {
-                Some(get_polys_from_crc(&crc).2)
-            } else {
-                None
-            };
-            let (polys, _) = remove_xorouts(&maybe_xorout, polys);
-            polys
-        };
-        let polys_x = do_stuff(&crc_build);
-        crc_build.xorout(0);
-        let polys_nox = do_stuff(&crc_build);
-        TestResult::from_bool(polys_x.iter().zip(polys_nox).all(|(a, b)| a.0.eq(&b.0)))
-    }
-    #[quickcheck]
-    fn test_poly_hull(
-        mut files: Vec<Vec<u8>>,
-        crc_build: CRCBuilder<u128>,
-        remove_xorout: bool,
-    ) -> TestResult {
-        if let Some(polys) = prepare_xoroutless(&mut files, &crc_build, remove_xorout) {
-            let crc = crc_build.build().unwrap();
-            let (poly_p, _, _) = get_polys_from_crc(&crc);
-            let (_, hull) = find_polyhull(
-                &RevInfo {
-                    width: crc_build.width.unwrap(),
-                    init: None,
-                    xorout: None,
-                    poly: None,
-                    refin: crc_build.refin.unwrap(),
-                    refout: crc_build.refout.unwrap(),
-                },
-                polys,
-                0,
-            );
-            TestResult::from_bool(rem(&hull, &poly_p).is_zero())
-        } else {
-            TestResult::discard()
-        }
-    }
-    #[quickcheck]
-    fn test_find_init(
-        mut files: Vec<Vec<u8>>,
-        poly_factor: Vec<u8>,
-        crc_build: CRCBuilder<u128>,
-        remove_xorout: bool,
-    ) -> TestResult {
-        if poly_factor.iter().all(|x| *x == 0) {
-            return TestResult::discard();
-        }
-        if let Some(polys) = prepare_xoroutless(&mut files, &crc_build, remove_xorout) {
-            let crc = crc_build.build().unwrap();
-            let (poly_p, mut init_p, _) = get_polys_from_crc(&crc);
-            let mut multiple_poly = mul(&poly_p, &new_poly(&poly_factor));
-            let mut init = find_init(&None, multiple_poly.pin_mut(), polys);
-            if !rem(&multiple_poly, &poly_p).is_zero() {
-                return TestResult::failed();
-            }
-            init.update_hull(&poly_p);
-            init.possible *= &init.unknown;
-            init.possible %= &poly_p;
-            init_p *= &init.unknown;
-            init_p %= &poly_p;
-            TestResult::from_bool(init.possible.eq(&init_p))
-        } else {
-            TestResult::discard()
-        }
-    }
-    #[test]
-    fn prodcomb() {
-        let mut all = [0; 256];
-        let x = new_poly(&[1 << 1]);
-        let mut power = copy_poly(&x);
-        let mut cumulative = new_poly(&[1]);
-        for _ in 1..=8 {
-            power *= &copy_poly(&power);
-            let power_plus_x = add(&power, &x);
-            cumulative *= &power_plus_x;
-        }
-        let factors: Vec<_> = factor(&cumulative, 0)
-            .into_iter()
-            .map(|PolyI64Pair { poly, l }| (copy_poly(poly), *l))
-            .collect();
-        let should_be_all_bytes_from_256_to_511_but_as_polys = find_prod_comb(8, &factors);
-        should_be_all_bytes_from_256_to_511_but_as_polys
-            .iter()
-            .map(|p| {
-                usize::from_be_bytes(
-                    p.to_bytes(std::mem::size_of::<usize>() as i64)
-                        .as_ref()
-                        .unwrap()
-                        .as_slice()
-                        .try_into()
-                        .unwrap(),
-                )
-            })
-            .for_each(|x| all[x - 256] += 1);
-        assert!(all.iter().all(|x| *x == 1));
-    }
     #[quickcheck]
     fn qc_crc_rev(
-        mut files: Vec<Vec<u8>>,
+        files: ReverseFileSet,
         crc_build: CRCBuilder<u128>,
         known: (bool, bool, bool, bool, bool),
+        wordspec_known: (bool, bool),
     ) -> TestResult {
-        files.sort_by(|a, b| a.len().cmp(&b.len()).then(a.cmp(&b)).reverse());
-        if files.iter().zip(files.iter().skip(1)).any(|(a, b)| a == b) || files.len() <= 3 {
-            return TestResult::discard();
-        }
         let crc = crc_build.build().unwrap();
         let mut naive = CRC::<u128>::with_options();
         naive.width(crc_build.width.unwrap());
@@ -1036,38 +987,19 @@ mod tests {
         if known.4 {
             naive.refout(crc_build.refout.unwrap());
         }
-        let chk_files: Vec<_> = files
-            .iter()
-            .map(|f| {
-                let checksum = crc.digest(f.as_slice()).unwrap();
-                (f.as_slice(), checksum)
-            })
-            .collect();
-        let reverser = reverse_crc(&naive, &chk_files, 0);
-        let mut has_appeared = false;
-        for crc_loop in reverser {
-            let crc_loop = match crc_loop {
-                Ok(x) => x,
-                Err(_) => return TestResult::discard(),
-            };
-            if !has_appeared && crc_loop == crc {
-                has_appeared = true;
-            }
-            for (file, original_check) in &chk_files {
-                let checksum = crc_loop.digest(*file).unwrap();
-                if checksum != *original_check {
-                    eprintln!("expected checksum: {:x}", original_check);
-                    eprintln!("actual checksum: {:x}", checksum);
-                    eprintln!("crc: {}", crc_loop);
-                    return TestResult::failed();
-                }
-            }
+        if wordspec_known.0 {
+            naive.wordsize(crc_build.wordsize.unwrap());
         }
-        TestResult::from_bool(has_appeared)
+        if wordspec_known.1 {
+            naive.outendian(crc_build.output_endian.unwrap());
+        }
+        let chk_files = files.with_checksums(&crc);
+        let reverser = reverse_crc(&naive, &chk_files, 0, false);
+        files.check_matching(&crc, reverser)
     }
     #[test]
     fn test_crc32() {
-        let crc = CRC::<u32>::with_options()
+        let crc = CRC::<u128>::with_options()
             .poly(0x04c11db7)
             .width(32)
             .init(0xffffffff)
@@ -1076,29 +1008,17 @@ mod tests {
             .refin(true)
             .build()
             .unwrap();
-        let files = vec![
+        let files = ReverseFileSet(vec![
             vec![0x12u8, 0x34u8, 0x56u8],
             vec![0x67u8, 0x41u8, 0xffu8],
             vec![0x15u8, 0x56u8, 0x76u8, 0x1fu8],
             vec![0x14u8, 0x62u8, 0x51u8, 0xa4u8, 0xd3u8],
-        ];
-        let chk_files: Vec<_> = files
-            .iter()
-            .map(|f| {
-                let checksum = crc.digest(f.as_slice()).unwrap().into();
-                println!("{:?} {:x}", &f, checksum);
-                (f.as_slice(), checksum)
-            })
-            .collect();
+        ]);
+        let chk_files: Vec<_> = files.with_checksums(&crc);
         let mut crc_naive = CRC::<u128>::with_options();
         crc_naive.width(32).refin(true).refout(true);
-        for c in reverse_crc(&crc_naive, &chk_files, 0) {
-            let n = c.unwrap();
-            for (file, original_check) in &chk_files {
-                let checksum = n.digest(*file).unwrap();
-                assert_eq!(checksum, *original_check);
-            }
-        }
+        let reverser = reverse_crc(&crc_naive, &chk_files, 0, false);
+        assert!(!files.check_matching(&crc, reverser).is_failure())
     }
     #[test]
     fn test_crc16() {
@@ -1109,28 +1029,146 @@ mod tests {
             .refout(true)
             .build()
             .unwrap();
-        let files = vec![
+        let files = ReverseFileSet(vec![
             vec![0x12u8, 0x34u8, 0x56u8],
             vec![0x67u8, 0x41u8, 0xffu8],
             vec![0x15u8, 0x56u8, 0x76u8, 0x1fu8],
             vec![0x14u8, 0x62u8, 0x51u8, 0xa4u8, 0xd3u8],
-        ];
-        let chk_files: Vec<_> = files
-            .iter()
-            .map(|f| {
-                let checksum = crc.digest(f.as_slice()).unwrap();
-                println!("{:?} {:x}", &f, checksum);
-                (f.as_slice(), checksum)
-            })
-            .collect();
+        ]);
+        let chk_files = files.with_checksums(&crc);
         let mut crc_naive = CRC::<u128>::with_options();
         crc_naive.width(16).refin(true).refout(true);
-        for c in reverse_crc(&crc_naive, &chk_files, 0) {
-            let n = c.unwrap();
-            for (file, original_check) in &chk_files {
-                let checksum = n.digest(*file).unwrap();
-                assert_eq!(checksum, *original_check);
-            }
-        }
+        let reverser = reverse_crc(&crc_naive, &chk_files, 0, false);
+        assert!(!files.check_matching(&crc, reverser).is_failure())
+    }
+    #[test]
+    fn error1() {
+        let crc = CRC::with_options()
+            .width(32)
+            .poly(0x04c11db7)
+            .init(0xffffffff)
+            .xorout(0xffffffff)
+            .build()
+            .unwrap();
+        let files = ReverseFileSet(vec![
+            vec![63, 6, 30, 42, 34, 48, 87, 50, 69, 26, 23, 98, 49, 3, 99, 86],
+            vec![13, 13, 41, 51, 13, 62, 99, 11],
+            vec![],
+        ]);
+        let chk_files = files.with_checksums(&crc);
+        let mut crc_naive = CRC::<u128>::with_options();
+        crc_naive.width(32);
+        let reverser = reverse_crc(&crc_naive, &chk_files, 0, false);
+        assert!(!files.check_matching(&crc, reverser).is_failure())
+    }
+    #[test]
+    fn error2() {
+        let crc = CRC::with_options()
+            .width(50)
+            .poly(0x2f)
+            .init(0x5)
+            .xorout(0x58)
+            .refout(true)
+            .build()
+            .unwrap();
+        let files = ReverseFileSet(vec![
+            vec![
+                8, 86, 64, 28, 64, 25, 99, 40, 15, 92, 15, 66, 42, 12, 66, 80,
+            ],
+            vec![73, 68, 27, 35, 16, 69, 9, 24],
+            vec![51, 37, 13, 18, 50, 23, 49, 9],
+            vec![49, 81, 64, 26, 24, 45, 36, 62],
+            vec![18, 42, 24, 61, 15, 22, 41, 28],
+            vec![16, 53, 20, 62, 50, 48, 25, 35],
+            vec![4, 73, 5, 16, 37, 83, 40, 91],
+        ]);
+        let chk_files = files.with_checksums(&crc);
+        let mut crc_naive = CRC::<u128>::with_options();
+        crc_naive.width(50).xorout(0x58);
+        let reverser = reverse_crc(&crc_naive, &chk_files, 0, true);
+        assert!(!files.check_matching(&crc, reverser).is_failure())
+    }
+    #[test]
+    fn error3() {
+        let crc = CRC::with_options()
+            .width(17)
+            .poly(0x1)
+            .init(0xb)
+            .xorout(0x56)
+            .refout(true)
+            .build()
+            .unwrap();
+        // note that this is randomly generated, which is why there are so many bytes since i
+        // didn't want to go to the trouble of reducing it
+        let files = ReverseFileSet(vec![
+            vec![
+                70, 49, 21, 1, 7, 18, 4, 38, 11, 47, 30, 90, 49, 69, 17, 26, 48, 51, 91, 81, 31,
+                61, 35, 3, 8, 94, 90, 10, 28, 30, 22, 31, 42, 87, 67, 28, 69, 49, 85, 95, 84, 81,
+                30, 40, 81, 99, 92, 53, 95, 87, 17, 2, 56, 43, 33, 2, 5, 99, 32, 74, 68, 59, 47,
+                88, 70, 42, 34, 68, 49, 41, 13, 84, 67, 5, 45, 31, 94, 80, 92, 36, 73, 4, 29, 36,
+                14, 95, 79, 71, 93, 14, 39, 64, 15, 65, 56, 72, 0, 93, 35, 27, 66, 94, 21, 84, 72,
+                69, 87, 44, 28, 75, 76, 25, 61, 41, 50, 44, 7, 42, 56, 63, 11, 20, 48, 55, 44, 44,
+                45, 58, 77, 1, 83, 87, 30, 65, 27, 53, 42, 9, 39, 79, 47, 29, 78, 96, 9, 65, 98,
+                55, 95, 85, 0, 55, 69, 33, 63, 5, 88, 13, 61, 21, 47, 90, 16, 65, 73, 38, 95, 45,
+                95, 15, 54, 67, 11, 98, 50, 80, 95, 69, 88, 33, 24, 1, 8, 73, 39, 74, 59, 51, 7,
+                64, 51, 58, 80, 99, 1, 68, 70, 45, 77, 5, 6, 4, 32, 33, 93, 95, 13, 98, 76, 87, 96,
+                99, 74, 18, 23, 23, 4, 51, 47, 76, 14, 62, 91, 18, 68, 64, 38, 71, 15, 35, 51, 46,
+                18, 53, 38, 88, 76, 42, 28, 25, 86, 17, 10, 73, 74, 45, 98, 20, 72, 12, 64, 24, 15,
+                15, 87, 75, 12, 29, 16, 11, 16, 11, 16, 94, 41, 29, 97, 32, 88, 27, 96, 78, 70, 54,
+                49, 82, 73, 0, 19, 15, 19, 93, 36, 74, 90, 33, 94, 70, 72, 6, 73, 54, 50, 4, 9, 0,
+                81, 44, 72, 76, 29, 94, 85, 10, 43, 88, 15, 53, 17, 31, 53, 0, 3, 81, 84, 72, 29,
+                74, 66, 71, 97, 66, 44, 81, 26, 57, 8, 49, 24, 18, 9, 89, 57, 37, 91, 86, 62, 16,
+                41, 0, 88, 92, 54, 22, 8, 12, 12, 73, 38, 25, 67, 73, 87, 82, 48, 98, 43, 10, 65,
+                66, 88, 76, 70, 3, 62, 22, 89, 99, 78, 79, 68, 23, 60, 60, 58, 14, 94, 52, 62, 75,
+                10, 79, 89, 81, 81, 65, 71, 3, 74, 43, 14, 25, 21, 49, 1, 33, 64, 28, 72, 88, 56,
+                46, 95, 93, 71, 24, 85, 2, 52, 29, 81, 0, 71, 25, 94, 91, 5, 77, 20, 81, 37, 85,
+                74, 57, 96, 82, 17, 27, 81, 46, 96, 1, 19, 0, 51, 47, 63, 49, 65, 97, 12, 93, 78,
+                84, 26, 26, 4, 73, 16, 43, 60, 95, 69, 29, 94, 97, 52, 83, 2, 10, 83, 80, 30, 91,
+                3, 33, 72, 5, 44, 43, 44, 52, 34, 66, 99, 2, 15, 65, 52, 27, 39, 32, 58, 76, 5, 54,
+                92, 27, 32, 52, 1, 10, 14, 70, 52, 74, 36, 12, 94, 34, 38, 46, 15, 91, 62, 84, 86,
+                43, 83, 3, 56, 51, 96, 93, 14, 0, 34, 46, 79, 64, 50, 62, 25, 43, 47, 32, 36, 33,
+                29, 25, 76, 39, 56, 27, 66, 17, 72, 84, 68, 56, 72, 10, 55, 37, 79, 54, 85, 48, 5,
+                64, 14, 28, 40, 94, 30, 52, 43, 77, 47, 89, 30, 14, 43, 35, 87, 24, 14, 35,
+            ],
+            vec![
+                2, 12, 30, 87, 4, 35, 39, 66, 11, 22, 93, 85, 87, 23, 75, 27, 91, 65, 26, 6, 29,
+                56, 53, 56, 76, 30, 26, 68, 28, 60, 39, 35, 35, 31, 61, 72, 27, 44, 91, 77, 13, 47,
+                85, 69, 91, 30, 8, 57, 59, 91, 41, 97, 34, 46, 57, 5, 94, 79, 80, 6, 97, 23, 53,
+                64, 6, 6, 39, 35, 38, 98, 71, 30, 59, 15, 71, 69, 96, 8, 97, 41, 26, 76, 44, 61,
+                79, 11, 57, 19, 83, 47, 15, 51, 14, 49, 99, 30, 3, 85, 45, 74, 85, 34, 68, 86, 90,
+                86, 59, 29, 8, 8, 31, 13, 15, 40, 49, 2, 42, 71, 33, 87, 55, 63, 85, 74, 68, 71,
+                18, 79, 86, 15, 13, 98, 89, 64, 94, 62, 3, 59, 34, 6, 42, 65, 25, 76, 22, 43, 69,
+                82, 17, 48, 46, 87, 68, 43, 46, 0, 35, 61, 52, 22, 79, 35, 6, 66, 68, 4, 97, 16,
+                76, 26, 49, 36, 90, 2, 85, 5, 46, 86, 28, 71, 4, 22, 97, 67, 7, 10, 77, 89, 5, 8,
+                26, 17, 25, 6, 12, 3, 22, 50, 93, 35, 80, 61, 43, 62, 45, 19, 27, 44, 42, 64, 71,
+                24, 90, 98, 63, 31, 96, 97, 45, 25, 74, 37, 64, 25, 38, 32, 6, 3, 91, 67, 31, 92,
+                49, 41, 99, 29, 32, 78, 49, 26, 16, 81, 15, 27, 93, 4, 94, 1, 8, 9, 2, 10, 6, 55,
+                11, 77, 51, 10, 53, 47, 91, 14, 62, 9, 87, 57, 83, 92, 3, 13, 54, 23, 77, 58, 73,
+                2, 37, 88, 33, 88, 76, 0, 56, 1, 96, 74, 8, 75, 21, 84, 45, 19, 69, 60, 80, 16, 3,
+                68, 46, 95, 38, 18, 18, 6, 18, 49, 84, 7, 64, 12, 90, 62, 90, 15, 16, 15, 20, 45,
+                54, 13, 54, 13, 74, 88, 22, 28, 99, 47, 13, 52, 61, 36, 66, 93, 43, 17, 33, 78, 38,
+                56, 87, 54, 88, 0, 58, 98, 35, 28, 19, 33, 93, 19, 68, 5, 65, 87, 30, 2, 34, 48,
+                15, 42, 99, 48, 29, 13, 28, 46, 83, 96, 74, 39, 14, 83, 96, 83, 93, 26, 5, 2, 51,
+                44, 10, 72, 24, 37, 7, 84, 74, 83, 50, 31, 41, 76, 73, 82, 9, 33, 39, 85, 11, 92,
+                33, 36, 72, 75, 16, 22, 22, 54, 8, 57, 59, 60, 61, 66, 76, 77, 7, 66, 17, 30, 60,
+                41, 87, 59, 50, 69, 3, 15, 90, 62,
+            ],
+            vec![
+                98, 13, 33, 21, 95, 33, 29, 93, 66, 85, 9, 11, 64, 78, 41, 33, 96, 90, 94, 97, 7,
+                36, 36, 67, 26, 48, 96, 96, 55, 24, 27, 45, 84, 44, 86, 69, 38, 80, 95, 18, 41, 72,
+                56, 93, 19, 7, 66, 17, 20, 49, 85, 27, 13, 68, 49, 67, 64, 35, 56, 45, 77, 93, 52,
+                31, 93, 35, 91, 11, 45, 44, 90, 35, 90, 94, 90, 86, 17, 51, 67, 11, 69, 21, 83, 19,
+                17, 62, 0, 63, 1, 7, 97, 24, 88, 33, 12, 4, 16, 70, 69, 37, 77, 32, 66, 48, 8, 21,
+                47, 14, 83, 57, 27, 86, 6, 75, 65, 26, 96, 1, 94, 72, 51, 15, 40, 86, 89, 32, 36,
+                52, 58, 52, 58, 52, 39, 10, 18, 81, 56, 80, 49, 4, 59, 66, 53, 20, 71, 87, 25, 87,
+                34, 2, 37, 11, 67, 80, 96, 2, 13, 80, 75, 17, 9, 48, 70, 19, 24, 61, 23, 31, 7, 6,
+                42, 12, 63, 71, 21, 40,
+            ],
+        ]);
+        let chk_files = files.with_checksums(&crc);
+        let mut crc_naive = CRC::<u128>::with_options();
+        crc_naive.width(17);
+        let reverser = reverse_crc(&crc_naive, &chk_files, 0, true);
+        assert!(!files.check_matching(&crc, reverser).is_failure())
     }
 }

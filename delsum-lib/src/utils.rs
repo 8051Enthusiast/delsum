@@ -3,7 +3,6 @@
 pub fn unresult_iter<I, E>(x: Result<I, E>) -> impl Iterator<Item = Result<I::Item, E>>
 where
     I: std::iter::Iterator,
-    E: std::error::Error,
 {
     let (i, e) = match x {
         Ok(i) => (Some(i.map(Ok)), None),

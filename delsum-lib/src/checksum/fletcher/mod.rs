@@ -39,7 +39,10 @@
 
 pub mod rev;
 use crate::bitnum::{BitNum, Modnum};
-use crate::checksum::{CheckBuilderErr, Digest, LinearCheck, endian};
+use crate::checksum::{
+    endian::{Endian, WordSpec},
+    CheckBuilderErr, Digest, LinearCheck,
+};
 use crate::keyval::KeyValIter;
 use num_traits::{One, Zero};
 use std::fmt::Display;
@@ -68,6 +71,9 @@ pub struct FletcherBuilder<Sum: Modnum> {
     init: Option<Sum>,
     addout: Option<Sum::Double>,
     swap: Option<bool>,
+    input_endian: Option<Endian>,
+    output_endian: Option<Endian>,
+    wordsize: Option<usize>,
     check: Option<Sum::Double>,
     name: Option<String>,
 }
@@ -103,6 +109,21 @@ impl<S: Modnum> FletcherBuilder<S> {
         self.swap = Some(s);
         self
     }
+    /// The endian of the words of the input file
+    pub fn inendian(&mut self, e: Endian) -> &mut Self {
+        self.input_endian = Some(e);
+        self
+    }
+    /// The number of bits in a word of the input file
+    pub fn wordsize(&mut self, n: usize) -> &mut Self {
+        self.wordsize = Some(n);
+        self
+    }
+    /// The endian of the checksum
+    pub fn outendian(&mut self, e: Endian) -> &mut Self {
+        self.output_endian = Some(e);
+        self
+    }
     /// Checks whether c is the same as the checksum of "123456789" on creation
     pub fn check(&mut self, c: S::Double) -> &mut Self {
         self.check = Some(c);
@@ -131,12 +152,22 @@ impl<S: Modnum> FletcherBuilder<S> {
 
         let mask = (S::Double::one() << hwidth) - S::Double::one();
         let module = self.module.unwrap_or_else(S::zero);
+        let wordsize = self.wordsize.unwrap_or(8);
+        if wordsize == 0 || wordsize % 8 != 0 || wordsize > 64 {
+            return Err(CheckBuilderErr::ValueOutOfRange("wordsize"));
+        }
+        let wordspec = WordSpec {
+            input_endian: self.input_endian.unwrap_or(Endian::Big),
+            wordsize,
+            output_endian: self.output_endian.unwrap_or(Endian::Big),
+        };
         let mut fletch = Fletcher {
             hwidth,
             module,
             init,
             addout,
             swap: self.swap.unwrap_or(false),
+            wordspec,
             mask,
             name: self.name.clone(),
         };
@@ -170,6 +201,7 @@ pub struct Fletcher<Sum: Modnum> {
     init: Sum,
     addout: Sum::Double,
     swap: bool,
+    wordspec: WordSpec,
     mask: Sum::Double,
     name: Option<String>,
 }
@@ -178,15 +210,24 @@ impl<Sum: Modnum> Display for Fletcher<Sum> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.name {
             Some(n) => write!(f, "{}", n),
-            None => write!(
-                f,
-                "fletcher width={} module={:#x} init={:#x} addout={:#x} swap={}",
-                2 * self.hwidth,
-                self.module,
-                self.init,
-                self.addout,
-                self.swap
-            ),
+            None => {
+                write!(
+                    f,
+                    "fletcher width={} module={:#x} init={:#x} addout={:#x} swap={}",
+                    2 * self.hwidth,
+                    self.module,
+                    self.init,
+                    self.addout,
+                    self.swap
+                )?;
+                if self.wordspec.word_bytes() != 1 {
+                    write!(f, " inendian={} wordsize={}", self.wordspec.input_endian, self.wordspec.wordsize)?;
+                };
+                if self.hwidth * 2 > 8 {
+                    write!(f, " outendian={}", self.wordspec.output_endian)?;
+                };
+                Ok(())
+            }
         }
     }
 }
@@ -200,6 +241,9 @@ impl<Sum: Modnum> Fletcher<Sum> {
             init: None,
             addout: None,
             swap: None,
+            input_endian: None,
+            output_endian: None,
+            wordsize: None,
             check: None,
             name: None,
         }
@@ -236,6 +280,15 @@ impl<Sum: Modnum> FromStr for FletcherBuilder<Sum> {
                     .ok()
                     .map(|x| fletch.addout(x)),
                 "swap" => bool::from_str(&current_val).ok().map(|x| fletch.swap(x)),
+                "in_endian" => Endian::from_str(&current_val)
+                    .ok()
+                    .map(|x| fletch.inendian(x)),
+                "wordsize" => usize::from_str(&current_val)
+                    .ok()
+                    .map(|x| fletch.wordsize(x)),
+                "out_endian" => Endian::from_str(&current_val)
+                    .ok()
+                    .map(|x| fletch.outendian(x)),
                 "check" => Sum::Double::from_hex(&current_val)
                     .ok()
                     .map(|x| fletch.check(x)),
@@ -286,8 +339,11 @@ impl<S: Modnum> Digest for Fletcher<S> {
     }
 
     fn to_bytes(&self, s: Self::Sum) -> Vec<u8> {
-        // TODO: actually implement
-        endian::int_to_bytes(s, endian::Endian::Big, self.hwidth)
+        self.wordspec.output_to_bytes(s, 2 * self.hwidth)
+    }
+
+    fn wordspec(&self) -> WordSpec {
+        self.wordspec
     }
 }
 

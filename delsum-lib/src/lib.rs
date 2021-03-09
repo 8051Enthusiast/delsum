@@ -8,11 +8,12 @@ use checksum::{
     crc::{CRCBuilder, CRC},
     fletcher::{Fletcher, FletcherBuilder},
     modsum::{ModSum, ModSumBuilder},
-    Digest, LinearCheck, RangePairs, Relativity, SumStr,
+    Digest, LinearCheck, RangePairs, Relativity,
 };
 use checksum::{CheckBuilderErr, CheckReverserError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+use std::cmp::Ordering;
 use std::str::FromStr;
 #[cfg(test)]
 #[macro_use(quickcheck)]
@@ -49,19 +50,19 @@ fn find_prefix_width(s: &str) -> Result<(&str, usize, &str), CheckBuilderErr> {
 fn find_segment_str<L>(
     spec: &str,
     bytes: &[Vec<u8>],
-    sum: &str,
+    sum: &[Vec<u8>],
     rel: Relativity,
 ) -> Result<RangePairs, CheckBuilderErr>
 where
     L: LinearCheck + FromStr<Err = CheckBuilderErr>,
     L::Sum: BitNum,
 {
-    let sum_array = sum
-        .split(|x| x == ',')
-        .map(L::Sum::from_hex)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| CheckBuilderErr::MalformedString(String::default()))?;
-    Ok(L::from_str(spec)?.find_segments(bytes, &sum_array, rel))
+    let spec = L::from_str(spec)?;
+    let sum_array: Vec<_> = sum
+        .iter()
+        .map(|x| spec.wordspec().bytes_to_output(x))
+        .collect();
+    Ok(spec.find_segments(bytes, &sum_array, rel))
 }
 
 /// The available checksum types
@@ -86,7 +87,7 @@ static PREFIXES: &[&str] = &["fletcher", "crc", "modsum"];
 pub fn find_checksum_segments(
     strspec: &str,
     bytes: &[Vec<u8>],
-    sum: &str,
+    sum: &[Vec<u8>],
     rel: Relativity,
 ) -> Result<RangePairs, CheckBuilderErr> {
     let (prefix, width, rest) = find_prefix_width(strspec)?;
@@ -112,19 +113,23 @@ fn get_checksums<A>(
     strspec: &str,
     files: &[Vec<u8>],
     width: usize,
-) -> Result<Vec<String>, CheckBuilderErr>
+) -> Result<Vec<Vec<u8>>, CheckBuilderErr>
 where
     A: Digest + FromStr<Err = CheckBuilderErr>,
+    A::Sum: crate::bitnum::BitNum,
 {
     let algo = A::from_str(strspec)?;
     let mut sums = Vec::new();
     for file in files {
-        sums.push(algo.digest(file.as_slice()).unwrap().to_width_str(width));
+        sums.push(
+            algo.wordspec()
+                .output_to_bytes(algo.digest(file.as_slice()).unwrap(), width),
+        );
     }
     Ok(sums)
 }
 
-pub fn find_checksum(strspec: &str, bytes: &[Vec<u8>]) -> Result<Vec<String>, CheckBuilderErr> {
+pub fn find_checksum(strspec: &str, bytes: &[Vec<u8>]) -> Result<Vec<Vec<u8>>, CheckBuilderErr> {
     let (prefix, width, rest) = find_prefix_width(strspec)?;
     // look, it's not really useful to it in this case, but i really like how this looks
     match (width, prefix) {
@@ -152,17 +157,23 @@ enum BuilderEnum {
 }
 
 pub struct AlgorithmFinder<'a> {
-    pairs: Vec<(&'a [u8], u128)>,
+    pairs: Vec<(&'a [u8], Vec<u8>)>,
     spec: BuilderEnum,
     verbosity: u64,
+    extended_search: bool,
 }
 
 impl<'a> AlgorithmFinder<'a> {
     pub fn find_all(&'_ self) -> impl Iterator<Item = Result<String, CheckReverserError>> + '_ {
         let maybe_crc = if let BuilderEnum::CRC(crc) = &self.spec {
             Some(
-                checksum::crc::rev::reverse_crc(crc, self.pairs.as_slice(), self.verbosity)
-                    .map(|x| x.map(|y| y.to_string())),
+                checksum::crc::rev::reverse_crc(
+                    crc,
+                    self.pairs.as_slice(),
+                    self.verbosity,
+                    self.extended_search,
+                )
+                .map(|x| x.map(|y| y.to_string())),
             )
         } else {
             None
@@ -173,6 +184,7 @@ impl<'a> AlgorithmFinder<'a> {
                     modsum,
                     self.pairs.as_slice(),
                     self.verbosity,
+                    self.extended_search,
                 )
                 .map(|x| x.map(|y| y.to_string())),
             )
@@ -185,6 +197,7 @@ impl<'a> AlgorithmFinder<'a> {
                     fletcher,
                     self.pairs.as_slice(),
                     self.verbosity,
+                    self.extended_search,
                 )
                 .map(|x| x.map(|y| y.to_string())),
             )
@@ -204,8 +217,13 @@ impl<'a> AlgorithmFinder<'a> {
     ) -> impl ParallelIterator<Item = Result<String, CheckReverserError>> + '_ {
         let maybe_crc = if let BuilderEnum::CRC(crc) = &self.spec {
             Some(
-                checksum::crc::rev::reverse_crc_para(crc, self.pairs.as_slice(), self.verbosity)
-                    .map(|x| x.map(|y| y.to_string())),
+                checksum::crc::rev::reverse_crc_para(
+                    crc,
+                    self.pairs.as_slice(),
+                    self.verbosity,
+                    self.extended_search,
+                )
+                .map(|x| x.map(|y| y.to_string())),
             )
         } else {
             None
@@ -216,6 +234,7 @@ impl<'a> AlgorithmFinder<'a> {
                     modsum,
                     self.pairs.as_slice(),
                     self.verbosity,
+                    self.extended_search,
                 )
                 .map(|x| x.map(|y| y.to_string()))
                 .par_bridge(),
@@ -229,6 +248,7 @@ impl<'a> AlgorithmFinder<'a> {
                     fletcher,
                     self.pairs.as_slice(),
                     self.verbosity,
+                    self.extended_search,
                 )
                 .map(|x| x.map(|y| y.to_string())),
             )
@@ -246,8 +266,9 @@ impl<'a> AlgorithmFinder<'a> {
 pub fn find_algorithm<'a>(
     strspec: &str,
     bytes: &'a [&[u8]],
-    sum: &str,
+    sums: &[Vec<u8>],
     verbosity: u64,
+    extended_search: bool,
 ) -> Result<AlgorithmFinder<'a>, CheckBuilderErr> {
     let (prefix, _, rest) = find_prefix_width(strspec)?;
     let prefix = prefix.to_ascii_lowercase();
@@ -257,18 +278,24 @@ pub fn find_algorithm<'a>(
         "fletcher" => BuilderEnum::Fletcher(FletcherBuilder::<u64>::from_str(rest)?),
         _ => unimplemented!(),
     };
-    let sums = sum
-        .split(|x| x == ',')
-        .map(u128::from_hex)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| CheckBuilderErr::MalformedString(String::default()))?;
-    if sums.len() != bytes.len() {
-        panic!("Help how do I error handle this?")
-    }
-    let pairs: Vec<_> = bytes.iter().cloned().zip(sums.into_iter()).collect();
+    match sums.len().cmp(&bytes.len()) {
+        Ordering::Greater => {
+            return Err(CheckBuilderErr::MissingParameter(
+                "not enough files for checksums given",
+            ))
+        }
+        Ordering::Less => {
+            return Err(CheckBuilderErr::MissingParameter(
+                "not enough checksums for files given",
+            ))
+        }
+        Ordering::Equal => (),
+    };
+    let pairs: Vec<_> = bytes.iter().cloned().zip(sums.iter().cloned()).collect();
     Ok(AlgorithmFinder {
         spec,
         pairs,
         verbosity,
+        extended_search,
     })
 }
