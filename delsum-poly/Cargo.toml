@@ -11,10 +11,10 @@ description = "NTL bindings for the delsum crate"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-cxx = "1.0.2"
+cxx = "1.0.32"
 
 [build-dependencies]
-cxx-build = "1.0.2"
+cxx-build = "1.0.32"
 
 [lib]
 name="delsum_poly"
