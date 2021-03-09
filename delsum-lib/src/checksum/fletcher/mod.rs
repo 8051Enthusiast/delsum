@@ -221,10 +221,10 @@ impl<Sum: Modnum> Display for Fletcher<Sum> {
                     self.swap
                 )?;
                 if self.wordspec.word_bytes() != 1 {
-                    write!(f, " inendian={} wordsize={}", self.wordspec.input_endian, self.wordspec.wordsize)?;
+                    write!(f, " in_endian={} wordsize={}", self.wordspec.input_endian, self.wordspec.wordsize)?;
                 };
                 if self.hwidth * 2 > 8 {
-                    write!(f, " outendian={}", self.wordspec.output_endian)?;
+                    write!(f, " out_endian={}", self.wordspec.output_endian)?;
                 };
                 Ok(())
             }

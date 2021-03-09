@@ -174,13 +174,13 @@ impl<Sum: Modnum> Display for ModSum<Sum> {
                 if self.wordspec.word_bytes() != 1 {
                     write!(
                         f,
-                        " inendian={} wordsize={}",
+                        " in_endian={} wordsize={}",
                         self.wordspec.input_endian,
                         self.wordspec.wordsize,
                     )?;
                 };
                 if self.width > 8 {
-                    write!(f, " outendian={}", self.wordspec.output_endian)?;
+                    write!(f, " out_endian={}", self.wordspec.output_endian)?;
                 }
                 Ok(())
             }

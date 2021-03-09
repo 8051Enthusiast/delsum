@@ -203,7 +203,7 @@ impl<Sum: BitNum> Display for CRC<Sum> {
                     )?;
                 };
                 if self.width > 8 {
-                    write!(f, " outendian={}", self.wordspec.output_endian)?;
+                    write!(f, " out_endian={}", self.wordspec.output_endian)?;
                 };
                 Ok(())
             }
