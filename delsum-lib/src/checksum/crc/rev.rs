@@ -887,7 +887,7 @@ fn bytes_to_poly(
     let new_bytes = reorder_poly_bytes(bytes, refin, wordspec);
     let mut poly = new_poly_shifted(&new_bytes, width as i64);
     let sum = bytes_to_int(&checksum, wordspec.output_endian);
-    let check_mask = 1u128.wrapping_shl(width as u32).wrapping_sub(1);
+    let check_mask = 1u128.checked_shl(width as u32).unwrap_or(0).wrapping_sub(1);
     if (!check_mask & sum) != 0 {
         return None;
     }
@@ -1179,6 +1179,26 @@ mod tests {
         let mut crc_naive = CRC::<u128>::with_options();
         crc_naive.width(17);
         let reverser = reverse_crc(&crc_naive, &chk_files, 0, true);
+        assert!(!files.check_matching(&crc, reverser).is_failure())
+    }
+    #[test]
+    fn error4() {
+        let crc = CRC::with_options()
+            .width(128)
+            .poly(0x67e8938640a23cb377b3bedbd54f723bu128)
+            .init(0xefb5b2562c0f368325e2cc4c0d0b0473)
+            .xorout(0xeaf1086973fee2615b0c54a58ae4cc89)
+            .build()
+            .unwrap();
+        let files = ReverseFileSet(vec![
+            vec![114, 119, 88, 38, 237, 8, 1, 0],
+            vec![30, 200, 192, 21, 109, 88, 89, 147],
+            vec![],
+        ]);
+        let chk_files = files.with_checksums(&crc);
+        let mut crc_naive = CRC::<u128>::with_options();
+        crc_naive.width(128);
+        let reverser = reverse_crc(&crc_naive, &chk_files, 0, false);
         assert!(!files.check_matching(&crc, reverser).is_failure())
     }
 }
