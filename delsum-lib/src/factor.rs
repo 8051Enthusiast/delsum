@@ -123,7 +123,7 @@ impl PrimeSieve {
         if n > self.max_prime as u64 {
             return None;
         }
-        self.sieve.get(n as usize).map(|x| *x)
+        self.sieve.get(n as usize).map(|x| !*x)
     }
 }
 struct PrimeIterator<'a> {
@@ -849,6 +849,14 @@ mod tests {
                 4957391571224061778730779231513u128
             ),
             vec![(12282749, 1), (403606030801741676780237, 1)]
+        )
+    }
+    #[test]
+    fn test_factor4() {
+        // caused by sieve is_prime method returning the opposite
+        assert_eq!(
+            factor(17281230015u128, 17281230015u128),
+            vec![(3, 1), (5, 1), (7, 1), (41, 1), (47, 1), (223, 1), (383, 1)]
         )
     }
     #[test]

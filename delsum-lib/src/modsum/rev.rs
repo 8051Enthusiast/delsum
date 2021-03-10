@@ -9,9 +9,9 @@
 //! Of course, giving more files will result in fewer false positives.
 use super::{ModSum, ModSumBuilder};
 use crate::checksum::CheckReverserError;
+use crate::endian::{bytes_to_int, wordspec_combos, WordSpec};
 use crate::factor::{divisors_range, gcd};
 use crate::utils::unresult_iter;
-use crate::endian::{bytes_to_int, wordspec_combos, WordSpec};
 use std::iter::Iterator;
 /// Find the parameters of a modsum algorithm.
 ///
@@ -307,6 +307,41 @@ mod tests {
         let chk_files: Vec<_> = f.with_checksums(&modsum);
         let mut naive = ModSum::<u64>::with_options();
         naive.width(45).module(75);
+        let m = reverse_modsum(&naive, &chk_files, 0, false);
+        assert!(!f.check_matching(&modsum, m).is_failure())
+    }
+    #[test]
+    fn error3() {
+        // caused by bug in factoring algorithm
+        let modsum = ModSum::with_options()
+            .width(34)
+            .module(0x15758e195u64)
+            .init(0xd31ee539)
+            .inendian(Endian::Big)
+            .outendian(Endian::Little)
+            .wordsize(32)
+            .build()
+            .unwrap();
+        let f = ReverseFileSet(vec![
+            vec![
+                13, 172, 74, 40, 206, 163, 7, 169, 20, 194, 253, 171, 168, 190, 255, 187, 150, 56,
+                44, 212, 115, 70, 66, 86, 97, 111, 139, 202, 115, 189, 255, 117, 112, 225, 215,
+                168, 211, 64, 1, 26, 127, 1, 71, 249, 71, 212, 144, 47, 253, 140, 57, 42, 232, 170,
+                62, 240,
+            ],
+            vec![
+                122, 13, 224, 25, 74, 129, 163, 253, 0, 233, 255, 250, 216, 209, 105, 175, 148, 98,
+                154, 210, 9, 216, 253, 18, 0, 56, 26, 85, 104, 61, 0, 19, 156, 103, 255, 6, 122,
+                230, 106, 5,
+            ],
+            vec![
+                187, 202, 75, 213, 99, 51, 90, 0, 219, 82, 79, 0, 144, 98, 34, 80, 90, 1, 189, 10,
+                137, 199, 176, 174,
+            ],
+        ]);
+        let chk_files: Vec<_> = f.with_checksums(&modsum);
+        let mut naive = ModSum::<u64>::with_options();
+        naive.width(34);
         let m = reverse_modsum(&naive, &chk_files, 0, false);
         assert!(!f.check_matching(&modsum, m).is_failure())
     }
