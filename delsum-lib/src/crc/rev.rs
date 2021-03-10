@@ -11,8 +11,8 @@
 //! If `init` is not known, it is neccessary to know two checksums of files with different lengths.
 //! In case only checksums of files with a set length are required, setting `init = 0` is sufficient.
 use super::{CRCBuilder, CRC};
-use crate::endian::{bytes_to_int, int_to_bytes, wordspec_combos, Endian, WordSpec};
 use crate::checksum::CheckReverserError;
+use crate::endian::{bytes_to_int, int_to_bytes, wordspec_combos, Endian, WordSpec};
 use crate::utils::{cart_prod, unresult_iter};
 use delsum_poly::*;
 #[cfg(feature = "parallel")]
@@ -774,8 +774,12 @@ impl PrefactorMod {
             _ => panic!("Internal Error: Double"),
         };
         let poly_copy = copy_poly(red_poly);
+        let max = 1u128
+            .checked_shl(deg(&red_unknown) as u32)
+            .unwrap_or(0)
+            .wrapping_sub(1);
         // iterate over all polynomials p mod red_unknown and calculate possible + valid*p
-        (0u128..1 << deg(&red_unknown)).map(move |p| {
+        (0u128..=max).map(move |p| {
             let mut current_init = new_polyrem(&new_poly(&p.to_le_bytes()), &poly_copy);
             current_init *= &mod_valid;
             current_init += &mod_init;
@@ -936,7 +940,7 @@ mod tests {
     use super::*;
     use crate::checksum::tests::ReverseFileSet;
     use crate::crc::{CRCBuilder, CRC};
-    use quickcheck::{Arbitrary, TestResult, Gen};
+    use quickcheck::{Arbitrary, Gen, TestResult};
     impl Arbitrary for CRCBuilder<u128> {
         fn arbitrary(g: &mut Gen) -> Self {
             let width = (u8::arbitrary(g) % 128) + 1;
@@ -947,8 +951,7 @@ mod tests {
                 poly = (u128::arbitrary(g) % (1 << width)) | 1;
                 init = u128::arbitrary(g) % (1 << width);
                 xorout = u128::arbitrary(g) % (1 << width);
-            }
-            else {
+            } else {
                 poly = u128::arbitrary(g) | 1;
                 init = u128::arbitrary(g);
                 xorout = u128::arbitrary(g);
@@ -1181,6 +1184,7 @@ mod tests {
     }
     #[test]
     fn error4() {
+        // this error was caused by an overflow in the bytes_to_poly function
         let crc = CRC::with_options()
             .width(128)
             .poly(0x67e8938640a23cb377b3bedbd54f723bu128)
@@ -1196,6 +1200,38 @@ mod tests {
         let chk_files = files.with_checksums(&crc);
         let mut crc_naive = CRC::<u128>::with_options();
         crc_naive.width(128);
+        let reverser = reverse_crc(&crc_naive, &chk_files, 0, false);
+        assert!(!files.check_matching(&crc, reverser).is_failure())
+    }
+    #[test]
+    fn error5() {
+        // this error was caused by an overflow in the revresult iterator
+        let crc = CRC::with_options()
+            .width(128)
+            .poly(0x1u128)
+            .build()
+            .unwrap();
+        let files = ReverseFileSet(vec![
+            vec![
+                214, 114, 192, 142, 1, 255, 141, 1, 61, 53, 127, 104, 32, 63, 55, 137, 122, 10,
+                246, 127, 47, 94, 103, 3, 13, 241, 88, 247, 40, 225, 250, 14, 1, 46, 199, 43, 221,
+                62, 110, 14, 214, 227, 86, 75, 1, 139, 238, 224, 1, 184, 217, 16, 228, 16, 131,
+                168,
+            ],
+            vec![
+                255, 229, 147, 16, 1, 111, 81, 226, 160, 153, 132, 210, 65, 168, 25, 170, 68, 63,
+                72, 238, 101, 46, 189, 233, 198, 71, 50, 55, 107, 82, 146, 90, 183, 154, 180, 47,
+                217, 211, 59, 204,
+            ],
+            vec![
+                142, 89, 218, 180, 221, 10, 176, 190, 119, 147, 154, 191, 235, 51, 165, 255, 186,
+                134, 6, 104, 146, 67, 255, 34, 1, 238, 58, 246, 188, 132, 224, 0, 106, 173, 64, 1,
+                245, 102, 74, 76,
+            ],
+        ]);
+        let chk_files = files.with_checksums(&crc);
+        let mut crc_naive = CRC::<u128>::with_options();
+        crc_naive.width(128).poly(1);
         let reverser = reverse_crc(&crc_naive, &chk_files, 0, false);
         assert!(!files.check_matching(&crc, reverser).is_failure())
     }

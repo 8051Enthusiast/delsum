@@ -633,9 +633,7 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
                 let s = q.size()/8;
                 8 * (usize::arbitrary(q) % s)
             };
-            println!("{}", g.size());
             let n_files = (usize::arbitrary(g) % g.size()) + 3;
-            println!("{}", n_files);
             let mut lengths = Vec::new();
             for _ in 0..n_files {
                 lengths.push(new_size(g));
