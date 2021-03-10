@@ -135,7 +135,7 @@ fn reverse(
     let mut module = original_mod.unwrap_or(0) as u128;
     log("removing inits");
     // here we find module by gcd'ing between the differences (init - init == 0 mod m)
-    let init = find_largest_mod(&sums, spec.init, &mut module);
+    let init = find_largest_mod(&sums, spec.init.map(i128::from), &mut module);
     if module == 0 {
         return Err(CheckReverserError::UnsuitableFiles(
             "too short or too similar",
@@ -161,15 +161,14 @@ fn reverse(
     })
 }
 
-pub(crate) fn find_largest_mod(sums: &[i128], maybe_init: Option<u64>, module: &mut u128) -> i128 {
+pub(crate) fn find_largest_mod(sums: &[i128], maybe_init: Option<i128>, module: &mut u128) -> i128 {
     let init = match maybe_init {
         Some(i) => {
             // if we already have init, we can just subtract that from the sum and get a multiple of m
-            let init = i as i128;
             for s in sums {
-                *module = gcd(*module, (s + init).abs() as u128);
+                *module = gcd(*module, (s + i).abs() as u128);
             }
-            i as i128
+            i
         }
         None => {
             // otherwise their difference will do, but we do get one gcd less

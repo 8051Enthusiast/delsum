@@ -336,7 +336,7 @@ fn find_regular_sum(spec: &RevSpec, sums: &[i128], mut module: u128) -> (u128, i
         .addout
         .map(|x| {
             spec.init
-                .map(|y| y as u64 + split_sum(x, width, spec.swap).0)
+                .map(|y| y as i128 + split_sum(x, width, spec.swap).0 as i128)
         })
         .flatten();
     // delegate to the corresponding modsum function
@@ -642,9 +642,9 @@ fn xgcd(a: &BigInt, b: &BigInt) -> (BigInt, (BigInt, BigInt)) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::endian::{Endian, WordSpec};
     use crate::checksum::tests::ReverseFileSet;
-    use quickcheck::{Arbitrary, TestResult, Gen};
+    use crate::endian::{Endian, WordSpec};
+    use quickcheck::{Arbitrary, Gen, TestResult};
     impl Arbitrary for FletcherBuilder<u64> {
         fn arbitrary(g: &mut Gen) -> Self {
             let mut new_fletcher = Fletcher::with_options();
@@ -851,5 +851,36 @@ mod tests {
             .wordsize(64);
         let reverser = reverse_fletcher(&naive, &chk_files, 0, false);
         assert!(!f.check_matching(&f16, reverser).is_failure());
+    }
+    #[test]
+    fn error6() {
+        // init + addout for the regular sum overflowed, changed to i128
+        let f128 = Fletcher::with_options()
+            .width(128)
+            .module(0xcb80a6f9a8cd46f4u64)
+            .init(0xb3ecf9878dbc2c93)
+            .addout(0x9b8e3e2905a19ea31cb7d9ba3c8891fe)
+            .swap(true)
+            .inendian(Endian::Little)
+            .wordsize(16)
+            .build()
+            .unwrap();
+        let f = ReverseFileSet(vec![
+            vec![
+                13, 255, 162, 255, 220, 220, 98, 238, 51, 0, 161, 137, 166, 137, 28, 37,
+            ],
+            vec![
+                5, 38, 212, 62, 75, 1, 161, 207, 51, 50, 163, 94, 181, 67, 0, 206,
+            ],
+            vec![161, 64, 210, 72, 171, 168, 255, 226],
+        ]);
+        let chk_files = f.with_checksums(&f128);
+        let mut naive = Fletcher::<u64>::with_options();
+        naive
+            .width(128)
+            .init(0xb3ecf9878dbc2c93)
+            .addout(0x9b8e3e2905a19ea31cb7d9ba3c8891fe);
+        let reverser = reverse_fletcher(&naive, &chk_files, 0, false);
+        assert!(!f.check_matching(&f128, reverser).is_failure());
     }
 }
