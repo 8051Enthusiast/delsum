@@ -11,7 +11,7 @@ pub mod modsum;
 
 use bitnum::BitNum;
 use checksum::{CheckBuilderErr, CheckReverserError};
-use checksum::{Digest, LinearCheck, RangePairs, Relativity};
+use checksum::{Digest, LinearCheck, RangePair, Relativity};
 use crc::{reverse_crc, reverse_crc_para, CRCBuilder, CRC};
 use fletcher::{reverse_fletcher, reverse_fletcher_para, Fletcher, FletcherBuilder};
 use modsum::{reverse_modsum, ModSum, ModSumBuilder};
@@ -56,7 +56,7 @@ fn find_segment_str<L>(
     bytes: &[Vec<u8>],
     sum: &[Vec<u8>],
     rel: Relativity,
-) -> Result<RangePairs, CheckBuilderErr>
+) -> Result<Vec<RangePair>, CheckBuilderErr>
 where
     L: LinearCheck + FromStr<Err = CheckBuilderErr>,
     L::Sum: BitNum,
@@ -93,7 +93,7 @@ pub fn find_checksum_segments(
     bytes: &[Vec<u8>],
     sum: &[Vec<u8>],
     rel: Relativity,
-) -> Result<RangePairs, CheckBuilderErr> {
+) -> Result<Vec<RangePair>, CheckBuilderErr> {
     let (prefix, width, rest) = find_prefix_width(strspec)?;
     match (width, prefix) {
         (1..=8, "crc") => find_segment_str::<CRC<u8>>(rest, bytes, sum, rel),

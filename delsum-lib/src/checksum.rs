@@ -3,6 +3,8 @@
 use rayon::prelude::*;
 use std::cmp::Ordering;
 use std::convert::TryFrom;
+use std::fmt::Debug;
+use std::ops::Range;
 use crate::endian::WordSpec;
 
 /// A basic trait for a checksum where
@@ -22,7 +24,7 @@ pub trait Digest {
     /// and gets converted to a Sum by finalize
     /// is not really feasable because of the operations LinearCheck would need to do
     /// both on Sums and interal States, so a single Sum type must be enough.
-    type Sum: Clone + Eq + Ord + std::fmt::Debug + Send + Sync + Checksum;
+    type Sum: Clone + Eq + Ord + Debug + Send + Sync + Checksum;
     /// Gets an initial sum before the words are processed through the sum.
     ///
     /// For instance in the case of crc, the sum type is some integer and the returned value from
@@ -90,7 +92,7 @@ pub enum RelativeIndex {
 /// * all methods without default implementations (including those from `Digest`) should run in constant time (assuming constant `Shift`, `Sum` types)
 ///
 /// Basically, it is a graded ring or something idk.
-pub trait LinearCheck: Digest + Send + Sync {
+pub trait LinearCheck: Digest + Send + Sync + Sized {
     /// The Shift type (see trait documentation for more).
     type Shift: Clone;
     /// The initial shift corresponding to the identity shift of 0 (see trait documentation for more).
@@ -113,63 +115,6 @@ pub trait LinearCheck: Digest + Send + Sync {
         }
         shift
     }
-    #[doc(hidden)]
-    fn presums(
-        &self,
-        bytes: &[u8],
-        sum: &Self::Sum,
-        start_range: std::ops::Range<usize>,
-        end_range: std::ops::Range<usize>,
-    ) -> (Vec<Self::Sum>, Vec<Self::Sum>) {
-        // we calculate two presum arrays, one for the starting values and one for the end values
-        let mut state = self.init();
-        let mut start_presums = Vec::with_capacity(start_range.len());
-        let mut end_presums = Vec::with_capacity(end_range.len());
-        let neg_init = self.negate(self.init());
-        for (i, c) in bytes.iter().enumerate() {
-            if start_range.contains(&i) {
-                // from the startsums, we substract the init value of the checksum
-                start_presums.push(self.add(state.clone(), &neg_init));
-            }
-            state = self.dig_word(state, *c as u64);
-            if end_range.contains(&i) {
-                // from the endsums, we finalize them and subtract the given final sum
-                let endstate = self.add(self.finalize(state.clone()), &self.negate(sum.clone()));
-                end_presums.push(endstate);
-            }
-        }
-        // we then shift checksums to length of file
-        let mut shift = self.init_shift();
-        for i in (0..bytes.len()).rev() {
-            if end_range.contains(&i) {
-                end_presums[i - end_range.start] =
-                    self.shift(end_presums[i - end_range.start].clone(), &shift)
-            }
-            shift = self.inc_shift(shift);
-            if start_range.contains(&i) {
-                start_presums[i - start_range.start] =
-                    self.shift(start_presums[i - start_range.start].clone(), &shift)
-            }
-        }
-        // This has the effect that, when substracting the n'th startsum from the m'th endsum, we get the checksum
-        // from n to m, minus the final sum (all shifted by (len-m)), which is 0 exactly when the checksum from n to m is equal to
-        // the final sum, which means that start_presums[n] = end_presums[m]
-        //
-        // we then sort an array of indices so equal elements are adjacent, allowing us to easily get the equal elements
-        // Anyway, here's some cryptic stuff i made up and have to put at least *somewhere* so i don't forget it
-        // 		        ([0..m] + f - s)*x^(k-m) - ([0..n] - i)*x^(k-n)
-        // (4)	        = ([0..m] + f - s)*x^(k-m) - ([0..n] - i)*x^(m-n)*x^(k-m)
-        // (1) (5)		= ([0..m] + f - s - [0..n]*x^(n-m) + i*x^(m-n))*x^(k-m)
-        // (2) (6)		= ([0..n]*x^(m-n) + [n..m] + f - s - [0 ..n]*x^(n-m) + i*x^(m-n))*x^(k-m)
-        // (1)		    = ([n..m] + f - s + i*x^(m-n))*x^(k-m)
-        // (6)		    = (i*[n..m] + f - s)*x^(k-m)
-        // (7)		    = (finalize(i*[n..m]) - s)*x^(k-m)
-        // therefore
-        //                  (finalize(i*[n..m]) - s)*x^(k-m) == 0
-        // (2) (3) (6)  <=> finalize(i*[n..m]) - s           == 0
-        // (1)          <=> finalize(i*[n..m])               == s
-        (start_presums, end_presums)
-    }
 
     /// Given some bytes and a target sum, determines all segments in the bytes that have that
     /// particular checksum.
@@ -181,7 +126,7 @@ pub trait LinearCheck: Digest + Send + Sync {
     /// This function has a high space usage per byte: for `n` bytes, it uses a total space of `n*(8 + 2*sizeof(Sum))` bytes.
     /// The time is bounded by the runtime of the sort algorithm, which is around `n*log(n)`.
     /// If Hashtables were used, it could be done in linear time, but they take too much space.
-    fn find_segments(&self, bytes: &[Vec<u8>], sum: &[Self::Sum], rel: Relativity) -> RangePairs {
+    fn find_segments(&self, bytes: &[Vec<u8>], sum: &[Self::Sum], rel: Relativity) -> Vec<RangePair> {
         if bytes.is_empty() {
             return Vec::new();
         }
@@ -198,13 +143,13 @@ pub trait LinearCheck: Digest + Send + Sync {
         let (start_presums, end_presums) = bytes
             .par_iter()
             .zip(sum.par_iter())
-            .map(|(b, s)| self.presums(b, &s, 0..min_len, end_range(&b)))
+            .map(|(b, s)| presums(self, b, &s, 0..min_len, end_range(&b)))
             .unzip();
         #[cfg(not(feature = "parallel"))]
         let (start_presums, end_presums) = bytes
             .iter()
             .zip(sum.iter())
-            .map(|(b, s)| self.presums(b, &s, 0..min_len, end_range(&b)))
+            .map(|(b, s)| presums(self, b, &s, 0..min_len, end_range(&b)))
             .unzip();
 
         let start_preset = PresumSet::new(start_presums);
@@ -233,16 +178,73 @@ pub trait LinearCheck: Digest + Send + Sync {
     }
 }
 
-pub type RangePairs = Vec<(Vec<usize>, Vec<RelativeIndex>)>;
+fn presums<S: LinearCheck>(
+    summer: &S,
+    bytes: &[u8],
+    sum: &S::Sum,
+    start_range: Range<usize>,
+    end_range: Range<usize>,
+) -> (Vec<S::Sum>, Vec<S::Sum>) {
+    // we calculate two presum arrays, one for the starting values and one for the end values
+    let mut state = summer.init();
+    let mut start_presums = Vec::with_capacity(start_range.len());
+    let mut end_presums = Vec::with_capacity(end_range.len());
+    let neg_init = summer.negate(summer.init());
+    for (i, c) in bytes.iter().enumerate() {
+        if start_range.contains(&i) {
+            // from the startsums, we substract the init value of the checksum
+            start_presums.push(summer.add(state.clone(), &neg_init));
+        }
+        state = summer.dig_word(state, *c as u64);
+        if end_range.contains(&i) {
+            // from the endsums, we finalize them and subtract the given final sum
+            let endstate = summer.add(summer.finalize(state.clone()), &summer.negate(sum.clone()));
+            end_presums.push(endstate);
+        }
+    }
+    // we then shift checksums to length of file
+    let mut shift = summer.init_shift();
+    for i in (0..bytes.len()).rev() {
+        if end_range.contains(&i) {
+            end_presums[i - end_range.start] =
+                summer.shift(end_presums[i - end_range.start].clone(), &shift)
+        }
+        shift = summer.inc_shift(shift);
+        if start_range.contains(&i) {
+            start_presums[i - start_range.start] =
+                summer.shift(start_presums[i - start_range.start].clone(), &shift)
+        }
+    }
+    // This has the effect that, when substracting the n'th startsum from the m'th endsum, we get the checksum
+    // from n to m, minus the final sum (all shifted by (len-m)), which is 0 exactly when the checksum from n to m is equal to
+    // the final sum, which means that start_presums[n] = end_presums[m]
+    //
+    // we then sort an array of indices so equal elements are adjacent, allowing us to easily get the equal elements
+    // Anyway, here's some cryptic stuff i made up and have to put at least *somewhere* so i don't forget it
+    // 		        ([0..m] + f - s)*x^(k-m) - ([0..n] - i)*x^(k-n)
+    // (4)	        = ([0..m] + f - s)*x^(k-m) - ([0..n] - i)*x^(m-n)*x^(k-m)
+    // (1) (5)		= ([0..m] + f - s - [0..n]*x^(n-m) + i*x^(m-n))*x^(k-m)
+    // (2) (6)		= ([0..n]*x^(m-n) + [n..m] + f - s - [0 ..n]*x^(n-m) + i*x^(m-n))*x^(k-m)
+    // (1)		    = ([n..m] + f - s + i*x^(m-n))*x^(k-m)
+    // (6)		    = (i*[n..m] + f - s)*x^(k-m)
+    // (7)		    = (finalize(i*[n..m]) - s)*x^(k-m)
+    // therefore
+    //                  (finalize(i*[n..m]) - s)*x^(k-m) == 0
+    // (2) (3) (6)  <=> finalize(i*[n..m]) - s           == 0
+    // (1)          <=> finalize(i*[n..m])               == s
+    (start_presums, end_presums)
+}
+
+pub type RangePair = (Vec<usize>, Vec<RelativeIndex>);
 
 /// A struct for helping to sort and get duplicates of arrays of arrays.
 #[derive(Debug)]
-struct PresumSet<Sum: Clone + Eq + Ord + std::fmt::Debug> {
+struct PresumSet<Sum: Clone + Eq + Ord + Debug> {
     idx: Vec<u32>,
     presum: Vec<Vec<Sum>>,
 }
 
-impl<Sum: Clone + Eq + Ord + std::fmt::Debug + Send + Sync> PresumSet<Sum> {
+impl<Sum: Clone + Eq + Ord + Debug + Send + Sync> PresumSet<Sum> {
     /// Gets a new PresumSet. Gets sorted on construction.
     fn new(presum: Vec<Vec<Sum>>) -> Self {
         let firstlen = presum[0].len();
