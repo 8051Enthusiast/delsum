@@ -1,6 +1,6 @@
 [package]
 name = "delsum-poly"
-version = "0.1.2"
+version = "0.2.0"
 authors = ["8051Enthusiast <8051enthusiast@protonmail.com>"]
 edition = "2018"
 license = "MIT"
