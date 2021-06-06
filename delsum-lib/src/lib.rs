@@ -12,14 +12,14 @@ pub mod modsum;
 use bitnum::BitNum;
 use checksum::{CheckBuilderErr, CheckReverserError};
 use checksum::{Digest, LinearCheck, RangePair};
-use crc::{reverse_crc, reverse_crc_para, CRCBuilder, CRC};
-use fletcher::{reverse_fletcher, reverse_fletcher_para, Fletcher, FletcherBuilder};
+use crc::{reverse_crc, CRCBuilder, CRC};
+use fletcher::{reverse_fletcher, Fletcher, FletcherBuilder};
 use modsum::{reverse_modsum, ModSum, ModSumBuilder};
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
 use std::cmp::Ordering;
 use std::str::FromStr;
 use utils::SignedInclRange;
+#[cfg(feature = "parallel")]
+use {crc::reverse_crc_para, fletcher::reverse_fletcher_para, rayon::prelude::*};
 #[cfg(test)]
 #[macro_use(quickcheck)]
 extern crate quickcheck_macros;

@@ -39,15 +39,15 @@
 
 mod rev;
 use crate::bitnum::{BitNum, Modnum};
-use crate::checksum::{
-    CheckBuilderErr, Digest, LinearCheck,
-};
+use crate::checksum::{CheckBuilderErr, Digest, LinearCheck};
 use crate::endian::{Endian, WordSpec};
 use crate::keyval::KeyValIter;
 use num_traits::{One, Zero};
+pub use rev::reverse_fletcher;
+#[cfg(feature = "parallel")]
+pub use rev::reverse_fletcher_para;
 use std::fmt::Display;
 use std::str::FromStr;
-pub use rev::{reverse_fletcher, reverse_fletcher_para};
 
 /// A builder for a fletcher.
 ///
@@ -222,7 +222,11 @@ impl<Sum: Modnum> Display for Fletcher<Sum> {
                     self.swap
                 )?;
                 if self.wordspec.word_bytes() != 1 {
-                    write!(f, " in_endian={} wordsize={}", self.wordspec.input_endian, self.wordspec.wordsize)?;
+                    write!(
+                        f,
+                        " in_endian={} wordsize={}",
+                        self.wordspec.input_endian, self.wordspec.wordsize
+                    )?;
                 };
                 if self.hwidth * 2 > 8 {
                     write!(f, " out_endian={}", self.wordspec.output_endian)?;

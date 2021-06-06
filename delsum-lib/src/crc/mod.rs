@@ -5,7 +5,9 @@ use super::{
 };
 use crate::bitnum::BitNum;
 use crate::keyval::KeyValIter;
-pub use rev::{reverse_crc, reverse_crc_para};
+pub use rev::reverse_crc;
+#[cfg(feature = "parallel")]
+pub use rev::reverse_crc_para;
 use std::fmt::Display;
 use std::str::FromStr;
 /// A builder for a CRC algorithm.
