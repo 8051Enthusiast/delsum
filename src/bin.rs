@@ -1,12 +1,14 @@
-use delsum_lib::checksum::{RelativeIndex, Relativity};
+use delsum_lib::utils::{read_signed_maybe_hex, SignedInclRange};
 use delsum_lib::{find_algorithm, find_checksum, find_checksum_segments};
 use hex::{FromHex, FromHexError, ToHex};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fs::File;
 use std::io::Read;
 use std::process::exit;
+use std::sync::Mutex;
 use structopt::StructOpt;
 
 fn main() {
@@ -20,8 +22,10 @@ fn main() {
 
 fn reverse(opts: &Reverse) {
     let files = read_files(&opts.files);
+    let start = opts.start.unwrap_or(0);
+    let end = opts.end.unwrap_or(-1);
+    let ranged_files: Vec<_> = apply_range_to_file(&files, start, end);
     let models = read_models(&opts.model, &opts.model_file);
-    let byte_slices: Vec<_> = files.iter().map(Vec::<u8>::as_slice).collect();
     let checksums = match read_checksums(&opts.checksums) {
         Ok(x) => x,
         Err(e) => {
@@ -32,7 +36,7 @@ fn reverse(opts: &Reverse) {
     let algorithms = |model: &str| {
         find_algorithm(
             &model,
-            &byte_slices,
+            &ranged_files,
             &checksums,
             opts.verbose,
             opts.extended_search,
@@ -42,6 +46,7 @@ fn reverse(opts: &Reverse) {
             exit(1);
         })
     };
+    let error_set = Mutex::new(HashSet::new());
     #[cfg(feature = "parallel")]
     let parallel = opts.parallel;
     #[cfg(not(feature = "parallel"))]
@@ -53,7 +58,15 @@ fn reverse(opts: &Reverse) {
             models.par_iter().for_each(|x| {
                 algorithms(x).find_all_para().for_each(|algo| match algo {
                     Ok(a) => println!("{}", a),
-                    Err(e) => eprintln!("Error on {}: {}", x, e),
+                    Err(e) => {
+                        let do_print = error_set
+                            .lock()
+                            .map(|mut set| set.insert((x.clone(), e.clone())))
+                            .unwrap_or(true);
+                        if do_print {
+                            eprintln!("Error on {}: {}", x, e)
+                        }
+                    }
                 })
             });
         }
@@ -61,7 +74,15 @@ fn reverse(opts: &Reverse) {
             models.iter().for_each(|x| {
                 algorithms(x).find_all().for_each(|algo| match algo {
                     Ok(a) => println!("{}", a),
-                    Err(e) => eprintln!("Error on {}: {}", x, e),
+                    Err(e) => {
+                        let do_print = error_set
+                            .lock()
+                            .map(|mut set| set.insert((x.clone(), e.clone())))
+                            .unwrap_or(true);
+                        if do_print {
+                            eprintln!("Error on {}: {}", x, e)
+                        }
+                    }
                 })
             });
         }
@@ -71,11 +92,20 @@ fn reverse(opts: &Reverse) {
 fn part(opts: &Part) {
     let files = read_files(&opts.files);
     let models = read_models(&opts.model, &opts.model_file);
-    let rel = if opts.start {
-        Relativity::Start
-    } else {
-        Relativity::End
+    let min_len = files.iter().map(|x| x.len()).min().unwrap();
+    let end_range = match (opts.start, opts.end, opts.end_range) {
+        (true, false, None) => SignedInclRange::new(0, min_len as isize - 1),
+        (false, _, None) => SignedInclRange::new(-(min_len as isize), -1),
+        (false, false, Some(r)) => Some(r),
+        _ => {
+            eprintln!("Error: arguments must contain at most one of -e, -E, -s");
+            exit(1);
+        }
     };
+    let start_range = opts
+        .start_range
+        .map(Some)
+        .unwrap_or_else(|| SignedInclRange::new(0, min_len as isize - 1));
     let checksums = match read_checksums(&opts.checksums) {
         Ok(x) => x,
         Err(e) => {
@@ -83,29 +113,39 @@ fn part(opts: &Part) {
             exit(1);
         }
     };
+    if min_len < 1 {
+        eprintln!("Warning: file of zero size, no ranges fonud");
+        return;
+    }
+    let start_range = start_range.unwrap();
+    let end_range = end_range.unwrap();
     #[cfg(feature = "parallel")]
     let parallel = opts.parallel;
     #[cfg(not(feature = "parallel"))]
     let parallel = false;
     let subsum_print = |model| {
-        let segs = find_checksum_segments(model, &files, &checksums, rel).unwrap_or_else(|err| {
-            eprintln!("Could not process model '{}': {}", model, err);
-            exit(1);
-        });
+        let segs = find_checksum_segments(model, &files, &checksums, start_range, end_range)
+            .unwrap_or_else(|err| {
+                eprintln!("Could not process model '{}': {}", model, err);
+                exit(1);
+            });
         if !segs.is_empty() {
             let mut list = String::new();
             list.push_str(&format!("{}:\n", model));
             for (a, b) in segs {
                 let a_list = a
                     .iter()
-                    .map(|x| format!("{}", x))
+                    .map(|x| match x >= &0 {
+                        true => format!("0x{:x}", x),
+                        false => format!("-0x{:x}", -x),
+                    })
                     .collect::<Vec<_>>()
                     .join(",");
                 let b_list = b
                     .iter()
-                    .map(|x| match x {
-                        RelativeIndex::FromStart(n) => format!("{}", n),
-                        RelativeIndex::FromEnd(n) => format!("-{}", n),
+                    .map(|x| match x >= &0 {
+                        true => format!("0x{:x}", x),
+                        false => format!("-0x{:x}", -x),
                     })
                     .collect::<Vec<_>>()
                     .join(",");
@@ -127,6 +167,9 @@ fn part(opts: &Part) {
 
 fn check(opts: &Check) {
     let files = read_files(&opts.files);
+    let start = opts.start.unwrap_or(0);
+    let end = opts.end.unwrap_or(-1);
+    let ranged_files: Vec<_> = apply_range_to_file(&files, start, end);
     let models = read_models(&opts.model, &opts.model_file);
     let is_single = models.len() <= 1;
     #[cfg(feature = "parallel")]
@@ -134,7 +177,7 @@ fn check(opts: &Check) {
     #[cfg(not(feature = "parallel"))]
     let parallel = false;
     let print_sums = |model| {
-        let checksums = find_checksum(model, &files).unwrap_or_else(|err| {
+        let checksums = find_checksum(model, &ranged_files).unwrap_or_else(|err| {
             eprintln!("Could not process model '{}': {}", model, err);
             exit(1);
         });
@@ -170,6 +213,22 @@ fn check(opts: &Check) {
     }
 }
 
+/// Takes the slices of files corresponding to the indices of start and end
+fn apply_range_to_file(files: &[Vec<u8>], start: isize, end: isize) -> Vec<&[u8]> {
+    files
+        .iter()
+        .map(|x| {
+            let range = SignedInclRange::new(start, end)
+                .and_then(|range| range.to_unsigned(x.len()))
+                .unwrap_or_else(|| {
+                    eprintln!("Error: Range from {} to {} is too big or the start is after the end", start, end);
+                    exit(1)
+                });
+            &x[range.start()..=range.end()]
+        })
+        .collect()
+}
+
 /// reads a bunch of checksums in hex separated by ','
 fn read_checksums(s: &str) -> Result<Vec<Vec<u8>>, FromHexError> {
     s.split(',').map(|x| x.trim()).map(Vec::from_hex).collect()
@@ -195,6 +254,14 @@ struct Part {
     /// Sets the end of the checksum segments to be relative to the end of the file (default)
     #[structopt(short, long)]
     end: bool,
+    /// The inclusive range of numbers where a checksum may start in format [number]:[number] where [number]
+    /// is a signed hexadecimal and negative numbers indicate offsets relative from the end
+    #[structopt(short = "S", long)]
+    start_range: Option<delsum_lib::utils::SignedInclRange>,
+    /// The inclusive range of numbers where a checksum may end in format [number]:[number] where [number]
+    /// is a signed hexadecimal and negative numbers indicate offsets relative from the end
+    #[structopt(short = "E", long)]
+    end_range: Option<delsum_lib::utils::SignedInclRange>,
     /// Do more parallelism, in turn using more memory
     #[structopt(short, long)]
     parallel: bool,
@@ -224,6 +291,12 @@ struct Reverse {
     /// Use the checksum algorithm given by the model string
     #[structopt(short, long)]
     model: Option<String>,
+    /// The hexadecimal offset of the first byte to be checksummed (can be negative to indicate offset from end)
+    #[structopt(short = "S", long, parse(try_from_str = read_signed_maybe_hex))]
+    start: Option<isize>,
+    /// The hexadecimal offset of the last byte to be checksummed (can be negative to indicate offset from end)
+    #[structopt(short = "E", long, parse(try_from_str = read_signed_maybe_hex))]
+    end: Option<isize>,
     /// Extend the search to parameter combinations that are unlikely
     #[structopt(short, long)]
     extended_search: bool,
@@ -250,6 +323,12 @@ struct Check {
     /// Use the checksum algorithm given by the model string
     #[structopt(short, long)]
     model: Option<String>,
+    /// The hexadecimal offset of the first byte to be checksummed (can be negative to indicate offset from end)
+    #[structopt(short = "S", long, parse(try_from_str = read_signed_maybe_hex))]
+    start: Option<isize>,
+    /// The hexadecimal offset of the last byte to be checksummed (can be negative to indicate offset from end)
+    #[structopt(short = "E", long, parse(try_from_str = read_signed_maybe_hex))]
+    end: Option<isize>,
     /// Read model strings line-by-line from given file
     #[structopt(short = "M", long)]
     model_file: Option<OsString>,

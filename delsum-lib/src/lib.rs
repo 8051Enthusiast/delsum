@@ -2,7 +2,7 @@ mod bitnum;
 pub mod checksum;
 mod factor;
 mod keyval;
-mod utils;
+pub mod utils;
 
 pub mod crc;
 pub(crate) mod endian;
@@ -11,7 +11,7 @@ pub mod modsum;
 
 use bitnum::BitNum;
 use checksum::{CheckBuilderErr, CheckReverserError};
-use checksum::{Digest, LinearCheck, RangePair, Relativity};
+use checksum::{Digest, LinearCheck, RangePair};
 use crc::{reverse_crc, reverse_crc_para, CRCBuilder, CRC};
 use fletcher::{reverse_fletcher, reverse_fletcher_para, Fletcher, FletcherBuilder};
 use modsum::{reverse_modsum, ModSum, ModSumBuilder};
@@ -19,6 +19,7 @@ use modsum::{reverse_modsum, ModSum, ModSumBuilder};
 use rayon::prelude::*;
 use std::cmp::Ordering;
 use std::str::FromStr;
+use utils::SignedInclRange;
 #[cfg(test)]
 #[macro_use(quickcheck)]
 extern crate quickcheck_macros;
@@ -40,7 +41,8 @@ fn find_prefix_width(s: &str) -> Result<(&str, usize, &str), CheckBuilderErr> {
             Err(k) => return Err(CheckBuilderErr::MalformedString(k)),
             Ok((k, v)) => {
                 if &k == "width" {
-                    return usize::from_str_radix(&v, 10)
+                    return v
+                        .parse()
                         .map_err(|_| CheckBuilderErr::MalformedString(k))
                         .map(|width| (prefix, width, rest));
                 }
@@ -55,7 +57,8 @@ fn find_segment_str<L>(
     spec: &str,
     bytes: &[Vec<u8>],
     sum: &[Vec<u8>],
-    rel: Relativity,
+    start_range: SignedInclRange,
+    end_range: SignedInclRange,
 ) -> Result<Vec<RangePair>, CheckBuilderErr>
 where
     L: LinearCheck + FromStr<Err = CheckBuilderErr>,
@@ -66,7 +69,7 @@ where
         .iter()
         .map(|x| spec.wordspec().bytes_to_output(x))
         .collect();
-    Ok(spec.find_segments(bytes, &sum_array, rel))
+    Ok(spec.find_segments_range(bytes, &sum_array, start_range, end_range))
 }
 
 /// The available checksum types
@@ -92,30 +95,49 @@ pub fn find_checksum_segments(
     strspec: &str,
     bytes: &[Vec<u8>],
     sum: &[Vec<u8>],
-    rel: Relativity,
+    start_range: SignedInclRange,
+    end_range: SignedInclRange,
 ) -> Result<Vec<RangePair>, CheckBuilderErr> {
     let (prefix, width, rest) = find_prefix_width(strspec)?;
     match (width, prefix) {
-        (1..=8, "crc") => find_segment_str::<CRC<u8>>(rest, bytes, sum, rel),
-        (9..=16, "crc") => find_segment_str::<CRC<u16>>(rest, bytes, sum, rel),
-        (17..=32, "crc") => find_segment_str::<CRC<u32>>(rest, bytes, sum, rel),
-        (33..=64, "crc") => find_segment_str::<CRC<u64>>(rest, bytes, sum, rel),
-        (65..=128, "crc") => find_segment_str::<CRC<u128>>(rest, bytes, sum, rel),
-        (1..=8, "modsum") => find_segment_str::<ModSum<u8>>(rest, bytes, sum, rel),
-        (9..=16, "modsum") => find_segment_str::<ModSum<u16>>(rest, bytes, sum, rel),
-        (17..=32, "modsum") => find_segment_str::<ModSum<u32>>(rest, bytes, sum, rel),
-        (33..=64, "modsum") => find_segment_str::<ModSum<u64>>(rest, bytes, sum, rel),
-        (1..=16, "fletcher") => find_segment_str::<Fletcher<u8>>(rest, bytes, sum, rel),
-        (17..=32, "fletcher") => find_segment_str::<Fletcher<u16>>(rest, bytes, sum, rel),
-        (33..=64, "fletcher") => find_segment_str::<Fletcher<u32>>(rest, bytes, sum, rel),
-        (65..=128, "fletcher") => find_segment_str::<Fletcher<u64>>(rest, bytes, sum, rel),
+        (1..=8, "crc") => find_segment_str::<CRC<u8>>(rest, bytes, sum, start_range, end_range),
+        (9..=16, "crc") => find_segment_str::<CRC<u16>>(rest, bytes, sum, start_range, end_range),
+        (17..=32, "crc") => find_segment_str::<CRC<u32>>(rest, bytes, sum, start_range, end_range),
+        (33..=64, "crc") => find_segment_str::<CRC<u64>>(rest, bytes, sum, start_range, end_range),
+        (65..=128, "crc") => {
+            find_segment_str::<CRC<u128>>(rest, bytes, sum, start_range, end_range)
+        }
+        (1..=8, "modsum") => {
+            find_segment_str::<ModSum<u8>>(rest, bytes, sum, start_range, end_range)
+        }
+        (9..=16, "modsum") => {
+            find_segment_str::<ModSum<u16>>(rest, bytes, sum, start_range, end_range)
+        }
+        (17..=32, "modsum") => {
+            find_segment_str::<ModSum<u32>>(rest, bytes, sum, start_range, end_range)
+        }
+        (33..=64, "modsum") => {
+            find_segment_str::<ModSum<u64>>(rest, bytes, sum, start_range, end_range)
+        }
+        (1..=16, "fletcher") => {
+            find_segment_str::<Fletcher<u8>>(rest, bytes, sum, start_range, end_range)
+        }
+        (17..=32, "fletcher") => {
+            find_segment_str::<Fletcher<u16>>(rest, bytes, sum, start_range, end_range)
+        }
+        (33..=64, "fletcher") => {
+            find_segment_str::<Fletcher<u32>>(rest, bytes, sum, start_range, end_range)
+        }
+        (65..=128, "fletcher") => {
+            find_segment_str::<Fletcher<u64>>(rest, bytes, sum, start_range, end_range)
+        }
         _ => Err(CheckBuilderErr::ValueOutOfRange("width")),
     }
 }
 
 fn get_checksums<A>(
     strspec: &str,
-    files: &[Vec<u8>],
+    files: &[&[u8]],
     width: usize,
 ) -> Result<Vec<Vec<u8>>, CheckBuilderErr>
 where
@@ -127,13 +149,13 @@ where
     for file in files {
         sums.push(
             algo.wordspec()
-                .output_to_bytes(algo.digest(file.as_slice()).unwrap(), width),
+                .output_to_bytes(algo.digest(file).unwrap(), width),
         );
     }
     Ok(sums)
 }
 
-pub fn find_checksum(strspec: &str, bytes: &[Vec<u8>]) -> Result<Vec<Vec<u8>>, CheckBuilderErr> {
+pub fn find_checksum(strspec: &str, bytes: &[&[u8]]) -> Result<Vec<Vec<u8>>, CheckBuilderErr> {
     let (prefix, width, rest) = find_prefix_width(strspec)?;
     // look, it's not really useful to it in this case, but i really like how this looks
     match (width, prefix) {
@@ -297,9 +319,69 @@ pub fn find_algorithm<'a>(
     };
     let pairs: Vec<_> = bytes.iter().cloned().zip(sums.iter().cloned()).collect();
     Ok(AlgorithmFinder {
-        spec,
         pairs,
+        spec,
         verbosity,
         extended_search,
     })
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+    #[test]
+    fn multibyte_part_range() {
+        assert_eq!(
+            find_checksum_segments(
+                "modsum width=16 wordsize=24 module=0",
+                &[vec![0u8; 15]],
+                &[vec![0, 0]],
+                SignedInclRange::new(0, 5).unwrap(),
+                SignedInclRange::new(-5, -2).unwrap()
+            ),
+            Ok(vec![
+                (vec![0, 3], vec![-4]),
+                (vec![1, 4], vec![-3]),
+                (vec![2, 5], vec![-5, -2])
+            ])
+        );
+        assert_eq!(
+            find_checksum_segments(
+                "modsum width=16 wordsize=16 module=0 wordsize=16",
+                &[vec![0u8; 15], vec![0u8; 12], vec![0u8; 9]],
+                &[vec![0, 0], vec![0, 0], vec![0, 0]],
+                SignedInclRange::new(0, 8).unwrap(),
+                SignedInclRange::new(-9, -1).unwrap(),
+            ),
+            Ok(vec![])
+        );
+        assert_eq!(
+            find_checksum_segments(
+                "modsum width=16 wordsize=16 module=0 wordsize=24",
+                &[vec![0u8; 15], vec![0u8; 12], vec![0u8; 9]],
+                &[vec![0, 0], vec![0, 0], vec![0, 0]],
+                SignedInclRange::new(0, 8).unwrap(),
+                SignedInclRange::new(-9, -1).unwrap(),
+            ),
+            Ok(vec![
+                (vec![0, 3, 6], vec![-7, -4, -1]),
+                (vec![1, 4], vec![-6, -3]),
+                (vec![2, 5], vec![-5, -2]),
+            ])
+        );
+        assert_eq!(
+            find_checksum_segments(
+                "crc width=16 poly=1 wordsize=16 out_endian=little",
+                &[
+                    vec![0x6d, 0x79, 0x72, 0x3f, 0x00, 0x5d],
+                    vec![0x75, 0x2d, 0xf4, 0xd4, 0xf5, 0xcf, 0xd8, 0x35]
+                ],
+                &[vec![0x72, 0x3f], vec![0x01, 0x1b]],
+                SignedInclRange::new(0, 5).unwrap(),
+                SignedInclRange::new(-7, -1).unwrap(),
+            ),
+            Ok(vec![(vec![2], vec![-3])])
+        )
+    }
 }

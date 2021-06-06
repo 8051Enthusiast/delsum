@@ -1,11 +1,11 @@
-
+use crate::endian::WordSpec;
+use crate::utils::SignedInclRange;
+use crate::utils::UnsignedInclRange;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use std::cmp::Ordering;
 use std::convert::TryFrom;
 use std::fmt::Debug;
-use std::ops::Range;
-use crate::endian::WordSpec;
 
 /// A basic trait for a checksum where
 /// * init gives an initial state
@@ -47,22 +47,29 @@ pub trait Digest {
     fn digest(&self, buf: &[u8]) -> Result<Self::Sum, std::io::Error> {
         let wordspec = self.wordspec();
         if buf.len() % wordspec.word_bytes() != 0 {
-            return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof))
+            return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof));
         }
-        let sum = wordspec.iter_words(buf).fold(self.init(), |c, s| self.dig_word(c, s));
+        let sum = wordspec
+            .iter_words(buf)
+            .fold(self.init(), |c, s| self.dig_word(c, s));
         Ok(self.finalize(sum))
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum Relativity {
     Start,
     End,
 }
-#[derive(Debug, PartialEq, Eq, Copy, Clone)]
-pub enum RelativeIndex {
-    FromStart(usize),
-    FromEnd(usize),
+
+impl From<SignedInclRange> for Relativity {
+    fn from(r: SignedInclRange) -> Self {
+        if r.start() < 0 {
+            Relativity::End
+        } else {
+            Relativity::Start
+        }
+    }
 }
 
 /// A checksum that also has some notion of linearity.
@@ -92,7 +99,7 @@ pub enum RelativeIndex {
 /// * all methods without default implementations (including those from `Digest`) should run in constant time (assuming constant `Shift`, `Sum` types)
 ///
 /// Basically, it is a graded ring or something idk.
-pub trait LinearCheck: Digest + Send + Sync + Sized {
+pub trait LinearCheck: Digest + Send + Sync {
     /// The Shift type (see trait documentation for more).
     type Shift: Clone;
     /// The initial shift corresponding to the identity shift of 0 (see trait documentation for more).
@@ -126,95 +133,258 @@ pub trait LinearCheck: Digest + Send + Sync + Sized {
     /// This function has a high space usage per byte: for `n` bytes, it uses a total space of `n*(8 + 2*sizeof(Sum))` bytes.
     /// The time is bounded by the runtime of the sort algorithm, which is around `n*log(n)`.
     /// If Hashtables were used, it could be done in linear time, but they take too much space.
-    fn find_segments(&self, bytes: &[Vec<u8>], sum: &[Self::Sum], rel: Relativity) -> Vec<RangePair> {
+    fn find_segments(
+        &self,
+        bytes: &[Vec<u8>],
+        sum: &[Self::Sum],
+        rel: Relativity,
+    ) -> Vec<RangePair> {
         if bytes.is_empty() {
             return Vec::new();
         }
+        let min_len = bytes.iter().map(|x| x.len()).min().unwrap();
+        let start_range = SignedInclRange::new(0, (min_len - 1) as isize);
+        let end_range = match rel {
+            Relativity::Start => SignedInclRange::new(0, (min_len - 1) as isize),
+            Relativity::End => SignedInclRange::new(-(min_len as isize), -1),
+        };
+        let (start_range, end_range) = match (start_range, end_range) {
+            (Some(s), Some(e)) => (s, e),
+            (None, _) | (_, None) => return Vec::new(),
+        };
         if u32::try_from(bytes[0].len()).is_err() {
             // only support 32-bit length files for now, since a usize for every byte would take a lot of space
             panic!("File must be under 4GiB!");
         }
+        self.find_segments_range(bytes, sum, start_range, end_range)
+    }
+
+    fn find_segments_range(
+        &self,
+        bytes: &[Vec<u8>],
+        sum: &[Self::Sum],
+        start_range: SignedInclRange,
+        end_range: SignedInclRange,
+    ) -> Vec<RangePair> {
+        let mut ret = Vec::new();
         let min_len = bytes.iter().map(|x| x.len()).min().unwrap();
-        let end_range = |b: &[u8]| match rel {
-            Relativity::Start => 0..min_len,
-            Relativity::End => (b.len() - min_len)..b.len(),
-        };
-        #[cfg(feature = "parallel")]
-        let (start_presums, end_presums) = bytes
-            .par_iter()
-            .zip(sum.par_iter())
-            .map(|(b, s)| presums(self, b, &s, 0..min_len, end_range(&b)))
-            .unzip();
-        #[cfg(not(feature = "parallel"))]
-        let (start_presums, end_presums) = bytes
-            .iter()
-            .zip(sum.iter())
-            .map(|(b, s)| presums(self, b, &s, 0..min_len, end_range(&b)))
-            .unzip();
+        let step = self.wordspec().word_bytes();
 
-        let start_preset = PresumSet::new(start_presums);
-        let end_preset = PresumSet::new(end_presums);
-
-        let mut ret_vec = Vec::new();
-        for (a, b) in start_preset.equal_pairs(&end_preset) {
-            let starts: Vec<_> = a.iter().map(|x| usize::try_from(*x).unwrap()).collect();
-            let ends: Vec<_> = b.iter().map(|x| usize::try_from(*x).unwrap() + 1).collect();
-            let min_start = *starts.iter().min().unwrap_or(&min_len);
-            let max_end = *ends.iter().max().unwrap_or(&0);
-            let rel_ends: Vec<_> = ends
-                .into_iter()
-                .filter(|x| x > &min_start)
-                .map(|x| match rel {
-                    Relativity::Start => RelativeIndex::FromStart(x),
-                    Relativity::End => RelativeIndex::FromEnd(min_len - x),
-                })
-                .collect();
-            let rel_starts = starts.into_iter().filter(|x| x < &max_end).collect();
-            if !rel_ends.is_empty() {
-                ret_vec.push((rel_starts, rel_ends));
-            }
+        if Relativity::from(start_range) != Relativity::from(end_range)
+            && bytes
+                .windows(2)
+                .map(|x| x[0].len() % step != x[1].len() % step)
+                .any(bool::from)
+        {
+            // in case one of the ranges is relative to the start and the other relative to the end,
+            // and there are two files which have a length difference that is not a multiple of the step
+            // lengths, then any checksum on the first file that is a multiple of `step` in length would have
+            // a corresponding checksum over a length that is not a multiple of `step`, therefore we return
+            // here early since this case isn't actually caught by the general code and would result
+            // in unexpected results
+            return Vec::new();
         }
-        ret_vec
+
+        // limit start and end range to actual offsets lying within the smallest file
+        let (start_range, end_range) = match (start_range.limit(min_len), end_range.limit(min_len))
+        {
+            (None, _) | (_, None) => return Vec::new(),
+            (Some(start), Some(end)) => (start, end),
+        };
+        for offset in 0..step {
+            let current_start_range =
+                match start_range.set_start(start_range.start() + offset as isize) {
+                    Some(x) => x,
+                    None => break,
+                };
+            ret.append(
+                &mut find_segments_aligned(self, bytes, sum, current_start_range, end_range)
+                    .unwrap_or_else(Vec::new),
+            );
+        }
+        ret.sort_unstable();
+        ret
     }
 }
 
-fn presums<S: LinearCheck>(
+fn find_segments_aligned<S: LinearCheck + ?Sized>(
+    summer: &S,
+    bytes: &[Vec<u8>],
+    sum: &[<S as Digest>::Sum],
+    start_range: SignedInclRange,
+    end_range: SignedInclRange,
+) -> Option<Vec<RangePair>> {
+    let min_len = bytes.iter().map(|x| x.len()).min().unwrap();
+    let (start_range, end_range) = normalize_range(
+        start_range,
+        end_range,
+        summer.wordspec().word_bytes(),
+        min_len,
+    )?;
+    #[cfg(feature = "parallel")]
+    let (start_presums, end_presums) = bytes
+        .par_iter()
+        .zip(sum.par_iter())
+        .map(|(b, s)| {
+            presums(
+                summer,
+                b,
+                &s,
+                // since they are already normalized, this should work
+                start_range.to_unsigned(b.len()).unwrap(),
+                end_range.to_unsigned(b.len()).unwrap(),
+            )
+        })
+        .unzip();
+    #[cfg(not(feature = "parallel"))]
+    let (start_presums, end_presums) = bytes
+        .iter()
+        .zip(sum.iter())
+        .map(|(b, s)| {
+            presums(
+                summer,
+                b,
+                &s,
+                // since they are already normalized, this should work
+                start_range.to_unsigned(b.len()).unwrap(),
+                end_range.to_unsigned(b.len()).unwrap(),
+            )
+        })
+        .unzip();
+    let start_preset = PresumSet::new(start_presums);
+    let end_preset = PresumSet::new(end_presums);
+    let mut ret_vec = Vec::new();
+
+    let step = summer.wordspec().word_bytes();
+    let least_start_range_start = start_range.to_unsigned(min_len)?.start();
+    let least_end_range_start = end_range.to_unsigned(min_len)?.start();
+    for (a, b) in start_preset.equal_pairs(&end_preset) {
+        let starts: Vec<_> = a
+            .iter()
+            .map(|x| usize::try_from(*x).unwrap() * step + least_start_range_start)
+            .collect();
+        let ends: Vec<_> = b
+            .iter()
+            .map(|x| usize::try_from(*x).unwrap() * step + least_end_range_start)
+            .collect();
+        let min_start = *starts.iter().min().unwrap_or(&min_len);
+        let max_end = *ends.iter().max().unwrap_or(&0);
+        let rel_ends: Vec<_> = ends
+            .into_iter()
+            .filter(|x| x > &min_start)
+            .map(|x| match end_range.into() {
+                Relativity::Start => isize::try_from(x).unwrap(),
+                Relativity::End => -isize::try_from(min_len - x).unwrap(),
+            })
+            .collect();
+        let rel_starts = starts
+            .into_iter()
+            .filter(|x| x < &max_end)
+            .map(|x| match start_range.into() {
+                Relativity::Start => isize::try_from(x).unwrap(),
+                Relativity::End => -isize::try_from(min_len - x).unwrap(),
+            })
+            .collect();
+        if !rel_ends.is_empty() {
+            ret_vec.push((rel_starts, rel_ends));
+        }
+    }
+    Some(ret_vec)
+}
+
+// this takes care of shortening the ranges so that the least presums are calculated,
+// this is done before calling presums because presums does not know the lengths of the
+// other files and we might get different lengths for different files
+fn normalize_range(
+    mut start_range: SignedInclRange,
+    mut end_range: SignedInclRange,
+    step: usize,
+    min_len: usize,
+) -> Option<(SignedInclRange, SignedInclRange)> {
+    let mut start = start_range.to_unsigned(min_len)?;
+    let mut end = end_range.to_unsigned(min_len)?;
+    end = end.set_end(end.end().max(start.start() + step - 1))?;
+
+    // the "middle" part must be in the total range
+    end = end.set_start(end.start().clamp(start.start() + step - 1, end.end()))?;
+
+    // align them to be a multiple of step away from start.start
+    end = end
+        .set_end(start.start() + step - 1 + (end.end() - start.start() - step + 1) / step * step)?
+        .set_start(start.start() + step - 1 + (end.start() - start.start()) / step * step)?;
+    // clamp and align the end of the start range too
+    start = start.set_end(start.end().clamp(start.start(), end.end()))?;
+    start = start.set_end(start.start() + (start.end() - start.start()) / step * step)?;
+
+    let to_rel = |x: SignedInclRange| {
+        if x.start() >= 0 {
+            Relativity::Start
+        } else {
+            Relativity::End
+        }
+    };
+    start_range = start.to_signed(to_rel(start_range), to_rel(start_range), min_len)?;
+    end_range = end.to_signed(to_rel(end_range), to_rel(end_range), min_len)?;
+    Some((start_range, end_range))
+}
+
+fn presums<S: LinearCheck + ?Sized>(
     summer: &S,
     bytes: &[u8],
     sum: &S::Sum,
-    start_range: Range<usize>,
-    end_range: Range<usize>,
+    start_range: UnsignedInclRange,
+    end_range: UnsignedInclRange,
 ) -> (Vec<S::Sum>, Vec<S::Sum>) {
+    if start_range.start() > start_range.end() || end_range.start() > end_range.end() {
+        return (Vec::new(), Vec::new());
+    }
+    if start_range.start() >= bytes.len() {
+        return (Vec::new(), Vec::new());
+    }
     // we calculate two presum arrays, one for the starting values and one for the end values
+    let step = summer.wordspec().word_bytes();
     let mut state = summer.init();
-    let mut start_presums = Vec::with_capacity(start_range.len());
-    let mut end_presums = Vec::with_capacity(end_range.len());
+    let mut start_presums = Vec::with_capacity(start_range.len() / step);
+    let mut end_presums = Vec::with_capacity(end_range.len() / step);
     let neg_init = summer.negate(summer.init());
-    for (i, c) in bytes.iter().enumerate() {
-        if start_range.contains(&i) {
+    let iter_range = start_range.start()..=end_range.end();
+    for (i, c) in summer
+        .wordspec()
+        .iter_words(&bytes[iter_range.clone()])
+        .enumerate()
+        .map(|(i, c)| (i * step + start_range.start(), c))
+    {
+        if start_range.contains(i) {
             // from the startsums, we substract the init value of the checksum
             start_presums.push(summer.add(state.clone(), &neg_init));
         }
-        state = summer.dig_word(state, *c as u64);
-        if end_range.contains(&i) {
+        state = summer.dig_word(state, c as u64);
+        if end_range.contains(i + step - 1) {
             // from the endsums, we finalize them and subtract the given final sum
             let endstate = summer.add(summer.finalize(state.clone()), &summer.negate(sum.clone()));
             end_presums.push(endstate);
         }
     }
+    let mut start_index = start_presums.len();
+    let mut end_index = end_presums.len();
     // we then shift checksums to length of file
     let mut shift = summer.init_shift();
-    for i in (0..bytes.len()).rev() {
-        if end_range.contains(&i) {
-            end_presums[i - end_range.start] =
-                summer.shift(end_presums[i - end_range.start].clone(), &shift)
+    for i in iter_range
+        .rev()
+        .filter(|i| (i - start_range.start()) % step == 0)
+    {
+        if end_range.contains(i + step - 1) {
+            end_index -= 1;
+            end_presums[end_index] = summer.shift(end_presums[end_index].clone(), &shift)
         }
         shift = summer.inc_shift(shift);
-        if start_range.contains(&i) {
-            start_presums[i - start_range.start] =
-                summer.shift(start_presums[i - start_range.start].clone(), &shift)
+        if start_range.contains(i) {
+            start_index -= 1;
+            start_presums[start_index] = summer.shift(start_presums[start_index].clone(), &shift)
         }
     }
+    assert_eq!(start_index, 0);
+    assert_eq!(end_index, 0);
     // This has the effect that, when substracting the n'th startsum from the m'th endsum, we get the checksum
     // from n to m, minus the final sum (all shifted by (len-m)), which is 0 exactly when the checksum from n to m is equal to
     // the final sum, which means that start_presums[n] = end_presums[m]
@@ -235,7 +405,7 @@ fn presums<S: LinearCheck>(
     (start_presums, end_presums)
 }
 
-pub type RangePair = (Vec<usize>, Vec<RelativeIndex>);
+pub type RangePair = (Vec<isize>, Vec<isize>);
 
 /// A struct for helping to sort and get duplicates of arrays of arrays.
 #[derive(Debug)]
@@ -253,7 +423,7 @@ impl<Sum: Clone + Eq + Ord + Debug + Send + Sync> PresumSet<Sum> {
             assert_eq!(firstlen, x.len());
         }
         // vector of all indices
-        let mut idxvec: Vec<_> = (0..=(firstlen - 1) as u32).collect();
+        let mut idxvec: Vec<_> = (0..firstlen as u32).collect();
         // get a permutation vector representing the sort of the presum arrays first by value and then by index
 
         #[cfg(feature = "parallel")]
@@ -281,7 +451,7 @@ impl<Sum: Clone + Eq + Ord + Debug + Send + Sync> PresumSet<Sum> {
         let mut ret = Vec::new();
         let mut a_idx = 0;
         let mut b_idx = 0;
-        while a_idx < self.idx.len() && b_idx < self.idx.len() {
+        while a_idx < self.idx.len() && b_idx < other.idx.len() {
             let apos = self.idx[a_idx];
             let bpos = other.idx[b_idx];
             match Self::cmp_idx(&self.presum, apos, &other.presum, bpos) {
@@ -327,7 +497,7 @@ impl<Sum: Clone + Eq + Ord + Debug + Send + Sync> PresumSet<Sum> {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, Hash)]
 pub enum CheckBuilderErr {
     /// The checksum given on construction does not match
     /// the checksum of "123456789"
@@ -366,7 +536,7 @@ impl std::fmt::Display for CheckBuilderErr {
 
 impl std::error::Error for CheckBuilderErr {}
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, Hash)]
 pub enum CheckReverserError {
     MissingParameter(&'static str),
     UnsuitableFiles(&'static str),
@@ -414,8 +584,8 @@ impl<T: crate::bitnum::BitNum> Checksum for T {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::checksum::{RelativeIndex, Relativity};
-    use quickcheck::{Arbitrary, TestResult, Gen};
+    use crate::checksum::Relativity;
+    use quickcheck::{Arbitrary, Gen, TestResult};
     use rand::Rng;
     static EXAMPLE_TEXT: &str = r#"Als Gregor Samsa eines Morgens aus unruhigen Träumen erwachte, fand er sich in
 seinem Bett zu einem ungeheueren Ungeziefer verwandelt. Er lag auf seinem
@@ -472,10 +642,7 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
                 &[sum_1_9.clone()],
                 Relativity::Start
             ),
-            vec![
-                (vec![1], vec![RelativeIndex::FromStart(10)]),
-                (vec![16], vec![RelativeIndex::FromStart(25)])
-            ]
+            vec![(vec![1], vec![9]), (vec![16], vec![24])]
         );
         assert_eq!(
             chk.find_segments(
@@ -486,7 +653,7 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
                 &[sum_1_9.clone(), sum_9_1.clone()],
                 Relativity::Start
             ),
-            vec![(vec![10], vec![RelativeIndex::FromStart(19)])]
+            vec![(vec![10], vec![18])]
         );
         assert_eq!(
             chk.find_segments(
@@ -498,7 +665,7 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
                 &[sum_1_9_1, sum_1_9, sum_9_1],
                 Relativity::End
             ),
-            vec![(vec![3], vec![RelativeIndex::FromEnd(7)])]
+            vec![(vec![3], vec![-8])]
         )
     }
     pub fn check_example<D: Digest>(chk: &D, sum: D::Sum) {
@@ -632,7 +799,7 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
     impl Arbitrary for ReverseFileSet {
         fn arbitrary(g: &mut Gen) -> Self {
             let new_size = |q: &mut Gen| {
-                let s = q.size()/8;
+                let s = q.size() / 8;
                 8 * (usize::arbitrary(q) % s)
             };
             let n_files = (usize::arbitrary(g) % g.size()) + 3;
@@ -679,7 +846,7 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
             let mut has_appeared = false;
             for (count, modsum_loop) in result_iter.enumerate() {
                 if count > 10000 {
-                    return TestResult::discard()
+                    return TestResult::discard();
                 }
                 let modsum_loop = match modsum_loop {
                     Err(_) => return TestResult::discard(),

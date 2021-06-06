@@ -5,9 +5,9 @@ use super::{
 };
 use crate::bitnum::BitNum;
 use crate::keyval::KeyValIter;
+pub use rev::{reverse_crc, reverse_crc_para};
 use std::fmt::Display;
 use std::str::FromStr;
-pub use rev::{reverse_crc, reverse_crc_para};
 /// A builder for a CRC algorithm.
 ///
 /// The Sum type is one of u8, u16, u32, u64 or u128 and must be able to hold `width` bits.
@@ -197,11 +197,7 @@ impl<Sum: BitNum> Display for CRC<Sum> {
                     self.width, self.poly, self.init, self.xorout, self.refin, self.refout
                 )?;
                 if self.wordspec.word_bytes() != 1 {
-                    write!(
-                        f,
-                        " wordsize={}",
-                        self.wordspec.wordsize
-                    )?;
+                    write!(f, " wordsize={}", self.wordspec.wordsize)?;
                 };
                 if self.width > 8 {
                     write!(f, " out_endian={}", self.wordspec.output_endian)?;
@@ -408,16 +404,19 @@ impl<S: BitNum> LinearCheck for CRC<S> {
     fn init_shift(&self) -> Self::Shift {
         Self::Shift::one()
     }
-    fn inc_shift(&self, shift: Self::Shift) -> Self::Shift {
+    fn inc_shift(&self, mut shift: Self::Shift) -> Self::Shift {
         // note: shifts are always unreflected
-        if self.width <= 8 {
-            let overhang = shift << (8 - self.width);
-            self.get_table_entry(overhang)
-        } else {
-            let overhang = shift >> (self.width - 8);
-            let l_remain = (shift << 8) & self.mask;
-            self.get_table_entry(overhang) ^ l_remain
+        for _ in 0..self.wordspec.word_bytes() {
+            shift = if self.width <= 8 {
+                let overhang = shift << (8 - self.width);
+                self.get_table_entry(overhang)
+            } else {
+                let overhang = shift >> (self.width - 8);
+                let l_remain = (shift << 8) & self.mask;
+                self.get_table_entry(overhang) ^ l_remain
+            }
         }
+        shift
     }
 }
 

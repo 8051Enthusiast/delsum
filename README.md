@@ -19,6 +19,9 @@ $ delsum check -m 'crc width=32 poly=0x4c11db7 init=0xffffffff xorout=0xffffffff
 ```
 An algorithm can be specified directly as an argument with `-m` or a list of algorithms can be provided in a file.
 
+The start or end of the range to calculate the checksum of is given with `-S` or `-E` and can also be negative to make them relative to the end.
+For example, to calculate the checksum of all bytes except the last two, one specifies `-S 0` and `-E-3` (it is inclusive, so `-3` is still part of the sum).
+
 For the available algorithms and how to specify them, see [here](#algorithms).
 
 `part`
@@ -30,21 +33,25 @@ Example:
 ```
 $ delsum check -m 'modsum width=16 module=ffff' -c 1234,5678,abcd file_a file_b file_c
 modsum width=16 module=ffff:
-    8:-2
+    0x8:-0x3
 ```
 
-In this case, the checksum matches in the part `8:-2`, where `-2` is relative from the end.
+In this case, the checksum matches in the part `0x8:-0x3`, where `-0x3` is relative from the end.
+This is an inclusive range, meaning that a checksum that goes from the start to the end would have the range `0x0:-0x1`.
 If the files were of sizes 15, 16 and 18 bytes respectively, then this output would mean that
 * `file_a` has checksum `1234` from byte 8 to 13
 * `file_b` has checksum `5678` from byte 8 to 14
 * `file_c` has checksum `abcd` from byte 8 to 16
 
 One can also have the end of parts be relative from the start of the file (and not the end) by using the `-s` flag.
+Furthermore, the `-S` and `-E` allow one to constrain where ranges begin and end by specifying ranges (also inclusive).
+For example, when normally, the ranges `0x1:0xa`, `0x3:0x10` and `0x4:0xb` would be output, specifying `-S0x0:0x3` would only allow the start part of the ranges to be between 0 and 3 inclusive, so `0x4` would not be printed.
+This can help avoid false positives and can also reduce execution time.
 
-There's a small chance that it will output something like `1,6:5,10` is output.
+There's a small chance that it will output something like `0x1,0x6:0x5,0x10` is output.
 This just means that each combination is possible.
-In this case, one would have `1:5`, `1:10` and `6:10`.
-While `6:5` would theoretically also be a choice, it is not a valid one since it is backwards.
+In this case, one would have `0x1:0x5`, `0x1:0x10` and `0x6:0x10`.
+While `0x6:0x5` would theoretically also be a choice, it is not a valid one since it is backwards.
 
 By exploiting the linearity of the checksums, this whole process can be done in roughly loglinear time, but just keep in mind that
 it has a big (linear) space overhead and you might run out of memory if you run it on a bunch of 500MB files.
@@ -75,11 +82,27 @@ If you have only files of a given length, but also only care about checksums of 
 
 It is normally quite fast; for example the runtime for the CRC reversing algorithm is in most cases around `O(n*log^2(n)*log(log(n)))` where `n` is the filesize, which is thanks to the fast gcd algorithm implemented within the NTL and gf2x libraries.
 
+For some parameters, only likely combinations are searched:
+* `wordsize` is searched for powers of 2 multiples of 8 that are smaller or equal to `width`
+* `refin` and `refout` is searched for `refin = refout`
+
+To search these parameters, either specify them manually or use the `--extended-search` cli argument.
+
 Algorithms
 ----------
 There are currently three families of algorithms: `modsum`, `fletcher` and `crc`.
 They are specified like this: `algofamiliy width=123 para1=ff para2=true para3=10 name="algoname"`.
-Note that all numerical parameters except width are in hexadecimal.
+Note that all numerical parameters except `width` and `wordsize` are in hexadecimal.
+
+Common Values
+=============
+Currently, these are shared accross all sum types:
+* `width`: width of the checksum in bits
+* `out_endian`: endian of the checksum, can be either `little` or `big`
+* `wordsize`: number of bits of a word in the input text.
+              Must be a multiple of 8 and between 8 and 64.
+              For example, in a simple checksum, using `wordsize=16` would chop the file in into 16-bit integers and add them up modulo `module`.
+* `in_endian`: the endian of the input words, can be either `little` or `big`.
 
 `modsum`
 ========
@@ -136,6 +159,8 @@ It has the following parameters:
 * `xorout`: The final value to xor to the sum. Defaults to 0.
 * `refin`: The boolean flag indicating whether to reflect the bits of the input bytes. Defaults to `false`.
 * `refout`: The boolean flag indicating whether to reflect the bits of the final checksum, before adding `xorout`. Defaults to `false`.
+
+Note that other values for `wordsize` with `in_endian=little` (the standard) is the same as swapping the bytes in each group of `wordsize` bits before calculating the `wordsize=8` checksum.
 
 Installing
 ----------

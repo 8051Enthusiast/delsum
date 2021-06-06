@@ -13,10 +13,10 @@ use crate::bitnum::Modnum;
 use crate::checksum::{CheckBuilderErr, Digest, LinearCheck};
 use crate::endian::{Endian, WordSpec};
 use crate::keyval::KeyValIter;
+pub(crate) use rev::find_largest_mod;
+pub use rev::reverse_modsum;
 use std::fmt::Display;
 use std::str::FromStr;
-pub use rev::reverse_modsum;
-pub(crate) use rev::find_largest_mod;
 
 /// A builder to set the various parameters for the modsum algorithm.
 ///
@@ -279,7 +279,7 @@ impl<S: Modnum> LinearCheck for ModSum<S> {
 mod tests {
     use super::*;
     use crate::checksum::tests::{test_prop, test_shifts};
-    use crate::checksum::{RelativeIndex, Relativity};
+    use crate::checksum::Relativity;
     #[test]
     fn modsum_8() {
         let s = ModSum::<u8>::with_options()
@@ -332,7 +332,7 @@ mod tests {
                 &[merchantibility, ith_absolutely_],
                 Relativity::Start
             ),
-            vec![(vec![19], vec![RelativeIndex::FromStart(35)])]
+            vec![(vec![19], vec![34])]
         );
     }
 }
