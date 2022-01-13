@@ -162,6 +162,10 @@ It has the following parameters:
 
 Note that other values for `wordsize` with `in_endian=little` (the standard) is the same as swapping the bytes in each group of `wordsize` bits before calculating the `wordsize=8` checksum.
 
+How this works
+--------------
+Some (incomplete) explanation of the algorithms used is found [here](algorithms.md).
+
 Installing
 ----------
 There is a linux build which has the NTL library compiled in [here](https://github.com/8051Enthusiast/delsum/releases), but keep in mind that it is compiled without most modern x86 extensions and therefore can't take advantage of some optimized routines in `gf2x` which makes CRC reversing a lot faster.
