@@ -31,7 +31,7 @@ The parts of the file that match has to be the same accross the files.
 
 Example:
 ```
-$ delsum check -m 'modsum width=16 module=ffff' -c 1234,5678,abcd file_a file_b file_c
+$ delsum part -m 'modsum width=16 module=ffff' -c 1234,5678,abcd file_a file_b file_c
 modsum width=16 module=ffff:
     0x8:-0x3
 ```
@@ -71,7 +71,7 @@ For the available algorithms and how to specify them, see [here](#algorithms).
 
 Example:
 ```
-$ delsum check -m 'crc width=32' -c 700b14f5,e1207917,79741cb2 file_a file_b file_c
+$ delsum reverse -m 'crc width=32' -c 700b14f5,e1207917,79741cb2 file_a file_b file_c
 crc width=32 poly=0x4c11db7 init=0xffffffff xorout=0xffffffff refin=true refout=true
 ```
 
