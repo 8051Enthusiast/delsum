@@ -57,7 +57,7 @@ pub(crate) fn bytes_to_int<N: BitNum>(bytes: &[u8], e: Endian) -> N {
     let mut ret = N::zero();
     for (i, &x) in bytes.iter().enumerate() {
         let shift = 8 * match e {
-            Endian::Big => (bytes.len() - 1 - i),
+            Endian::Big => bytes.len() - 1 - i,
             Endian::Little => i,
         };
         ret = ret ^ (N::from(x)) << shift;

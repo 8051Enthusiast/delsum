@@ -247,6 +247,7 @@ enum Opt {
 struct Part {
     /// Print some messages indicating progress
     #[structopt(short, long, parse(from_occurrences))]
+    #[allow(unused)]
     verbose: u64,
     /// Sets the end of the checksum segments to be relative to the start of the file
     #[structopt(short, long)]
@@ -316,6 +317,7 @@ struct Reverse {
 struct Check {
     /// Print some messages indicating progress
     #[structopt(short, long, parse(from_occurrences))]
+    #[allow(unused)]
     verbose: u64,
     /// Do more parallelism, in turn using more memory
     #[structopt(short, long)]
