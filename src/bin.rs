@@ -1,3 +1,4 @@
+use clap::{Parser, Subcommand};
 use delsum_lib::utils::{read_signed_maybe_hex, SignedInclRange};
 use delsum_lib::{find_algorithm, find_checksum, find_checksum_segments};
 use hex::{FromHex, FromHexError, ToHex};
@@ -9,14 +10,14 @@ use std::fs::File;
 use std::io::Read;
 use std::process::exit;
 use std::sync::Mutex;
-use structopt::StructOpt;
 
 fn main() {
-    let opt = Opt::from_args();
+    let cli = Cli::parse();
+    let opt = cli.command;
     match opt {
-        Opt::Part(p) => part(&p),
-        Opt::Reverse(r) => reverse(&r),
-        Opt::Check(c) => check(&c),
+        Command::Part(p) => part(&p),
+        Command::Reverse(r) => reverse(&r),
+        Command::Check(c) => check(&c),
     }
 }
 
@@ -38,7 +39,7 @@ fn reverse(opts: &Reverse) {
             &model,
             &ranged_files,
             &checksums,
-            opts.verbose,
+            opts.verbose as u64,
             opts.extended_search,
         )
         .unwrap_or_else(|err| {
@@ -221,7 +222,10 @@ fn apply_range_to_file(files: &[Vec<u8>], start: isize, end: isize) -> Vec<&[u8]
             let range = SignedInclRange::new(start, end)
                 .and_then(|range| range.to_unsigned(x.len()))
                 .unwrap_or_else(|| {
-                    eprintln!("Error: Range from {} to {} is too big or the start is after the end", start, end);
+                    eprintln!(
+                        "Error: Range from {} to {} is too big or the start is after the end",
+                        start, end
+                    );
                     exit(1)
                 });
             &x[range.start()..=range.end()]
@@ -234,109 +238,114 @@ fn read_checksums(s: &str) -> Result<Vec<Vec<u8>>, FromHexError> {
     s.split(',').map(|x| x.trim()).map(Vec::from_hex).collect()
 }
 
-#[derive(Debug, StructOpt)]
-enum Opt {
+#[derive(Debug, Parser)]
+#[command(version)]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Debug, Subcommand)]
+enum Command {
     Part(Part),
     Reverse(Reverse),
     Check(Check),
 }
 
 /// With given checksum algorithm and checksums, find parts of the file matching the checksum
-#[derive(Debug, StructOpt)]
-#[structopt(rename_all = "kebab-case")]
+#[derive(Debug, Parser)]
 struct Part {
     /// Print some messages indicating progress
-    #[structopt(short, long, parse(from_occurrences))]
+    #[arg(short, long, action = clap::ArgAction::Count)]
     #[allow(unused)]
-    verbose: u64,
+    verbose: u8,
     /// Sets the end of the checksum segments to be relative to the start of the file
-    #[structopt(short, long)]
+    #[arg(short, long)]
     start: bool,
     /// Sets the end of the checksum segments to be relative to the end of the file (default)
-    #[structopt(short, long)]
+    #[arg(short, long)]
     end: bool,
     /// The inclusive range of numbers where a checksum may start in format [number]:[number] where [number]
     /// is a signed hexadecimal and negative numbers indicate offsets relative from the end
-    #[structopt(short = "S", long)]
+    #[arg(short = 'S', long)]
     start_range: Option<delsum_lib::utils::SignedInclRange>,
     /// The inclusive range of numbers where a checksum may end in format [number]:[number] where [number]
     /// is a signed hexadecimal and negative numbers indicate offsets relative from the end
-    #[structopt(short = "E", long)]
+    #[arg(short = 'E', long)]
     end_range: Option<delsum_lib::utils::SignedInclRange>,
     /// Do more parallelism, in turn using more memory
-    #[structopt(short, long)]
+    #[arg(short, long)]
     parallel: bool,
     /// Use the checksum algorithm given by the model string
-    #[structopt(short, long)]
+    #[arg(short, long)]
     model: Option<String>,
     /// Read model strings line-by-line from given file
-    #[structopt(short = "M", long)]
+    #[arg(short = 'M', long)]
     model_file: Option<OsString>,
     /// A comma separated list of checksums, each corresponding to a file
-    #[structopt(short, long)]
+    #[arg(short, long)]
     checksums: String,
     /// The files of which to find checksummed parts
     files: Vec<OsString>,
 }
 
 /// From given files and checksums, find out the checksum algorithms
-#[derive(Debug, StructOpt)]
-#[structopt(rename_all = "kebab-case")]
+#[derive(Debug, Parser)]
 struct Reverse {
     /// Print some messages indicating progress
-    #[structopt(short, long, parse(from_occurrences))]
-    verbose: u64,
+    #[arg(short, long, action = clap::ArgAction::Count)]
+    verbose: u8,
     /// Do more parallelism, in turn using more memory
-    #[structopt(short, long)]
+    #[arg(short, long)]
     parallel: bool,
     /// Use the checksum algorithm given by the model string
-    #[structopt(short, long)]
+    #[arg(short, long)]
     model: Option<String>,
     /// The hexadecimal offset of the first byte to be checksummed (can be negative to indicate offset from end)
-    #[structopt(short = "S", long, parse(try_from_str = read_signed_maybe_hex))]
+    #[arg(short = 'S', long, value_parser = read_signed_maybe_hex)]
     start: Option<isize>,
     /// The hexadecimal offset of the last byte to be checksummed (can be negative to indicate offset from end)
-    #[structopt(short = "E", long, parse(try_from_str = read_signed_maybe_hex))]
+    #[arg(short = 'E', long, value_parser = read_signed_maybe_hex)]
     end: Option<isize>,
     /// Extend the search to parameter combinations that are unlikely
-    #[structopt(short, long)]
+    #[arg(short, long)]
     extended_search: bool,
     /// Read model strings line-by-line from given file
-    #[structopt(short = "M", long)]
+    #[arg(short = 'M', long)]
     model_file: Option<OsString>,
     /// A comma separated list of checksums, each corresponding to a file
-    #[structopt(short, long)]
+    #[arg(short, long)]
     checksums: String,
     /// The files of which to find checksummed parts
     files: Vec<OsString>,
 }
 
 /// From given files and algorithms, find out the checksums
-#[derive(Debug, StructOpt)]
-#[structopt(rename_all = "kebab-case")]
+#[derive(Debug, Parser)]
 struct Check {
     /// Print some messages indicating progress
-    #[structopt(short, long, parse(from_occurrences))]
+    #[arg(short, long, action = clap::ArgAction::Count)]
     #[allow(unused)]
-    verbose: u64,
+    verbose: u8,
     /// Do more parallelism, in turn using more memory
-    #[structopt(short, long)]
+    #[arg(short, long)]
     parallel: bool,
     /// Use the checksum algorithm given by the model string
-    #[structopt(short, long)]
+    #[arg(short, long)]
     model: Option<String>,
     /// The hexadecimal offset of the first byte to be checksummed (can be negative to indicate offset from end)
-    #[structopt(short = "S", long, parse(try_from_str = read_signed_maybe_hex))]
+    #[arg(short = 'S', long, value_parser = read_signed_maybe_hex)]
     start: Option<isize>,
     /// The hexadecimal offset of the last byte to be checksummed (can be negative to indicate offset from end)
-    #[structopt(short = "E", long, parse(try_from_str = read_signed_maybe_hex))]
+    #[arg(short = 'E', long, value_parser = read_signed_maybe_hex)]
     end: Option<isize>,
     /// Read model strings line-by-line from given file
-    #[structopt(short = "M", long)]
+    #[arg(short = 'M', long)]
     model_file: Option<OsString>,
     /// The files of which to find checksummed parts
     files: Vec<OsString>,
 }
+
 fn read_models(model: &Option<String>, model_file: &Option<OsString>) -> Vec<String> {
     model_file.clone().map_or_else(
         || {
