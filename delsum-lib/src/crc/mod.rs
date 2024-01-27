@@ -27,7 +27,7 @@ use std::str::FromStr;
 /// For more information on the parameters (and CRCs in general), see "A PAINLESS GUIDE CRC ERROR DETECTION ALGORITHMS"
 /// or https://reveng.sourceforge.io/crc-catalogue/legend.htm (which is also a source of parameters for various common algorithms)
 #[derive(Clone, Debug)]
-pub struct CRCBuilder<Sum: BitNum> {
+pub struct CrcBuilder<Sum: BitNum> {
     width: Option<usize>,
     poly: Option<Sum>,
     init: Option<Sum>,
@@ -41,7 +41,7 @@ pub struct CRCBuilder<Sum: BitNum> {
     name: Option<String>,
 }
 
-impl<Sum: BitNum> CRCBuilder<Sum> {
+impl<Sum: BitNum> CrcBuilder<Sum> {
     /// Sets the poly, mandatory
     pub fn poly(&mut self, p: Sum) -> &mut Self {
         self.poly = Some(p);
@@ -212,8 +212,8 @@ impl<Sum: BitNum> Display for CRC<Sum> {
 
 impl<Sum: BitNum> CRC<Sum> {
     /// Construct a new CRC from parameters, see also the documentation for CRCBuilder.
-    pub fn with_options() -> CRCBuilder<Sum> {
-        CRCBuilder {
+    pub fn with_options() -> CrcBuilder<Sum> {
+        CrcBuilder {
             poly: None,
             init: None,
             xorout: None,
@@ -265,9 +265,9 @@ impl<Sum: BitNum> CRC<Sum> {
         }
     }
 }
-impl<Sum: BitNum> FromStr for CRCBuilder<Sum> {
+impl<Sum: BitNum> FromStr for CrcBuilder<Sum> {
     /// See documentation of Fromstr on CRC<Sum>
-    fn from_str(s: &str) -> Result<CRCBuilder<Sum>, CheckBuilderErr> {
+    fn from_str(s: &str) -> Result<CrcBuilder<Sum>, CheckBuilderErr> {
         let mut crc = CRC::<Sum>::with_options();
         for x in KeyValIter::new(s) {
             let (current_key, current_val) = match x {
@@ -312,7 +312,7 @@ impl<Sum: BitNum> FromStr for CRC<Sum> {
     ///
     /// Note: the `residue` parameter is currently ignored.
     fn from_str(s: &str) -> Result<CRC<Sum>, CheckBuilderErr> {
-        CRCBuilder::<Sum>::from_str(s)?.build()
+        CrcBuilder::<Sum>::from_str(s)?.build()
     }
     type Err = CheckBuilderErr;
 }

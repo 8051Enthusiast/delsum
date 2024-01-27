@@ -43,8 +43,8 @@ pub(crate) fn int_to_bytes<N: BitNum>(n: N, e: Endian, bits: usize) -> Vec<u8> {
     let mut ret = Vec::new();
     for x in 0..n_bytes {
         let shift = match e {
-            Endian::Little => 8 * x as usize,
-            Endian::Big => 8 * (n_bytes - 1 - x) as usize,
+            Endian::Little => 8 * x,
+            Endian::Big => 8 * (n_bytes - 1 - x),
         };
         if let Ok(a) = (n >> shift & N::from(0xffu8)).try_into() {
             ret.push(a)
@@ -112,7 +112,7 @@ impl WordSpec {
         bytes_to_int(s, self.output_endian)
     }
     pub fn iter_words(self, bytes: &'_ [u8]) -> impl DoubleEndedIterator<Item = u64> + '_ {
-        (0..(bytes.len() / self.word_bytes() as usize))
+        (0..(bytes.len() / self.word_bytes()))
             .map(move |i| &bytes[self.word_bytes() * i..self.word_bytes() * (i + 1)])
             .map(move |x| bytes_to_int(x, self.input_endian))
     }

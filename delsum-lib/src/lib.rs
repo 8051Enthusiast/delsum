@@ -12,7 +12,7 @@ pub mod modsum;
 use bitnum::BitNum;
 use checksum::{CheckBuilderErr, CheckReverserError};
 use checksum::{Digest, LinearCheck, RangePair};
-use crc::{reverse_crc, CRCBuilder, CRC};
+use crc::{reverse_crc, CrcBuilder, CRC};
 use fletcher::{reverse_fletcher, Fletcher, FletcherBuilder};
 use modsum::{reverse_modsum, ModSum, ModSumBuilder};
 use std::cmp::Ordering;
@@ -177,7 +177,7 @@ pub fn find_checksum(strspec: &str, bytes: &[&[u8]]) -> Result<Vec<Vec<u8>>, Che
 }
 
 enum BuilderEnum {
-    CRC(CRCBuilder<u128>),
+    Crc(CrcBuilder<u128>),
     ModSum(ModSumBuilder<u64>),
     Fletcher(FletcherBuilder<u64>),
 }
@@ -191,7 +191,7 @@ pub struct AlgorithmFinder<'a> {
 
 impl<'a> AlgorithmFinder<'a> {
     pub fn find_all(&'_ self) -> impl Iterator<Item = Result<String, CheckReverserError>> + '_ {
-        let maybe_crc = if let BuilderEnum::CRC(crc) = &self.spec {
+        let maybe_crc = if let BuilderEnum::Crc(crc) = &self.spec {
             Some(
                 reverse_crc(
                     crc,
@@ -241,7 +241,7 @@ impl<'a> AlgorithmFinder<'a> {
     pub fn find_all_para(
         &'_ self,
     ) -> impl ParallelIterator<Item = Result<String, CheckReverserError>> + '_ {
-        let maybe_crc = if let BuilderEnum::CRC(crc) = &self.spec {
+        let maybe_crc = if let BuilderEnum::Crc(crc) = &self.spec {
             Some(
                 reverse_crc_para(
                     crc,
@@ -299,7 +299,7 @@ pub fn find_algorithm<'a>(
     let (prefix, _, rest) = find_prefix_width(strspec)?;
     let prefix = prefix.to_ascii_lowercase();
     let spec = match prefix.as_str() {
-        "crc" => BuilderEnum::CRC(CRCBuilder::<u128>::from_str(rest)?),
+        "crc" => BuilderEnum::Crc(CrcBuilder::<u128>::from_str(rest)?),
         "modsum" => BuilderEnum::ModSum(ModSumBuilder::<u64>::from_str(rest)?),
         "fletcher" => BuilderEnum::Fletcher(FletcherBuilder::<u64>::from_str(rest)?),
         _ => unimplemented!(),

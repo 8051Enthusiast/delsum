@@ -1,4 +1,9 @@
-use std::{convert::{TryFrom, TryInto}, fmt::Display, num::ParseIntError, str::FromStr};
+use std::{
+    convert::{TryFrom, TryInto},
+    fmt::Display,
+    num::ParseIntError,
+    str::FromStr,
+};
 
 use crate::checksum::Relativity;
 
@@ -98,8 +103,7 @@ impl FromStr for SignedInclRange {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let from_maybe_hex = |s: &str| match s {
             "" => Ok(None),
-            otherwise => read_signed_maybe_hex(otherwise)
-                .map(Some),
+            otherwise => read_signed_maybe_hex(otherwise).map(Some),
         };
         let split = s
             .split(':')

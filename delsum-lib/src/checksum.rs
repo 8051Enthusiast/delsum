@@ -229,7 +229,7 @@ fn find_segments_aligned<S: LinearCheck + ?Sized>(
             presums(
                 summer,
                 b,
-                &s,
+                s,
                 // since they are already normalized, this should work
                 start_range.to_unsigned(b.len()).unwrap(),
                 end_range.to_unsigned(b.len()).unwrap(),
@@ -358,7 +358,7 @@ fn presums<S: LinearCheck + ?Sized>(
             // from the startsums, we substract the init value of the checksum
             start_presums.push(summer.add(state.clone(), &neg_init));
         }
-        state = summer.dig_word(state, c as u64);
+        state = summer.dig_word(state, c);
         if end_range.contains(i + step - 1) {
             // from the endsums, we finalize them and subtract the given final sum
             let endstate = summer.add(summer.finalize(state.clone()), &summer.negate(sum.clone()));
@@ -427,7 +427,7 @@ impl<Sum: Clone + Eq + Ord + Debug + Send + Sync> PresumSet<Sum> {
         // get a permutation vector representing the sort of the presum arrays first by value and then by index
 
         #[cfg(feature = "parallel")]
-        idxvec.par_sort_unstable_by(|a, b| Self::cmp_idx(&presum, *a, &presum, *b).then(a.cmp(&b)));
+        idxvec.par_sort_unstable_by(|a, b| Self::cmp_idx(&presum, *a, &presum, *b).then(a.cmp(b)));
         #[cfg(not(feature = "parallel"))]
         idxvec.sort_unstable_by(|a, b| Self::cmp_idx(&presum, *a, &presum, *b).then(a.cmp(&b)));
         Self {
@@ -638,7 +638,7 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
         let sum_1_9_1 = chk.digest(&b"12345678987654321"[..]).unwrap();
         assert_eq!(
             chk.find_segments(
-                &[Vec::from(&"a123456789X1235H123456789Y"[..])],
+                &[Vec::from("a123456789X1235H123456789Y")],
                 &[sum_1_9.clone()],
                 Relativity::Start
             ),
@@ -647,8 +647,8 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
         assert_eq!(
             chk.find_segments(
                 &[
-                    Vec::from(&"XX98765432123456789XXX"[..]),
-                    Vec::from(&"XX12345678987654321XX"[..])
+                    Vec::from("XX98765432123456789XXX"),
+                    Vec::from("XX12345678987654321XX")
                 ],
                 &[sum_1_9.clone(), sum_9_1.clone()],
                 Relativity::Start
@@ -818,7 +818,7 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
                 }
                 ret.push(cur_file);
             }
-            ret.sort_by(|a, b| a.len().cmp(&b.len()).then(a.cmp(&b)).reverse());
+            ret.sort_by(|a, b| a.len().cmp(&b.len()).then(a.cmp(b)).reverse());
             ReverseFileSet(ret)
         }
         fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
@@ -856,7 +856,7 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
                     has_appeared = true;
                 }
                 for (file, original_check) in &chk_files {
-                    let checksum = modsum_loop.to_bytes(modsum_loop.digest(*file).unwrap());
+                    let checksum = modsum_loop.to_bytes(modsum_loop.digest(file).unwrap());
                     if &checksum != original_check {
                         eprint!("expected checksum: ");
                         for x in original_check {

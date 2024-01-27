@@ -26,7 +26,7 @@ namespace poly
         void sqr();
         bool div_to_checked(const Poly &b);
         bool coeff(int64_t idx) const;
-        bool eq(const Poly &b) const;
+        bool equals(const Poly &b) const;
         bool is_zero() const;
         std::unique_ptr<std::vector<uint8_t>> to_bytes(int64_t min_bytes) const;
     };

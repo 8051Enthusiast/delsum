@@ -92,6 +92,12 @@ impl ops::DivAssign<&PolyRem> for PolyRemPtr {
     }
 }
 
+impl PartialEq for Poly {
+    fn eq(&self, other: &Self) -> bool {
+        self.equals(other)
+    }
+}
+
 // ntl author says it is thread safe
 unsafe impl Send for Poly {}
 unsafe impl Sync for Poly {}
@@ -122,7 +128,7 @@ mod ffi {
         fn div_to_checked(self: Pin<&mut Poly>, b: &Poly) -> bool;
         fn sqr(self: Pin<&mut Poly>);
         fn coeff(self: &Poly, idx: i64) -> bool;
-        fn eq(self: &Poly, b: &Poly) -> bool;
+        fn equals(self: &Poly, b: &Poly) -> bool;
         fn is_zero(self: &Poly) -> bool;
         fn add(b: &Poly, c: &Poly) -> UniquePtr<Poly>;
         fn mul(b: &Poly, c: &Poly) -> UniquePtr<Poly>;

@@ -35,7 +35,7 @@ pub fn reverse_modsum<'a>(
         extended_search,
     )
     .into_iter()
-    .map(move |wordspec| {
+    .flat_map(move |wordspec| {
         let rev = match spec.width {
             None => Err(CheckReverserError::MissingParameter("width")),
             Some(width) => {
@@ -43,7 +43,7 @@ pub fn reverse_modsum<'a>(
                     .iter()
                     .map(|(f, c)| {
                         (
-                            wordspec.iter_words(*f),
+                            wordspec.iter_words(f),
                             bytes_to_int(c, wordspec.output_endian),
                         )
                     })
@@ -59,7 +59,6 @@ pub fn reverse_modsum<'a>(
         };
         unresult_iter(rev)
     })
-    .flatten()
 }
 
 struct RevSpec {
@@ -87,7 +86,7 @@ impl RevResult {
         } = self;
         modlist.into_iter().map(move |module| {
             let init_negative = init < 0;
-            let mut init = init.abs() as u128 % module;
+            let mut init = init.unsigned_abs() % module;
             if init_negative {
                 init = module - init;
             }
@@ -132,7 +131,7 @@ fn reverse(
     let original_mod = spec
         .module
         .map(|x| if x == 0 { 1u128 << width } else { x as u128 });
-    let mut module = original_mod.unwrap_or(0) as u128;
+    let mut module = original_mod.unwrap_or(0);
     log("removing inits");
     // here we find module by gcd'ing between the differences (init - init == 0 mod m)
     let init = find_largest_mod(&sums, spec.init.map(i128::from), &mut module);
@@ -145,7 +144,7 @@ fn reverse(
     // find all possible divisors
     let modlist = match original_mod {
         Some(x) => {
-            if x as u128 == module && x > min_sum && x <= max_sum {
+            if x == module && x > min_sum && x <= max_sum {
                 vec![module]
             } else {
                 Vec::new()
@@ -162,23 +161,22 @@ fn reverse(
 }
 
 pub(crate) fn find_largest_mod(sums: &[i128], maybe_init: Option<i128>, module: &mut u128) -> i128 {
-    let init = match maybe_init {
+    match maybe_init {
         Some(i) => {
             // if we already have init, we can just subtract that from the sum and get a multiple of m
             for s in sums {
-                *module = gcd(*module, (s + i).abs() as u128);
+                *module = gcd(*module, (s + i).unsigned_abs());
             }
             i
         }
         None => {
             // otherwise their difference will do, but we do get one gcd less
             for (s1, s2) in sums.iter().zip(sums.iter().skip(1)) {
-                *module = gcd(*module, (s1 - s2).abs() as u128);
+                *module = gcd(*module, (s1 - s2).unsigned_abs());
             }
             -sums[0]
         }
-    };
-    init
+    }
 }
 
 #[cfg(test)]
@@ -206,7 +204,7 @@ mod tests {
             new_modsum.init(init);
             let wordspec = WordSpec::arbitrary(g);
             let max_word_width = ((width as usize + 7) / 8).next_power_of_two() * 8;
-            new_modsum.wordsize(max_word_width.min(wordspec.wordsize) as usize);
+            new_modsum.wordsize(max_word_width.min(wordspec.wordsize));
             new_modsum.inendian(wordspec.input_endian);
             new_modsum.outendian(wordspec.output_endian);
             new_modsum

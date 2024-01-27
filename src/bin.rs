@@ -36,7 +36,7 @@ fn reverse(opts: &Reverse) {
     };
     let algorithms = |model: &str| {
         find_algorithm(
-            &model,
+            model,
             &ranged_files,
             &checksums,
             opts.verbose as u64,

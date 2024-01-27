@@ -81,7 +81,12 @@ impl PrimeSieve {
     fn next_prime(&mut self, p: usize) -> usize {
         let old_len = self.sieve.len();
         // find index of next prime
-        if let Some(i) = self.sieve[p + 1..].iter().enumerate().find(|(_, x)| !**x).map(|(a, _)| a) {
+        if let Some(i) = self.sieve[p + 1..]
+            .iter()
+            .enumerate()
+            .find(|(_, x)| !**x)
+            .map(|(a, _)| a)
+        {
             let q = p + 1 + i;
             // add the new found prime to the sieve
             self.update(q);
@@ -89,7 +94,12 @@ impl PrimeSieve {
         }
         // if we did not find a next prime, extend the sieve
         self.extend();
-        match self.sieve[old_len..].iter().enumerate().find(|(_, x)| !**x).map(|(a, b)| (a, *b)) {
+        match self.sieve[old_len..]
+            .iter()
+            .enumerate()
+            .find(|(_, x)| !**x)
+            .map(|(a, b)| (a, *b))
+        {
             Some((j, _)) => {
                 self.update(old_len + j);
                 old_len + j
@@ -358,7 +368,7 @@ impl<T: FactorNum> MonContext<T> {
     fn to_mon(&self, a: T) -> T {
         self.mon_mul(a, self.r_squared)
     }
-    fn from_mon(&self, a: T) -> T {
+    fn convert_from_mon(&self, a: T) -> T {
         self.mon_mul(a, T::one())
     }
     // new_n divides n
@@ -565,7 +575,7 @@ fn p1fac<N: FactorNum>(
         ret.push(fac);
     }
     *n = mon.n;
-    (mon.from_mon(power), ret)
+    (mon.convert_from_mon(power), ret)
 }
 
 // implementation of probabilistic rabin-miller primality test
@@ -650,7 +660,7 @@ fn factor(mut num: u128, bound: u128) -> Vec<(u128, u8)> {
         } else {
             let trial_fac: Vec<_> = trial_div(factor, &mut sieve, bound)
                 .iter()
-                .map(|(p, e)| (*p as u128, *e))
+                .map(|(p, e)| (*p, *e))
                 .collect();
             merge_factors(&trial_fac, &prime_factors)
         }
@@ -861,14 +871,14 @@ mod tests {
     }
     #[test]
     fn primes() {
-        assert_eq!(is_prob_prime(1433u64), true);
-        assert_eq!(is_prob_prime(1431u128), false);
-        assert_eq!(is_prob_prime(283408420968530627042721395551u128), true);
-        assert_eq!(is_prob_prime(4957391571224061778730779295067043u128), true);
-        assert_eq!(is_prob_prime(4957391571224061778730779295067041u128), false);
-        assert_eq!(is_prob_prime(4957391571224061778730779295067042u128), false);
-        assert_eq!(is_prob_prime(3u64), true);
-        assert_eq!(is_prob_prime(9u64), false);
+        assert!(is_prob_prime(1433u64));
+        assert!(!is_prob_prime(1431u128));
+        assert!(is_prob_prime(283408420968530627042721395551u128));
+        assert!(is_prob_prime(4957391571224061778730779295067043u128));
+        assert!(!is_prob_prime(4957391571224061778730779295067041u128));
+        assert!(!is_prob_prime(4957391571224061778730779295067042u128));
+        assert!(is_prob_prime(3u64));
+        assert!(!is_prob_prime(9u64));
     }
     #[test]
     fn combs() {

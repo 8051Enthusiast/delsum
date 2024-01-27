@@ -172,7 +172,7 @@ impl<S: Modnum> FletcherBuilder<S> {
             mask,
             name: self.name.clone(),
         };
-        let (mut s, mut c) = fletch.from_compact(addout);
+        let (mut s, mut c) = fletch.convert_from_compact(addout);
         if !module.is_zero() {
             s = s % module;
             c = c % module;
@@ -253,7 +253,7 @@ impl<Sum: Modnum> Fletcher<Sum> {
             name: None,
         }
     }
-    fn from_compact(&self, x: Sum::Double) -> (Sum, Sum) {
+    fn convert_from_compact(&self, x: Sum::Double) -> (Sum, Sum) {
         let l = Sum::from_double(x & self.mask);
         let h = Sum::from_double((x >> self.hwidth) & self.mask);
         if self.swap {
@@ -333,7 +333,7 @@ impl<S: Modnum> Digest for Fletcher<S> {
         self.to_compact((self.init, S::zero()))
     }
     fn dig_word(&self, sum: Self::Sum, word: u64) -> Self::Sum {
-        let (mut s, mut c) = self.from_compact(sum);
+        let (mut s, mut c) = self.convert_from_compact(sum);
         let modword = S::mod_from(word, &self.module);
         s = S::add_mod(s, &modword, &self.module);
         c = S::add_mod(c, &s, &self.module);
@@ -361,20 +361,20 @@ impl<S: Modnum> LinearCheck for Fletcher<S> {
         S::add_mod(shift, &S::one(), &self.module)
     }
     fn shift(&self, sum: Self::Sum, shift: &Self::Shift) -> Self::Sum {
-        let (s, mut c) = self.from_compact(sum);
+        let (s, mut c) = self.convert_from_compact(sum);
         let shift_diff = S::mul_mod(s, shift, &self.module);
         c = S::add_mod(c, &shift_diff, &self.module);
         self.to_compact((s, c))
     }
     fn add(&self, sum_a: Self::Sum, sum_b: &Self::Sum) -> Self::Sum {
-        let (sa, ca) = self.from_compact(sum_a);
-        let (sb, cb) = self.from_compact(*sum_b);
+        let (sa, ca) = self.convert_from_compact(sum_a);
+        let (sb, cb) = self.convert_from_compact(*sum_b);
         let sum_s = sa.add_mod(&sb, &self.module);
         let sum_c = ca.add_mod(&cb, &self.module);
         self.to_compact((sum_s, sum_c))
     }
     fn negate(&self, sum: Self::Sum) -> Self::Sum {
-        let (s, c) = self.from_compact(sum);
+        let (s, c) = self.convert_from_compact(sum);
         self.to_compact((s.neg_mod(&self.module), c.neg_mod(&self.module)))
     }
 }

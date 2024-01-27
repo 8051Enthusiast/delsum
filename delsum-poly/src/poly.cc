@@ -31,7 +31,7 @@ namespace poly
     {
         return NTL::IsOne(NTL::coeff(int_pol, i64_to_l(idx)));
     }
-    bool Poly::eq(const Poly &b) const
+    bool Poly::equals(const Poly &b) const
     {
         return int_pol == b.int_pol;
     }

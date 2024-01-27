@@ -70,7 +70,7 @@ impl<'a> Iterator for KeyValIter<'a> {
                     State::Value
                 }
                 (State::Key, '=') => State::Equal,
-                (State::Key, 'A'..='Z' )
+                (State::Key, 'A'..='Z')
                 | (State::Key, 'a'..='z')
                 | (State::Key, '_')
                 | (State::Whitespace, 'A'..='Z')

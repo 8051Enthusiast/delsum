@@ -10,7 +10,7 @@
 //!
 //! If `init` is not known, it is neccessary to know two checksums of files with different lengths.
 //! In case only checksums of files with a set length are required, setting `init = 0` is sufficient.
-use super::{CRCBuilder, CRC};
+use super::{CrcBuilder, CRC};
 use crate::checksum::CheckReverserError;
 use crate::endian::{bytes_to_int, int_to_bytes, wordspec_combos, Endian, WordSpec};
 use crate::utils::{cart_prod, unresult_iter};
@@ -28,7 +28,7 @@ use std::pin::Pin;
 ///
 /// The `width` parameter of the builder has to be set.
 pub fn reverse_crc<'a>(
-    spec: &CRCBuilder<u128>,
+    spec: &CrcBuilder<u128>,
     chk_bytes: &'a [(&[u8], Vec<u8>)],
     verbosity: u64,
     extended_search: bool,
@@ -39,7 +39,7 @@ pub fn reverse_crc<'a>(
     let ref_combinations: Vec<_> = discrete_combos(&spec, extended_search);
     ref_combinations
         .into_iter()
-        .map(move |((refin, refout), wordspec)| {
+        .flat_map(move |((refin, refout), wordspec)| {
             unresult_iter(reverse(
                 &spec,
                 files.clone(),
@@ -49,7 +49,6 @@ pub fn reverse_crc<'a>(
                 wordspec,
             ))
         })
-        .flatten()
         .filter_map(|x| {
             // .transpose() but for Err
             match x {
@@ -63,7 +62,7 @@ pub fn reverse_crc<'a>(
 /// Parallel version of reverse_crc.
 #[cfg(feature = "parallel")]
 pub fn reverse_crc_para<'a>(
-    spec: &CRCBuilder<u128>,
+    spec: &CrcBuilder<u128>,
     chk_bytes: &'a [(&[u8], Vec<u8>)],
     verbosity: u64,
     extended_search: bool,
@@ -95,7 +94,7 @@ pub fn reverse_crc_para<'a>(
 
 // find all combinations of refin, refout and wordspecs using all values when a parameter is not given
 fn discrete_combos(
-    spec: &CRCBuilder<u128>,
+    spec: &CrcBuilder<u128>,
     extended_search: bool,
 ) -> Vec<((bool, bool), WordSpec)> {
     let width = spec.width.expect("Missing width argument");
@@ -112,7 +111,7 @@ fn discrete_combos(
                 vec![refin]
             }
         });
-        let input_endian = spec.input_endian.or_else(|| {
+        let input_endian = spec.input_endian.or({
             Some(match refin {
                 // big if true since for little, it is equivalent to wordsize=8 which is the same as big
                 true => Endian::Big,
@@ -135,7 +134,7 @@ fn discrete_combos(
 
 // wrapper to call rev_from_polys with polynomial arguments
 fn reverse<'a>(
-    spec: &CRCBuilder<u128>,
+    spec: &CrcBuilder<u128>,
     chk_bytes: Vec<(&'a [u8], Vec<u8>)>,
     verbosity: u64,
     refin: bool,
@@ -179,7 +178,7 @@ fn reverse<'a>(
         None => return Err(None),
     };
     // sort by reverse file length
-    polys.sort_by(|(fa, la), (fb, lb)| la.cmp(&lb).then(deg(fa).cmp(&deg(fb)).reverse()));
+    polys.sort_by(|(fa, la), (fb, lb)| la.cmp(lb).then(deg(fa).cmp(&deg(fb)).reverse()));
     // convert parameters to polynomials
     let revinfo = RevInfo::from_builder(spec, refin, refout, wordspec);
     rev_from_polys(&revinfo, &polys, verbosity).map(|x| x.iter())
@@ -199,7 +198,7 @@ impl RevInfo {
     // this is responsible for converting integer values to polynomial values
     // and returning a RevInfo that can be used for further reversing
     fn from_builder(
-        spec: &CRCBuilder<u128>,
+        spec: &CrcBuilder<u128>,
         refin: bool,
         refout: bool,
         wordspec: WordSpec,
@@ -250,33 +249,29 @@ impl RevResult {
             refout,
             wordspec,
         } = self;
-        polys
-            .into_iter()
-            .map(move |pol| {
-                // for each polynomial of degree width, iterate over all solutions of the PrefactorMod
-                inits
-                    .iter_inits(&pol, &xorout)
-                    .map(move |(poly_p, init_p, xorout_p)| {
-                        // convert polynomial parameters to a CRC<u128>
-                        let poly =
-                            poly_to_u128(&add(&poly_p, &new_poly_shifted(&[1], width as i64)));
-                        let init = poly_to_u128(&init_p);
-                        let xorout = cond_reverse(width as u8, poly_to_u128(&xorout_p), refout);
-                        CRC::<u128>::with_options()
-                            .width(width)
-                            .poly(poly)
-                            .init(init)
-                            .xorout(xorout)
-                            .refin(refin)
-                            .refout(refout)
-                            .inendian(wordspec.input_endian)
-                            .outendian(wordspec.output_endian)
-                            .wordsize(wordspec.wordsize)
-                            .build()
-                            .unwrap()
-                    })
-            })
-            .flatten()
+        polys.into_iter().flat_map(move |pol| {
+            // for each polynomial of degree width, iterate over all solutions of the PrefactorMod
+            inits
+                .iter_inits(&pol, &xorout)
+                .map(move |(poly_p, init_p, xorout_p)| {
+                    // convert polynomial parameters to a CRC<u128>
+                    let poly = poly_to_u128(&add(&poly_p, &new_poly_shifted(&[1], width as i64)));
+                    let init = poly_to_u128(&init_p);
+                    let xorout = cond_reverse(width as u8, poly_to_u128(&xorout_p), refout);
+                    CRC::<u128>::with_options()
+                        .width(width)
+                        .poly(poly)
+                        .init(init)
+                        .xorout(xorout)
+                        .refin(refin)
+                        .refout(refout)
+                        .inendian(wordspec.input_endian)
+                        .outendian(wordspec.output_endian)
+                        .wordsize(wordspec.wordsize)
+                        .build()
+                        .unwrap()
+                })
+        })
     }
 }
 
@@ -354,7 +349,7 @@ fn rev_from_polys(
         .collect();
     if let Some(init) = &spec.init {
         log("removing inits");
-        remove_inits(&init, &mut polys);
+        remove_inits(init, &mut polys);
     }
     log("removing xorouts");
     let (polys, mut xorout) = remove_xorouts(&spec.xorout, polys);
@@ -417,7 +412,7 @@ fn remove_xorouts(
             // if we already have xorout, we can subtract it from the files themselves so
             // that we have one more to get parameters from
             ret_vec.push((add(&prev.0, xorout), prev.1));
-            (copy_poly(&xorout), InitPlace::None)
+            (copy_poly(xorout), InitPlace::None)
         }
         None => (copy_poly(&prev.0), prev.1),
     };
@@ -596,7 +591,7 @@ impl MemoPower {
     fn new(hull: &Poly) -> Self {
         MemoPower {
             prev_power: 0,
-            prev_ppoly: new_polyrem(&new_poly(&[1]), &hull),
+            prev_ppoly: new_polyrem(&new_poly(&[1]), hull),
             init_fac: new_zero(),
             hull: copy_poly(hull),
         }
@@ -628,7 +623,7 @@ impl MemoPower {
     }
     fn update_hull(&mut self, hull: &Poly) {
         self.hull = copy_poly(hull);
-        self.prev_ppoly = new_polyrem(&self.prev_ppoly.rep(), &hull)
+        self.prev_ppoly = new_polyrem(&self.prev_ppoly.rep(), hull)
     }
 }
 // describes a set of solutions for unknown*possible % hull
@@ -656,7 +651,7 @@ impl PrefactorMod {
         PrefactorMod {
             unknown,
             possible,
-            hull: copy_poly(&hull),
+            hull: copy_poly(hull),
         }
     }
 
@@ -809,10 +804,7 @@ fn find_init(
     for (p, l) in polys {
         power.update_init_fac(&l);
         let file_solutions = PrefactorMod::new_file(p, &mut power, hull.as_mut());
-        ret = match file_solutions
-            .map(|f| ret.merge(f, hull.as_mut()))
-            .flatten()
-        {
+        ret = match file_solutions.and_then(|f| ret.merge(f, hull.as_mut())) {
             Some(valid) => valid,
             None => return PrefactorMod::empty(),
         }
@@ -869,7 +861,7 @@ fn find_prod_comb(
                 break;
             }
             ret[inc_deg].push(copy_poly(&q));
-            for (j, el) in retcopy[0..=width as usize - inc_deg].iter().enumerate() {
+            for (j, el) in retcopy[0..=width - inc_deg].iter().enumerate() {
                 for m in el {
                     ret[j + inc_deg].push(mul(&q, m));
                 }
@@ -890,7 +882,7 @@ fn bytes_to_poly(
 ) -> Option<PolyPtr> {
     let new_bytes = reorder_poly_bytes(bytes, refin, wordspec);
     let mut poly = new_poly_shifted(&new_bytes, width as i64);
-    let sum = bytes_to_int(&checksum, wordspec.output_endian);
+    let sum = bytes_to_int(checksum, wordspec.output_endian);
     let check_mask = 1u128.checked_shl(width as u32).unwrap_or(0).wrapping_sub(1);
     if (!check_mask & sum) != 0 {
         return None;
@@ -904,7 +896,7 @@ fn reorder_poly_bytes(bytes: &[u8], refin: bool, wordspec: WordSpec) -> Vec<u8> 
     wordspec
         .iter_words(bytes)
         .rev()
-        .map(|n| {
+        .flat_map(|n| {
             let n_ref = if refin {
                 n.reverse_bits() >> (64 - wordspec.wordsize)
             } else {
@@ -912,7 +904,6 @@ fn reorder_poly_bytes(bytes: &[u8], refin: bool, wordspec: WordSpec) -> Vec<u8> 
             };
             int_to_bytes(n_ref, Endian::Little, wordspec.wordsize)
         })
-        .flatten()
         .collect()
 }
 
@@ -939,9 +930,9 @@ fn poly_to_u128(poly: &Poly) -> u128 {
 mod tests {
     use super::*;
     use crate::checksum::tests::ReverseFileSet;
-    use crate::crc::{CRCBuilder, CRC};
+    use crate::crc::{CrcBuilder, CRC};
     use quickcheck::{Arbitrary, Gen, TestResult};
-    impl Arbitrary for CRCBuilder<u128> {
+    impl Arbitrary for CrcBuilder<u128> {
         fn arbitrary(g: &mut Gen) -> Self {
             let width = (u8::arbitrary(g) % 128) + 1;
             let poly;
@@ -976,7 +967,7 @@ mod tests {
     #[quickcheck]
     fn qc_crc_rev(
         files: ReverseFileSet,
-        crc_build: CRCBuilder<u128>,
+        crc_build: CrcBuilder<u128>,
         known: (bool, bool, bool, bool, bool),
         wordspec_known: (bool, bool),
     ) -> TestResult {

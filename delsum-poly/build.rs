@@ -15,13 +15,13 @@ fn main() {
                 if value == "1" {
                     link_type = "static";
                 }
-            },
+            }
             "DELSUM_NTL_LIB_PATH" | "DELSUM_GF2X_LIB_PATH" | "DELSUM_GMP_LIB_PATH" => {
                 println!("cargo:rustc-link-search=native={}", value);
-            },
+            }
             "DELSUM_NTL_INCLUDE" => {
                 build.include(value);
-            },
+            }
             _ => continue,
         }
     }

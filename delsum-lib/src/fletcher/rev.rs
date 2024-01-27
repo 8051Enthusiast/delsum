@@ -42,12 +42,11 @@ pub fn reverse_fletcher<'a>(
     files.sort_unstable_by(|a, b| a.0.len().cmp(&b.0.len()).reverse());
     discrete_combos(spec.clone(), extended_search)
         .into_iter()
-        .map(move |x| {
+        .flat_map(move |x| {
             unresult_iter(
                 reverse_discrete(spec.clone(), files.clone(), x, verbosity).map(|y| y.iter()),
             )
         })
-        .flatten()
 }
 
 /// Parallel version of reverse_fletcher.
@@ -104,7 +103,7 @@ fn reverse_discrete(
         .iter()
         .map(|(f, c)| {
             (
-                wordspec.iter_words(*f),
+                wordspec.iter_words(f),
                 bytes_to_int::<u128>(c, wordspec.output_endian),
             )
         })
@@ -154,30 +153,27 @@ impl RevResult {
             swap,
             wordspec,
         } = self;
-        modules
-            .into_iter()
-            .map(move |m| {
-                let module = if m.is_zero() {
-                    0u64
-                } else {
-                    (&m).try_into().unwrap()
-                };
-                inits.iter(&addout1, &addout2, &m).map(move |(i, s1, s2)| {
-                    let addout = glue_sum(s1, s2, width, swap);
-                    Fletcher::with_options()
-                        .addout(addout)
-                        .init(i as u64)
-                        .module(module)
-                        .width(width)
-                        .swap(swap)
-                        .inendian(wordspec.input_endian)
-                        .outendian(wordspec.output_endian)
-                        .wordsize(wordspec.wordsize)
-                        .build()
-                        .unwrap()
-                })
+        modules.into_iter().flat_map(move |m| {
+            let module = if m.is_zero() {
+                0u64
+            } else {
+                (&m).try_into().unwrap()
+            };
+            inits.iter(&addout1, &addout2, &m).map(move |(i, s1, s2)| {
+                let addout = glue_sum(s1, s2, width, swap);
+                Fletcher::with_options()
+                    .addout(addout)
+                    .init(i)
+                    .module(module)
+                    .width(width)
+                    .swap(swap)
+                    .inendian(wordspec.input_endian)
+                    .outendian(wordspec.output_endian)
+                    .wordsize(wordspec.wordsize)
+                    .build()
+                    .unwrap()
             })
-            .flatten()
+        })
     }
 }
 
@@ -332,19 +328,16 @@ fn summarize(
 fn find_regular_sum(spec: &RevSpec, sums: &[i128], mut module: u128) -> (u128, i128) {
     let width = spec.width;
     // init is here actually addout1 + init, which we can only know if we have both values
-    let maybe_init = spec
-        .addout
-        .map(|x| {
-            spec.init
-                .map(|y| y as i128 + split_sum(x, width, spec.swap).0 as i128)
-        })
-        .flatten();
+    let maybe_init = spec.addout.and_then(|x| {
+        spec.init
+            .map(|y| y as i128 + split_sum(x, width, spec.swap).0 as i128)
+    });
     // delegate to the corresponding modsum function
-    let sum1_addout = super::super::modsum::find_largest_mod(&sums, maybe_init, &mut module);
+    let sum1_addout = super::super::modsum::find_largest_mod(sums, maybe_init, &mut module);
     (module, sum1_addout)
 }
 
-fn remove_init(sums: &mut Vec<(BigInt, usize)>, init: &BigInt) {
+fn remove_init(sums: &mut [(BigInt, usize)], init: &BigInt) {
     for (s, l) in sums.iter_mut() {
         *s -= init * BigInt::from(*l);
         *l = 0;
@@ -552,16 +545,15 @@ impl PrefactorMod {
         module: &BigInt,
     ) -> impl Iterator<Item = (u64, u64, u64)> {
         let mut red = self.clone();
-        red.update_module(&module);
+        red.update_module(module);
         let mod_addout1 = mod_red(addout1, module);
         let mod_addout2 = mod_red(&addout2.0, module);
         let mod_addfac = mod_red(&BigInt::from(addout2.1), module);
         let module = module.clone();
         (0u64..(&red.unknown).try_into().unwrap())
-            .into_iter()
             .map(BigInt::from)
             .map(move |i| {
-                let real_init: u64 = mod_red(&(i * (&red).valid() + &red.possible), &module)
+                let real_init: u64 = mod_red(&(i * red.valid() + &red.possible), &module)
                     .try_into()
                     .unwrap();
                 let real_addout1: u64 = mod_red(&(&mod_addout1 - real_init), &module)
@@ -577,7 +569,7 @@ impl PrefactorMod {
 
 // from b*x ≡ a mod m, try to calculate x mod m/y where y is the second return value
 fn partial_mod_div(a: &BigInt, b: &BigInt, module: &mut BigInt) -> (BigInt, BigInt) {
-    let common = gcd(&b, &module);
+    let common = gcd(b, module);
     // if we want b*x ≡ a mod m, and c divides both b and m,
     // then a must be divisible by c as well
     // if that is not the case, we determine the maximal module where this is true
@@ -594,16 +586,16 @@ fn partial_mod_div(a: &BigInt, b: &BigInt, module: &mut BigInt) -> (BigInt, BigI
         // this works by first determining p^m by squaring and gcd'ing the product of all p's where
         // m < n, so that we have the maximum powers that divide module
         loop {
-            let new_x = gcd(&(&x * &x), &module);
+            let new_x = gcd(&(&x * &x), module);
             if new_x == x {
                 break;
             }
             x = new_x;
         }
-        *module = module.clone() / &x * gcd(&x, &a);
+        *module = module.clone() / &x * gcd(&x, a);
     }
-    let (common, (b_inv_unmod, _)) = xgcd(&b, &module);
-    let b_inv = mod_red(&b_inv_unmod, &module);
+    let (common, (b_inv_unmod, _)) = xgcd(b, module);
+    let b_inv = mod_red(&b_inv_unmod, module);
     let inv = (a / &common * b_inv) % &*module;
     (inv, common)
 }
@@ -649,7 +641,7 @@ mod tests {
         fn arbitrary(g: &mut Gen) -> Self {
             let mut new_fletcher = Fletcher::with_options();
             let width = ((u8::arbitrary(g) % 63 + 2) * 2) as usize;
-            new_fletcher.width(width as usize);
+            new_fletcher.width(width);
             let mut module = 0;
             while module <= 1 {
                 module = u64::arbitrary(g);
@@ -662,13 +654,13 @@ mod tests {
             new_fletcher.init(init);
             let swap = bool::arbitrary(g);
             new_fletcher.swap(swap);
-            let addout1 = u64::arbitrary(g) as u64 % module;
-            let addout2 = u64::arbitrary(g) as u64 % module;
+            let addout1 = u64::arbitrary(g) % module;
+            let addout2 = u64::arbitrary(g) % module;
             let addout = glue_sum(addout1, addout2, width, swap);
             new_fletcher.addout(addout);
             let wordspec = WordSpec::arbitrary(g);
             let max_word_width = ((width + 15) / 16).next_power_of_two() * 8;
-            new_fletcher.wordsize(max_word_width.min(wordspec.wordsize) as usize);
+            new_fletcher.wordsize(max_word_width.min(wordspec.wordsize));
             new_fletcher.inendian(wordspec.input_endian);
             new_fletcher.outendian(wordspec.output_endian);
             new_fletcher
