@@ -27,7 +27,7 @@ tar xf ntl-$NTL_VERSION.tar.gz
 cd ntl-$NTL_VERSION/src
 # note: we do not really use integer functionality from ntl, so we
 # don't need gmp either
-./configure NTL_GF2X_LIB=on NTL_GMP_LIP=off DEF_PREFIX="$PREFIX" NATIVE=off
+./configure NTL_THREADS=on NTL_GF2X_LIB=on NTL_GMP_LIP=off DEF_PREFIX="$PREFIX" NATIVE=off
 make -j "$(nproc)"
 make install
 popd
