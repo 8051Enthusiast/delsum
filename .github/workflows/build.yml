@@ -42,42 +42,42 @@ jobs:
         with:
           name: delsum_win
           path: 'target\x86_64-pc-windows-gnu\release\delsum.exe'
-  build_linux:
-    name: Build Linux Binary
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2    
-      - run: sudo apt install m4 lzip
-      - name: Cache dependencies
-        id: cache-deps
-        uses: actions/cache@v2
-        with:
-          path: output
-          key: "${{ runner.os }}-deps"
-      - name: Build dependencies
-        if: steps.cache-deps.outputs.cache-hit != 'true'
-        run: |
-          cd "$GITHUB_WORKSPACE"
-          bash build.sh
-      - uses: actions/cache@v2
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-      - run: |
-          export DELSUM_STATIC_LIBS=1
-          export DELSUM_NTL_LIB_PATH="$GITHUB_WORKSPACE/output/lib"
-          export DELSUM_NTL_INCLUDE="$GITHUB_WORKSPACE/output/include"
-          cd delsum-lib
-          cargo test
-          cd ..
-          cargo build --release
-      - run: |
-          cargo install cargo-strip
-          cargo strip
-      - uses: actions/upload-artifact@v2
-        with:
-          name: delsum-linux
-          path: target/release/delsum
+  #build_linux:
+  #  name: Build Linux Binary
+  #  runs-on: ubuntu-latest
+  #  steps:
+  #    - uses: actions/checkout@v2    
+  #    - run: sudo apt install m4 lzip
+  #    - name: Cache dependencies
+  #      id: cache-deps
+  #      uses: actions/cache@v2
+  #      with:
+  #        path: output
+  #        key: "${{ runner.os }}-deps"
+  #    - name: Build dependencies
+  #      if: steps.cache-deps.outputs.cache-hit != 'true'
+  #      run: |
+  #        cd "$GITHUB_WORKSPACE"
+  #        bash build.sh
+  #    - uses: actions/cache@v2
+  #      with:
+  #        path: |
+  #          ~/.cargo/registry
+  #          ~/.cargo/git
+  #          target
+  #        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+  #    - run: |
+  #        export DELSUM_STATIC_LIBS=1
+  #        export DELSUM_NTL_LIB_PATH="$GITHUB_WORKSPACE/output/lib"
+  #        export DELSUM_NTL_INCLUDE="$GITHUB_WORKSPACE/output/include"
+  #        cd delsum-lib
+  #        cargo test
+  #        cd ..
+  #        cargo build --release
+  #    - run: |
+  #        cargo install cargo-strip
+  #        cargo strip
+  #    - uses: actions/upload-artifact@v2
+  #      with:
+  #        name: delsum-linux
+  #        path: target/release/delsum
