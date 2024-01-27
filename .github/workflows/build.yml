@@ -31,7 +31,7 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - shell: msys2 {0}
         run: |
-          export PATH="/c/Rust/.cargo/bin/:$PATH"
+          export PATH="/c/Users/runneradmin/.cargo/bin:$PATH"
           export DELSUM_STATIC_LIBS=1
           export DELSUM_NTL_LIB_PATH="$GITHUB_WORKSPACE\output\lib"
           export DELSUM_NTL_INCLUDE="$GITHUB_WORKSPACE\output\include"
