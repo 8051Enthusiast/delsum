@@ -19,7 +19,7 @@ rayon = { version = "1.8", optional = true }
 bitvec = "1.0"
 lazy_static = "1.4"
 rand = "0.8"
-delsum-poly = { path = "../delsum-poly", version = "0.2.0" }
+delsum-poly = { path = "../delsum-poly", version = "0.2.1" }
 
 [dev-dependencies]
 quickcheck = "1.0"
