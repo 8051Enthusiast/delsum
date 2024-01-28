@@ -34,4 +34,11 @@ fn main() {
         .flag_if_supported("-Wno-deprecated-copy")
         .flag_if_supported("-Wno-unused-parameter");
     build.compile("delsum_poly");
+    // if this is windows, we want -static-stdc++ and -static-libgcc
+    // so that the user does not need msys2
+    #[cfg(target_os = "windows")]
+    {
+        println!("cargo:rustc-link-arg=-static-stdc++");
+        println!("cargo:rustc-link-arg=-static-libgcc");
+    }
 }
