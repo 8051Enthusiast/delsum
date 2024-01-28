@@ -8,9 +8,7 @@ jobs:
       - uses: actions/checkout@v2    
       - uses: msys2/setup-msys2@v2
         with:
-          install: gcc make wget lzip m4
-      - shell: msys2 {0}
-        run: ls /c/Users/runneradmin/.cargo 
+          install: gcc make wget lzip m4 mingw-w64-rust
       - name: Cache dependencies
         id: cache-deps
         uses: actions/cache@v2
@@ -32,7 +30,6 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - shell: msys2 {0}
         run: |
-          . "/c/Users/runneradmin/.cargo/env"
           export DELSUM_STATIC_LIBS=1
           export DELSUM_NTL_LIB_PATH="$GITHUB_WORKSPACE\output\lib"
           export DELSUM_NTL_INCLUDE="$GITHUB_WORKSPACE\output\include"
