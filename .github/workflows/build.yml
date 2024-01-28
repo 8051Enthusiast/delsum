@@ -6,7 +6,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v2    
-      - run: ls /c/Users/runneradmin/.cargo 
+      - shell: msys2 {0}
+        run: ls /c/Users/runneradmin/.cargo 
       - uses: msys2/setup-msys2@v2
         with:
           install: gcc make wget lzip m4
