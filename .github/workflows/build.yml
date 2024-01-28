@@ -21,19 +21,19 @@ jobs:
         run: |
           cd "$GITHUB_WORKSPACE"
           bash build.sh
-      - uses: actions/cache@v2
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+    #- uses: actions/cache@v2
+    #  with:
+    #    path: |
+    #      ~/.cargo/registry
+    #      ~/.cargo/git
+    #      target
+    #    key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - shell: msys2 {0}
         run: |
           export DELSUM_STATIC_LIBS=1
           export DELSUM_NTL_LIB_PATH="$GITHUB_WORKSPACE\output\lib"
           export DELSUM_NTL_INCLUDE="$GITHUB_WORKSPACE\output\include"
-          cargo build --release --target x86_64-pc-windows-gnu
+          cargo build --release -vv --target x86_64-pc-windows-gnu
           cargo install cargo-strip
           cargo strip --target x86_64-pc-windows-gnu
       - uses: actions/upload-artifact@v2
