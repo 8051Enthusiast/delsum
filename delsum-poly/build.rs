@@ -38,7 +38,7 @@ fn main() {
     // so that the user does not need msys2
     //#[cfg(target_os = "windows")]
     {
-        println!("cargo:rustc-link-arg=-static-stdc++");
+        println!("cargo:rustc-link-arg=-static-libstdc++");
         println!("cargo:rustc-link-arg=-static-libgcc");
     }
 }
