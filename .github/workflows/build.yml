@@ -33,7 +33,7 @@ jobs:
           export DELSUM_STATIC_LIBS=1
           export DELSUM_NTL_LIB_PATH="$GITHUB_WORKSPACE\output\lib"
           export DELSUM_NTL_INCLUDE="$GITHUB_WORKSPACE\output\include"
-          cargo build --release -vv --target x86_64-pc-windows-gnu
+          RUSTFLAGS="--print link-args" cargo build --release -vv --target x86_64-pc-windows-gnu
           cargo install cargo-strip
           cargo strip --target x86_64-pc-windows-gnu
       - uses: actions/upload-artifact@v2
