@@ -6,7 +6,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v2    
-      - run: which cargo
+      - run: ls /c/Users/runneradmin/.cargo 
       - uses: msys2/setup-msys2@v2
         with:
           install: gcc make wget lzip m4
@@ -31,7 +31,7 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - shell: msys2 {0}
         run: |
-          export PATH="/c/Users/runneradmin/.cargo/bin:$PATH"
+          . "/c/Users/runneradmin/.cargo/env"
           export DELSUM_STATIC_LIBS=1
           export DELSUM_NTL_LIB_PATH="$GITHUB_WORKSPACE\output\lib"
           export DELSUM_NTL_INCLUDE="$GITHUB_WORKSPACE\output\include"
