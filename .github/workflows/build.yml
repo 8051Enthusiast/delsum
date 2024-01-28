@@ -6,11 +6,11 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v2    
-      - shell: msys2 {0}
-        run: ls /c/Users/runneradmin/.cargo 
       - uses: msys2/setup-msys2@v2
         with:
           install: gcc make wget lzip m4
+      - shell: msys2 {0}
+        run: ls /c/Users/runneradmin/.cargo 
       - name: Cache dependencies
         id: cache-deps
         uses: actions/cache@v2
