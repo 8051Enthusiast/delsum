@@ -531,9 +531,6 @@ impl PrefactorMod {
         let common_valid = gcd(&self.valid(), &other.valid());
         let actual_valid = gcd(&(&self.possible - &other.possible), &common_valid);
         let module = &self.module / &common_valid * &actual_valid;
-        if module.is_one() {
-            return;
-        }
         self.update_module(&module);
         other.update_module(&module);
     }
@@ -874,5 +871,41 @@ mod tests {
             .addout(0x9b8e3e2905a19ea31cb7d9ba3c8891fe);
         let reverser = reverse_fletcher(&naive, &chk_files, 0, false);
         assert!(!f.check_matching(&f128, reverser).is_failure());
+    }
+    #[test]
+    fn error7() {
+        let f16 = Fletcher::with_options()
+            .width(10)
+            .module(5u64)
+            .addout(0x81)
+            .init(0)
+            .swap(false)
+            .inendian(Endian::Big)
+            .outendian(Endian::Big)
+            .wordsize(8)
+            .build()
+            .unwrap();
+        let f = ReverseFileSet(vec![
+            vec![
+                76, 68, 237, 127, 232, 152, 85, 112, 110, 255, 145, 240, 6, 252, 63, 204, 86, 165,
+                149, 217, 9, 213, 66, 0, 13, 216, 111, 138, 245, 52, 159, 24, 110, 131, 38, 197,
+                218, 7, 228, 131, 24, 230, 195, 165, 240, 58, 75, 234, 67, 88, 3, 1, 166, 90, 71,
+                59, 255, 232, 223, 88, 59, 239, 97, 144, 190, 1, 172, 164, 146, 246, 1, 1,
+            ],
+            vec![
+                107, 214, 84, 116, 5, 236, 90, 81, 133, 86, 10, 1, 166, 0, 251, 98, 161, 235, 170,
+                232, 1, 0, 213, 125, 199, 157, 90, 4, 84, 0, 95, 53, 33, 132, 43, 129, 128, 75, 92,
+                23, 32, 255, 145, 40, 129, 137, 2, 0, 1, 103, 187, 86, 182, 155, 177, 223,
+            ],
+            vec![94, 1, 182, 0, 183, 61, 129, 141],
+        ]);
+        let chk_files = f.with_checksums(&f16);
+        let mut naive = Fletcher::<u64>::with_options();
+        naive.width(10).addout(0x81);
+        let reverser = reverse_fletcher(&naive, &chk_files, 0, false).collect::<Vec<_>>();
+        eprintln!("{:?}", reverser);
+        assert!(!f
+            .check_matching(&f16, reverser.iter().cloned())
+            .is_failure());
     }
 }
