@@ -20,6 +20,7 @@ bitvec = "1.0"
 lazy_static = "1.4"
 rand = "0.8"
 delsum-poly = { path = "../delsum-poly", version = "0.2.1" }
+num-prime = "0.4.3"
 
 [dev-dependencies]
 quickcheck = "1.0"

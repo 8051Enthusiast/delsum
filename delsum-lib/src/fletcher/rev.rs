@@ -16,7 +16,7 @@
 use super::{Fletcher, FletcherBuilder};
 use crate::checksum::CheckReverserError;
 use crate::endian::{bytes_to_int, wordspec_combos, WordSpec};
-use crate::factor::divisors_range;
+use crate::divisors::divisors_range;
 use crate::utils::{cart_prod, unresult_iter};
 use num_bigint::BigInt;
 use num_traits::{one, zero, One, Signed, Zero};

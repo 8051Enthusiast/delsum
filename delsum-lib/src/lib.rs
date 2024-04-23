@@ -1,6 +1,6 @@
 mod bitnum;
 pub mod checksum;
-mod factor;
+mod divisors;
 mod keyval;
 pub mod utils;
 

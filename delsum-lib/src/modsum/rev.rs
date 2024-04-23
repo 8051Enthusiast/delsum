@@ -10,7 +10,7 @@
 use super::{ModSum, ModSumBuilder};
 use crate::checksum::CheckReverserError;
 use crate::endian::{bytes_to_int, wordspec_combos, WordSpec};
-use crate::factor::{divisors_range, gcd};
+use crate::divisors::{divisors_range, gcd};
 use crate::utils::unresult_iter;
 use std::iter::Iterator;
 /// Find the parameters of a modsum algorithm.
