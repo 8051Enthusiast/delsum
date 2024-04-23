@@ -15,8 +15,8 @@
 //! probably also be many some false positives.
 use super::{Fletcher, FletcherBuilder};
 use crate::checksum::CheckReverserError;
-use crate::endian::{bytes_to_int, wordspec_combos, WordSpec};
 use crate::divisors::divisors_range;
+use crate::endian::{bytes_to_int, wordspec_combos, WordSpec};
 use crate::utils::{cart_prod, unresult_iter};
 use num_bigint::BigInt;
 use num_traits::{one, zero, One, Signed, Zero};
@@ -259,9 +259,8 @@ fn reverse(
             .into_iter()
             .map(BigInt::from)
             .collect(),
-        Some(m) if BigInt::from(m) == module => vec![module],
         Some(m) => {
-            if BigInt::from(m) == module && m as u128 > min && m as u128 <= max {
+            if BigInt::from(m) == module && m as u128 >= min && m as u128 <= max {
                 vec![module]
             } else {
                 Vec::new()
@@ -907,5 +906,33 @@ mod tests {
         assert!(!f
             .check_matching(&f16, reverser.iter().cloned())
             .is_failure());
+    }
+    #[test]
+    fn error8() {
+        let f16 = Fletcher::with_options()
+            .width(10)
+            .module(3u64)
+            .init(1)
+            .addout(1)
+            .swap(false)
+            .inendian(Endian::Little)
+            .outendian(Endian::Big)
+            .wordsize(8)
+            .build()
+            .unwrap();
+        let f = ReverseFileSet(vec![
+            vec![
+                213, 135, 255, 136, 226, 145, 148, 73, 43, 34, 209, 239, 124, 73, 186, 105,
+            ],
+            vec![
+                35, 73, 105, 174, 0, 214, 0, 82, 167, 23, 113, 58, 244, 201, 89, 235,
+            ],
+            vec![250, 199, 177, 8, 135, 127, 88, 148],
+        ]);
+        let chk_files = f.with_checksums(&f16);
+        let mut naive = Fletcher::<u64>::with_options();
+        naive.width(10).module(3);
+        let reverser = reverse_fletcher(&naive, &chk_files, 0, false);
+        assert!(!f.check_matching(&f16, reverser).is_failure());
     }
 }

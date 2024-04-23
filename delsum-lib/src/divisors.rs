@@ -57,7 +57,6 @@ pub fn divisors_range(number: u128, low: u128, high: u128) -> Vec<u128> {
     } else {
         (high, low)
     };
-    //let facs = factor(number, new_high);
     let (facs, p) = num_prime::nt_funcs::factors(number, None);
     assert!(p.is_none());
     let facs = facs
