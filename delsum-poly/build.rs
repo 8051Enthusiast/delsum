@@ -5,6 +5,7 @@ fn main() {
     let mut link_type = "dylib";
     println!("cargo:rerun-if-env-changed=DELSUM_STATIC_LIBS");
     println!("cargo:rerun-if-env-changed=DELSUM_NTL_LIB_PATH");
+    println!("cargo:rerun-if-env-changed=DELSUM_GMP_LIB_PATH");
     println!("cargo:rerun-if-env-changed=DELSUM_GF2X_LIB_PATH");
     println!("cargo:rerun-if-env-changed=DELSUM_NTL_INCLUDE");
     let mut build = cxx_build::bridge("src/lib.rs");
@@ -15,7 +16,7 @@ fn main() {
                     link_type = "static";
                 }
             }
-            "DELSUM_NTL_LIB_PATH" | "DELSUM_GF2X_LIB_PATH" => {
+            "DELSUM_NTL_LIB_PATH" | "DELSUM_GF2X_LIB_PATH" | "DELSUM_GMP_LIB_PATH" => {
                 println!("cargo:rustc-link-search=native={}", value);
             }
             "DELSUM_NTL_INCLUDE" => {
@@ -26,6 +27,9 @@ fn main() {
     }
     println!("cargo:rustc-link-lib={}=ntl", link_type);
     println!("cargo:rustc-link-lib={}=gf2x", link_type);
+    if let None | Some("") = std::env::var("DELSUM_NO_GMP").ok().as_deref() {
+        println!("cargo:rustc-link-lib={}=gmp", link_type);
+    }
     build
         // needed for NTL
         .flag_if_supported("-fpermissive")

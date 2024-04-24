@@ -75,6 +75,7 @@ jobs:
           export DELSUM_STATIC_LIBS=1
           export DELSUM_NTL_LIB_PATH="$GITHUB_WORKSPACE/output/lib"
           export DELSUM_NTL_INCLUDE="$GITHUB_WORKSPACE/output/include"
+          export DELSUM_NO_GMP=1
           cd delsum-lib
           cargo test
           cd ..
