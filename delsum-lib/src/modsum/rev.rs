@@ -9,8 +9,8 @@
 //! Of course, giving more files will result in fewer false positives.
 use super::{ModSum, ModSumBuilder};
 use crate::checksum::CheckReverserError;
-use crate::endian::{bytes_to_int, wordspec_combos, WordSpec};
 use crate::divisors::{divisors_range, gcd};
+use crate::endian::{bytes_to_int, wordspec_combos, WordSpec};
 use crate::utils::unresult_iter;
 use std::iter::Iterator;
 /// Find the parameters of a modsum algorithm.
@@ -22,10 +22,11 @@ use std::iter::Iterator;
 /// The `width` parameter of the builder has to be set.
 pub fn reverse_modsum<'a>(
     spec: &ModSumBuilder<u64>,
-    chk_bytes: &'a [(&[u8], Vec<u8>)],
+    chk_bytes: &[(&'a [u8], Vec<u8>)],
     verbosity: u64,
     extended_search: bool,
 ) -> impl Iterator<Item = Result<ModSum<u64>, CheckReverserError>> + 'a {
+    let chk_bytes = chk_bytes.to_vec();
     let spec = spec.clone();
     wordspec_combos(
         spec.wordsize,

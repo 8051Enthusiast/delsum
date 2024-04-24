@@ -228,7 +228,7 @@ pub struct AlgorithmFinder<'a> {
 }
 
 impl<'a> AlgorithmFinder<'a> {
-    pub fn find_all(&'_ self) -> impl Iterator<Item = Result<String, CheckReverserError>> + '_ {
+    pub fn find_all(&self) -> impl Iterator<Item = Result<String, CheckReverserError>> + 'a {
         let maybe_crc = if let BuilderEnum::Crc(crc) = &self.spec {
             Some(
                 reverse_crc(
@@ -277,8 +277,8 @@ impl<'a> AlgorithmFinder<'a> {
 
     #[cfg(feature = "parallel")]
     pub fn find_all_para(
-        &'_ self,
-    ) -> impl ParallelIterator<Item = Result<String, CheckReverserError>> + '_ {
+        &self,
+    ) -> impl ParallelIterator<Item = Result<String, CheckReverserError>> + 'a {
         let maybe_crc = if let BuilderEnum::Crc(crc) = &self.spec {
             Some(
                 reverse_crc_para(
@@ -329,7 +329,7 @@ impl<'a> AlgorithmFinder<'a> {
 
 pub fn find_algorithm<'a>(
     strspec: &str,
-    bytes: &'a [&[u8]],
+    bytes: &[&'a [u8]],
     sums: &[Vec<u8>],
     verbosity: u64,
     extended_search: bool,

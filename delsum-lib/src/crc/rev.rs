@@ -29,7 +29,7 @@ use std::pin::Pin;
 /// The `width` parameter of the builder has to be set.
 pub fn reverse_crc<'a>(
     spec: &CrcBuilder<u128>,
-    chk_bytes: &'a [(&[u8], Vec<u8>)],
+    chk_bytes: &[(&'a [u8], Vec<u8>)],
     verbosity: u64,
     extended_search: bool,
 ) -> impl Iterator<Item = Result<CRC<u128>, CheckReverserError>> + 'a {
@@ -63,7 +63,7 @@ pub fn reverse_crc<'a>(
 #[cfg(feature = "parallel")]
 pub fn reverse_crc_para<'a>(
     spec: &CrcBuilder<u128>,
-    chk_bytes: &'a [(&[u8], Vec<u8>)],
+    chk_bytes: &[(&'a [u8], Vec<u8>)],
     verbosity: u64,
     extended_search: bool,
 ) -> impl ParallelIterator<Item = Result<CRC<u128>, CheckReverserError>> + 'a {

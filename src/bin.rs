@@ -1,10 +1,12 @@
 use clap::{Parser, Subcommand};
+use delsum_lib::checksum::CheckReverserError;
 use delsum_lib::utils::{read_signed_maybe_hex, SignedInclRange};
 use delsum_lib::{find_algorithm, find_checksum, find_checksum_segments, SegmentChecksum};
 use hex::{FromHex, FromHexError, ToHex};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
-use std::collections::HashSet;
+use serde::Serialize;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::fs::File;
 use std::io::Read;
@@ -52,41 +54,64 @@ fn reverse(opts: &Reverse) {
     let parallel = opts.parallel;
     #[cfg(not(feature = "parallel"))]
     let parallel = false;
+    let handle_errors = |model: &str, algo: Result<String, CheckReverserError>| match algo {
+        Ok(a) => Some(a),
+        Err(e) => {
+            let do_print = error_set
+                .lock()
+                .map(|mut set| set.insert((model.to_string(), e.clone())))
+                .unwrap_or(true);
+            if do_print {
+                eprintln!("Error on {}: {}", model, e)
+            }
+            None
+        }
+    };
 
-    match parallel {
-        true => {
-            #[cfg(feature = "parallel")]
-            models.par_iter().for_each(|x| {
-                algorithms(x).find_all_para().for_each(|algo| match algo {
-                    Ok(a) => println!("{}", a),
-                    Err(e) => {
-                        let do_print = error_set
-                            .lock()
-                            .map(|mut set| set.insert((x.clone(), e.clone())))
-                            .unwrap_or(true);
-                        if do_print {
-                            eprintln!("Error on {}: {}", x, e)
-                        }
-                    }
-                })
-            });
+    if opts.json {
+        let algos = match parallel {
+            true =>
+            {
+                #[cfg(feature = "parallel")]
+                models
+                    .par_iter()
+                    .map(|model| (algorithms(model), model))
+                    .flat_map(|(r, model)| {
+                        r.find_all_para()
+                            .flat_map(move |a| handle_errors(&model, a))
+                    })
+                    .collect::<Vec<_>>()
+            }
+            false => models
+                .iter()
+                .map(|model| (algorithms(model), model))
+                .flat_map(|(r, model)| r.find_all().flat_map(move |a| handle_errors(&model, a)))
+                .collect::<Vec<_>>(),
+        };
+        println!("{}", serde_json::to_string_pretty(&algos).unwrap());
+    } else {
+        match parallel {
+            true => {
+                #[cfg(feature = "parallel")]
+                models.into_par_iter().for_each(|x| {
+                    algorithms(&x)
+                        .find_all_para()
+                        .flat_map(|r| handle_errors(&x, r))
+                        .for_each(|algo| println!("{}", algo));
+                });
+            }
+            false => {
+                models.into_iter().for_each(|x| {
+                    algorithms(&x)
+                        .find_all()
+                        .flat_map(|r| handle_errors(&x, r))
+                        .for_each(|algo| println!("{}", algo))
+                });
+            }
         }
-        false => {
-            models.iter().for_each(|x| {
-                algorithms(x).find_all().for_each(|algo| match algo {
-                    Ok(a) => println!("{}", a),
-                    Err(e) => {
-                        let do_print = error_set
-                            .lock()
-                            .map(|mut set| set.insert((x.clone(), e.clone())))
-                            .unwrap_or(true);
-                        if do_print {
-                            eprintln!("Error on {}: {}", x, e)
-                        }
-                    }
-                })
-            });
-        }
+    }
+    if error_set.lock().unwrap().len() > 0 {
+        exit(1);
     }
 }
 
@@ -146,40 +171,66 @@ fn part(opts: &Part) {
                 eprintln!("Could not process model '{}': {}", model, err);
                 exit(1);
             });
-        if !segs.is_empty() {
-            let mut list = String::new();
-            list.push_str(&format!("{}:\n", model));
-            for (a, b) in segs {
-                let a_list = a
-                    .iter()
-                    .map(|x| match x >= &0 {
-                        true => format!("0x{:x}", x),
-                        false => format!("-0x{:x}", -x),
-                    })
-                    .collect::<Vec<_>>()
-                    .join(",");
-                let b_list = b
-                    .iter()
-                    .map(|x| match x >= &0 {
-                        true => format!("0x{:x}", x),
-                        false => format!("-0x{:x}", -x),
-                    })
-                    .collect::<Vec<_>>()
-                    .join(",");
-                list.push_str(&format!("\t{}:{}\n", a_list, b_list));
+        print_parts(segs, model);
+    };
+    let json_format = |model: &String| {
+        let segs = find_checksum_segments(model, &files, checksums, start_range, end_range)
+            .unwrap_or_else(|err| {
+                eprintln!("Could not process model '{}': {}", model, err);
+                exit(1);
+            })
+            .into_iter()
+            .map(|(start, end)| PartExtends { start, end })
+            .collect::<Vec<_>>();
+        (model.clone(), segs)
+    };
+    if opts.json {
+        let segs = match parallel {
+            true =>
+            {
+                #[cfg(feature = "parallel")]
+                models
+                    .par_iter()
+                    .map(json_format)
+                    .collect::<HashMap<_, _>>()
             }
-            print!("{}", list);
+            false => models.iter().map(json_format).collect::<HashMap<_, _>>(),
+        };
+        println!("{}", serde_json::to_string_pretty(&segs).unwrap());
+    } else {
+        match parallel {
+            true => {
+                #[cfg(feature = "parallel")]
+                models.par_iter().map(|x| x.as_str()).for_each(subsum_print);
+            }
+            false => {
+                models.iter().map(|x| x.as_str()).for_each(subsum_print);
+            }
+        };
+    }
+}
+
+fn print_parts(segs: Vec<(Vec<isize>, Vec<isize>)>, model: &str) {
+    if !segs.is_empty() {
+        let mut list = String::new();
+        list.push_str(&format!("{}:\n", model));
+        for (a, b) in segs {
+            let num = |x: &isize| match *x >= 0 {
+                true => format!("0x{:x}", x),
+                false => format!("-0x{:x}", -x),
+            };
+            let a_list = a.iter().map(num).collect::<Vec<_>>().join(",");
+            let b_list = b.iter().map(num).collect::<Vec<_>>().join(",");
+            list.push_str(&format!("\t{}:{}\n", a_list, b_list));
         }
-    };
-    match parallel {
-        true => {
-            #[cfg(feature = "parallel")]
-            models.par_iter().map(|x| x.as_str()).for_each(subsum_print);
-        }
-        false => {
-            models.iter().map(|x| x.as_str()).for_each(subsum_print);
-        }
-    };
+        print!("{}", list);
+    }
+}
+
+#[derive(Serialize, PartialEq, Eq)]
+struct PartExtends {
+    start: Vec<isize>,
+    end: Vec<isize>,
 }
 
 fn check(opts: &Check) {
@@ -219,13 +270,41 @@ fn check(opts: &Check) {
             )
         }
     };
-    match parallel {
-        true => {
-            #[cfg(feature = "parallel")]
-            models.par_iter().for_each(|x| print_sums(x));
-        }
-        false => {
-            models.iter().for_each(|x| print_sums(x));
+    let json_format = |model: &String| {
+        let checksums = find_checksum(model, &ranged_files).unwrap_or_else(|err| {
+            eprintln!("Could not process model '{}': {}", model, err);
+            exit(1);
+        });
+        (
+            model.clone(),
+            checksums
+                .iter()
+                .map(|x| x.encode_hex())
+                .collect::<Vec<String>>(),
+        )
+    };
+    if opts.json {
+        let checksums = match parallel {
+            true =>
+            {
+                #[cfg(feature = "parallel")]
+                models
+                    .par_iter()
+                    .map(json_format)
+                    .collect::<HashMap<_, _>>()
+            }
+            false => models.iter().map(json_format).collect::<HashMap<_, _>>(),
+        };
+        println!("{}", serde_json::to_string_pretty(&checksums).unwrap());
+    } else {
+        match parallel {
+            true => {
+                #[cfg(feature = "parallel")]
+                models.par_iter().for_each(|x| print_sums(x));
+            }
+            false => {
+                models.iter().for_each(|x| print_sums(x));
+            }
         }
     }
 }
@@ -275,6 +354,9 @@ struct Part {
     #[arg(short, long, action = clap::ArgAction::Count)]
     #[allow(unused)]
     verbose: u8,
+    /// Output the results in JSON format
+    #[arg(short, long)]
+    json: bool,
     /// Sets the end of the checksum segments to be relative to the start of the file
     #[arg(short, long)]
     start: bool,
@@ -317,6 +399,9 @@ struct Reverse {
     /// Print some messages indicating progress
     #[arg(short, long, action = clap::ArgAction::Count)]
     verbose: u8,
+    /// Output the results in JSON format
+    #[arg(short, long)]
+    json: bool,
     /// Do more parallelism, in turn using more memory
     #[arg(short, long)]
     parallel: bool,
@@ -349,6 +434,9 @@ struct Check {
     #[arg(short, long, action = clap::ArgAction::Count)]
     #[allow(unused)]
     verbose: u8,
+    /// Output the results in JSON format
+    #[arg(short, long)]
+    json: bool,
     /// Do more parallelism, in turn using more memory
     #[arg(short, long)]
     parallel: bool,
