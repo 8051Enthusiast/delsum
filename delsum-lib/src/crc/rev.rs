@@ -866,7 +866,7 @@ fn find_prod_comb(
                     ret[j + inc_deg].push(mul(&q, m));
                 }
             }
-            q *= &p;
+            q *= p;
         }
     }
     ret.pop().unwrap()

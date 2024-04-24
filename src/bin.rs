@@ -78,14 +78,14 @@ fn reverse(opts: &Reverse) {
                     .map(|model| (algorithms(model), model))
                     .flat_map(|(r, model)| {
                         r.find_all_para()
-                            .flat_map(move |a| handle_errors(&model, a))
+                            .flat_map(move |a| handle_errors(model, a))
                     })
                     .collect::<Vec<_>>()
             }
             false => models
                 .iter()
                 .map(|model| (algorithms(model), model))
-                .flat_map(|(r, model)| r.find_all().flat_map(move |a| handle_errors(&model, a)))
+                .flat_map(|(r, model)| r.find_all().flat_map(move |a| handle_errors(model, a)))
                 .collect::<Vec<_>>(),
         };
         println!("{}", serde_json::to_string_pretty(&algos).unwrap());

@@ -515,7 +515,7 @@ impl PrefactorMod {
         if &self.module == module {
             return false;
         }
-        self.module = module.clone();
+        self.module.clone_from(module);
         self.possible %= module;
         self.unknown = gcd(module, &self.unknown);
         true
