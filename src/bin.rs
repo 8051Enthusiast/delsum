@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 use delsum_lib::utils::{read_signed_maybe_hex, SignedInclRange};
-use delsum_lib::{find_algorithm, find_checksum, find_checksum_segments};
+use delsum_lib::{find_algorithm, find_checksum, find_checksum_segments, SegmentChecksum};
 use hex::{FromHex, FromHexError, ToHex};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -107,12 +107,28 @@ fn part(opts: &Part) {
         .start_range
         .map(Some)
         .unwrap_or_else(|| SignedInclRange::new(0, min_len as isize - 1));
-    let checksums = match read_checksums(&opts.checksums) {
-        Ok(x) => x,
-        Err(e) => {
-            eprintln!("Could not read checksums: {}", e);
-            exit(1);
+    let checksums = if let Some(checksums) = &opts.checksums {
+        match read_checksums(checksums) {
+            Ok(x) => Some(x),
+            Err(e) => {
+                eprintln!("Could not read checksums: {}", e);
+                exit(1);
+            }
         }
+    } else {
+        None
+    };
+    if checksums.is_some() && opts.trailing.is_some() {
+        eprintln!("Error: need exactly one of either -c or -t");
+        exit(1);
+    }
+    let Some(checksums) = checksums
+        .as_ref()
+        .map(|x| SegmentChecksum::Constant(x))
+        .or_else(|| Some(SegmentChecksum::FromEnd(opts.trailing?)))
+    else {
+        eprintln!("Error: need either -c or -t");
+        exit(1);
     };
     if min_len < 1 {
         eprintln!("Warning: file of zero size, no ranges fonud");
@@ -125,7 +141,7 @@ fn part(opts: &Part) {
     #[cfg(not(feature = "parallel"))]
     let parallel = false;
     let subsum_print = |model| {
-        let segs = find_checksum_segments(model, &files, &checksums, start_range, end_range)
+        let segs = find_checksum_segments(model, &files, checksums, start_range, end_range)
             .unwrap_or_else(|err| {
                 eprintln!("Could not process model '{}': {}", model, err);
                 exit(1);
@@ -284,7 +300,13 @@ struct Part {
     model_file: Option<OsString>,
     /// A comma separated list of checksums, each corresponding to a file
     #[arg(short, long)]
-    checksums: String,
+    checksums: Option<String>,
+    /// Instead of a constant list of checksums, use the bytes right after
+    /// each checksummed region as the checksums, with n bytes of padding
+    /// between the end of the checksummed region and the location of the
+    /// checksum
+    #[arg(short, long)]
+    trailing: Option<usize>,
     /// The files of which to find checksummed parts
     files: Vec<OsString>,
 }

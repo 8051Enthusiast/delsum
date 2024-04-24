@@ -10,11 +10,12 @@ pub mod fletcher;
 pub mod modsum;
 
 use bitnum::BitNum;
-use checksum::{CheckBuilderErr, CheckReverserError};
+use checksum::{const_sum, CheckBuilderErr, CheckReverserError, Checksum};
 use checksum::{Digest, LinearCheck, RangePair};
 use crc::{reverse_crc, CrcBuilder, CRC};
 use fletcher::{reverse_fletcher, Fletcher, FletcherBuilder};
 use modsum::{reverse_modsum, ModSum, ModSumBuilder};
+use num_traits::Zero;
 use std::cmp::Ordering;
 use std::str::FromStr;
 use utils::SignedInclRange;
@@ -52,11 +53,36 @@ fn find_prefix_width(s: &str) -> Result<(&str, usize, &str), CheckBuilderErr> {
     Err(CheckBuilderErr::MissingParameter("width"))
 }
 
+// modifies the end_range so that there is
+// checksum_size bytes padding to the end
+// in all files
+fn cutoff_checksum_length(
+    end_range: SignedInclRange,
+    bytes: &[Vec<u8>],
+    checksum_size: usize,
+) -> Option<SignedInclRange> {
+    let end = end_range.end();
+    if end < 0 {
+        let new_end = (-1 - checksum_size as isize).min(end);
+        end_range.set_end(new_end)
+    } else {
+        let min_len = bytes.iter().map(|x| x.len()).min()? as isize;
+        let new_end = (min_len - checksum_size as isize - 1).min(end);
+        end_range.set_end(new_end)
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum SegmentChecksum<'a> {
+    FromEnd(usize),
+    Constant(&'a [Vec<u8>]),
+}
+
 /// A helper function for calling the find_segments function with strings arguments
 fn find_segment_str<L>(
     spec: &str,
     bytes: &[Vec<u8>],
-    sum: &[Vec<u8>],
+    sum: SegmentChecksum,
     start_range: SignedInclRange,
     end_range: SignedInclRange,
 ) -> Result<Vec<RangePair>, CheckBuilderErr>
@@ -65,11 +91,34 @@ where
     L::Sum: BitNum,
 {
     let spec = L::from_str(spec)?;
-    let sum_array: Vec<_> = sum
-        .iter()
-        .map(|x| spec.wordspec().bytes_to_output(x))
-        .collect();
-    Ok(spec.find_segments_range(bytes, &sum_array, start_range, end_range))
+    match sum {
+        SegmentChecksum::Constant(sum_bytes) => {
+            let sum_array: Vec<_> = sum_bytes
+                .iter()
+                .map(|x| const_sum(spec.wordspec().bytes_to_output(x)))
+                .collect();
+            Ok(spec.find_segments_range(bytes, &sum_array, start_range, end_range))
+        }
+        SegmentChecksum::FromEnd(n) => {
+            let endian = spec.wordspec().output_endian;
+            let width = spec.to_bytes(<L::Sum as Zero>::zero()).len();
+            let checksum_length = width + n;
+            let Some(end_range) = cutoff_checksum_length(end_range, bytes, checksum_length) else {
+                return Ok(Vec::new());
+            };
+            let sum_array: Vec<_> = bytes
+                .iter()
+                .map(move |_| {
+                    move |bytes: &[u8], addr: usize| {
+                        let start = addr + n;
+                        let end = addr + checksum_length;
+                        Checksum::from_bytes(&bytes[start..end], endian)
+                    }
+                })
+                .collect();
+            Ok(spec.find_segments_range(bytes, &sum_array, start_range, end_range))
+        }
+    }
 }
 
 /// The available checksum types
@@ -94,35 +143,24 @@ static PREFIXES: &[&str] = &["fletcher", "crc", "modsum"];
 pub fn find_checksum_segments(
     strspec: &str,
     bytes: &[Vec<u8>],
-    sum: &[Vec<u8>],
+    sum: SegmentChecksum,
     start_range: SignedInclRange,
     end_range: SignedInclRange,
 ) -> Result<Vec<RangePair>, CheckBuilderErr> {
     let (prefix, width, rest) = find_prefix_width(strspec)?;
     match (width, prefix) {
-        (1..=8, "crc") => find_segment_str::<CRC<u8>>(rest, bytes, sum, start_range, end_range),
-        (9..=16, "crc") => find_segment_str::<CRC<u16>>(rest, bytes, sum, start_range, end_range),
-        (17..=32, "crc") => find_segment_str::<CRC<u32>>(rest, bytes, sum, start_range, end_range),
+        (1..=32, "crc") => find_segment_str::<CRC<u32>>(rest, bytes, sum, start_range, end_range),
         (33..=64, "crc") => find_segment_str::<CRC<u64>>(rest, bytes, sum, start_range, end_range),
         (65..=128, "crc") => {
             find_segment_str::<CRC<u128>>(rest, bytes, sum, start_range, end_range)
         }
-        (1..=8, "modsum") => {
-            find_segment_str::<ModSum<u8>>(rest, bytes, sum, start_range, end_range)
-        }
-        (9..=16, "modsum") => {
-            find_segment_str::<ModSum<u16>>(rest, bytes, sum, start_range, end_range)
-        }
-        (17..=32, "modsum") => {
+        (1..=32, "modsum") => {
             find_segment_str::<ModSum<u32>>(rest, bytes, sum, start_range, end_range)
         }
         (33..=64, "modsum") => {
             find_segment_str::<ModSum<u64>>(rest, bytes, sum, start_range, end_range)
         }
-        (1..=16, "fletcher") => {
-            find_segment_str::<Fletcher<u8>>(rest, bytes, sum, start_range, end_range)
-        }
-        (17..=32, "fletcher") => {
+        (1..=32, "fletcher") => {
             find_segment_str::<Fletcher<u16>>(rest, bytes, sum, start_range, end_range)
         }
         (33..=64, "fletcher") => {
@@ -336,7 +374,7 @@ mod tests {
             find_checksum_segments(
                 "modsum width=16 wordsize=24 module=0",
                 &[vec![0u8; 15]],
-                &[vec![0, 0]],
+                SegmentChecksum::Constant(&[vec![0, 0]]),
                 SignedInclRange::new(0, 5).unwrap(),
                 SignedInclRange::new(-5, -2).unwrap()
             ),
@@ -350,7 +388,7 @@ mod tests {
             find_checksum_segments(
                 "modsum width=16 wordsize=16 module=0 wordsize=16",
                 &[vec![0u8; 15], vec![0u8; 12], vec![0u8; 9]],
-                &[vec![0, 0], vec![0, 0], vec![0, 0]],
+                SegmentChecksum::Constant(&[vec![0, 0], vec![0, 0], vec![0, 0]]),
                 SignedInclRange::new(0, 8).unwrap(),
                 SignedInclRange::new(-9, -1).unwrap(),
             ),
@@ -360,7 +398,7 @@ mod tests {
             find_checksum_segments(
                 "modsum width=16 wordsize=16 module=0 wordsize=24",
                 &[vec![0u8; 15], vec![0u8; 12], vec![0u8; 9]],
-                &[vec![0, 0], vec![0, 0], vec![0, 0]],
+                SegmentChecksum::Constant(&[vec![0, 0], vec![0, 0], vec![0, 0]]),
                 SignedInclRange::new(0, 8).unwrap(),
                 SignedInclRange::new(-9, -1).unwrap(),
             ),
@@ -377,11 +415,31 @@ mod tests {
                     vec![0x6d, 0x79, 0x72, 0x3f, 0x00, 0x5d],
                     vec![0x75, 0x2d, 0xf4, 0xd4, 0xf5, 0xcf, 0xd8, 0x35]
                 ],
-                &[vec![0x72, 0x3f], vec![0x01, 0x1b]],
+                SegmentChecksum::Constant(&[vec![0x72, 0x3f], vec![0x01, 0x1b]]),
                 SignedInclRange::new(0, 5).unwrap(),
                 SignedInclRange::new(-7, -1).unwrap(),
             ),
             Ok(vec![(vec![2], vec![-3])])
-        )
+        );
+    }
+    #[test]
+    fn png_checksums() {
+        let png = vec![
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00,
+            0x00, 0x37, 0x6e, 0xf9, 0x24, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78,
+            0x01, 0x63, 0x60, 0x00, 0x00, 0x00, 0x02, 0x00, 0x01, 0x73, 0x75, 0x01, 0x18, 0x00,
+            0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+        ];
+        assert_eq!(
+            find_checksum_segments(
+                "crc width=32 poly=0x04c11db7 init=0xffffffff refin=true refout=true xorout=0xffffffff out_endian=big",
+                &[png.clone()],
+                SegmentChecksum::FromEnd(0),
+                SignedInclRange::new(0, png.len() as _).unwrap(),
+                SignedInclRange::new(0, png.len() as _).unwrap(),
+            ),
+            Ok(vec![(vec![12], vec![28]), (vec![37], vec![50]), (vec![59], vec![62])])
+        );
     }
 }

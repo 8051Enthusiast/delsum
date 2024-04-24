@@ -1,3 +1,5 @@
+use crate::endian::bytes_to_int;
+use crate::endian::Endian;
 use crate::endian::WordSpec;
 use crate::utils::SignedInclRange;
 use crate::utils::UnsignedInclRange;
@@ -133,10 +135,10 @@ pub trait LinearCheck: Digest + Send + Sync {
     /// This function has a high space usage per byte: for `n` bytes, it uses a total space of `n*(8 + 2*sizeof(Sum))` bytes.
     /// The time is bounded by the runtime of the sort algorithm, which is around `n*log(n)`.
     /// If Hashtables were used, it could be done in linear time, but they take too much space.
-    fn find_segments(
+    fn find_segments<'a>(
         &self,
-        bytes: &[Vec<u8>],
-        sum: &[Self::Sum],
+        bytes: &'a [Vec<u8>],
+        sum: &'a [impl Fn(&'a [u8], usize) -> Self::Sum + Send + Sync],
         rel: Relativity,
     ) -> Vec<RangePair> {
         if bytes.is_empty() {
@@ -159,10 +161,10 @@ pub trait LinearCheck: Digest + Send + Sync {
         self.find_segments_range(bytes, sum, start_range, end_range)
     }
 
-    fn find_segments_range(
+    fn find_segments_range<'a>(
         &self,
-        bytes: &[Vec<u8>],
-        sum: &[Self::Sum],
+        bytes: &'a [Vec<u8>],
+        sum: &'a [impl Fn(&'a [u8], usize) -> Self::Sum + Send + Sync],
         start_range: SignedInclRange,
         end_range: SignedInclRange,
     ) -> Vec<RangePair> {
@@ -207,10 +209,10 @@ pub trait LinearCheck: Digest + Send + Sync {
     }
 }
 
-fn find_segments_aligned<S: LinearCheck + ?Sized>(
+fn find_segments_aligned<'a, S: LinearCheck + ?Sized>(
     summer: &S,
-    bytes: &[Vec<u8>],
-    sum: &[<S as Digest>::Sum],
+    bytes: &'a [Vec<u8>],
+    sum: &'a [impl Fn(&'a [u8], usize) -> S::Sum + Send + Sync],
     start_range: SignedInclRange,
     end_range: SignedInclRange,
 ) -> Option<Vec<RangePair>> {
@@ -328,10 +330,10 @@ fn normalize_range(
     Some((start_range, end_range))
 }
 
-fn presums<S: LinearCheck + ?Sized>(
+fn presums<'a, S: LinearCheck + ?Sized>(
     summer: &S,
-    bytes: &[u8],
-    sum: &S::Sum,
+    bytes: &'a [u8],
+    sum: impl Fn(&'a [u8], usize) -> S::Sum,
     start_range: UnsignedInclRange,
     end_range: UnsignedInclRange,
 ) -> (Vec<S::Sum>, Vec<S::Sum>) {
@@ -361,7 +363,10 @@ fn presums<S: LinearCheck + ?Sized>(
         state = summer.dig_word(state, c);
         if end_range.contains(i + step - 1) {
             // from the endsums, we finalize them and subtract the given final sum
-            let endstate = summer.add(summer.finalize(state.clone()), &summer.negate(sum.clone()));
+            let endstate = summer.add(
+                summer.finalize(state.clone()),
+                &summer.negate(sum(bytes, i + step)),
+            );
             end_presums.push(endstate);
         }
     }
@@ -403,6 +408,14 @@ fn presums<S: LinearCheck + ?Sized>(
     // (2) (3) (6)  <=> finalize(i*[n..m]) - s           == 0
     // (1)          <=> finalize(i*[n..m])               == s
     (start_presums, end_presums)
+}
+
+pub fn const_sum<T>(sum: T) -> impl Fn(&[u8], usize) -> T + Send + Sync
+where
+    T: Clone + Send + Sync,
+{
+    #[inline]
+    move |_, _| sum.clone()
 }
 
 pub type RangePair = (Vec<isize>, Vec<isize>);
@@ -567,6 +580,7 @@ impl std::error::Error for CheckReverserError {}
 /// Trait for checksums
 pub trait Checksum {
     fn to_width_str(&self, width: usize) -> String;
+    fn from_bytes(bytes: &[u8], endian: Endian) -> Self;
 }
 
 // default implementation for normal numbers
@@ -577,6 +591,10 @@ impl<T: crate::bitnum::BitNum> Checksum for T {
         }
         let w = (width - 1) / 4 + 1;
         format!("{:0width$x}", self, width = w)
+    }
+
+    fn from_bytes(bytes: &[u8], endian: Endian) -> Self {
+        bytes_to_int(bytes, endian)
     }
 }
 
@@ -639,7 +657,7 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
         assert_eq!(
             chk.find_segments(
                 &[Vec::from("a123456789X1235H123456789Y")],
-                &[sum_1_9.clone()],
+                &[const_sum(sum_1_9.clone())],
                 Relativity::Start
             ),
             vec![(vec![1], vec![9]), (vec![16], vec![24])]
@@ -650,7 +668,7 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
                     Vec::from("XX98765432123456789XXX"),
                     Vec::from("XX12345678987654321XX")
                 ],
-                &[sum_1_9.clone(), sum_9_1.clone()],
+                &[const_sum(sum_1_9.clone()), const_sum(sum_9_1.clone())],
                 Relativity::Start
             ),
             vec![(vec![10], vec![18])]
@@ -662,7 +680,7 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
                     Vec::from("ABC123456789.super."),
                     Vec::from("Za!987654321ergrfrf")
                 ],
-                &[sum_1_9_1, sum_1_9, sum_9_1],
+                &[sum_1_9_1, sum_1_9, sum_9_1].map(const_sum),
                 Relativity::End
             ),
             vec![(vec![3], vec![-8])]

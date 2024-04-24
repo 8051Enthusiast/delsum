@@ -279,7 +279,7 @@ impl<S: Modnum> LinearCheck for ModSum<S> {
 mod tests {
     use super::*;
     use crate::checksum::tests::{test_prop, test_shifts};
-    use crate::checksum::Relativity;
+    use crate::checksum::{const_sum, Relativity};
     #[test]
     fn modsum_8() {
         let s = ModSum::<u8>::with_options()
@@ -329,7 +329,7 @@ mod tests {
         assert_eq!(
             chk.find_segments(
                 &[x, y],
-                &[merchantibility, ith_absolutely_],
+                &[merchantibility, ith_absolutely_].map(const_sum),
                 Relativity::Start
             ),
             vec![(vec![19], vec![34])]
