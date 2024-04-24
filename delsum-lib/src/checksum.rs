@@ -100,7 +100,15 @@ impl From<SignedInclRange> for Relativity {
 /// * for all sums `s`, `add(finalize(s), negate(s))` is constant (finalize adds a constant value to the sum)
 /// * all methods without default implementations (including those from `Digest`) should run in constant time (assuming constant `Shift`, `Sum` types)
 ///
-/// Basically, it is a graded ring or something idk.
+/// We can also see Digest::Sum as an abelian group with a group action by shift_n: ℤ -> Aut(Digest::Sum)
+/// (where LinearCheck::Shift represents some subgroup of Aut(Digest::Sum)). If we call σ = shift_n(1),
+/// then for various implementations it is:
+/// * modsum: identity
+/// * fletcher: (s, c) |-> (s, c + s) (note that automorphisms of finite abelian groups generally behave like matrices)
+/// * crc: s |-> s * x^8
+/// dig_word(s, k) is then σ(s) + Sum::from_word(k), shift(s, t) is the application of the automorphism t(s),
+/// add and negate are the usual group operations, init_shift is the identity automorphism and inc_shift corresponds to
+/// t |-> t * σ.
 pub trait LinearCheck: Digest + Send + Sync {
     /// The Shift type (see trait documentation for more).
     type Shift: Clone;
