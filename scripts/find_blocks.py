@@ -99,7 +99,7 @@ def main():
     
     match (args.model, args.model_file):
         case (model, None) | (None, model):
-            (models, scores) = find_blocks(args.filename, model, args.top)
+            (models, scores) = find_blocks(args.filenames, model, args.top)
         case (None, None):
             raise ValueError('Must specify either a model or a model file')
         case (_, _):
