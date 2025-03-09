@@ -147,6 +147,49 @@ class Chain:
             start = next_addr(cur.end)
             cur = cur.next
 
+# We don't want to write the chain directly to the chain_records because of the following kind of situation:
+# Assume gap = 2, and the following groups:
+# group 0:  0:12
+# group 1:  4,15:13,20
+# group 2:  16:21
+# When reaching end = 13, the loop will overwrite the previous entry in chain_records[1] because for end=13
+# it has a higher count (as group 2 follows). 
+# However for end = 12, it sees that the start after the gap at address 15 belongs to group 1 so doing it naively
+# would connect to group 1, which currently contains a Chain with end=13, which is before 15 and would
+# have negative length.
+class DelayedWriter:
+    queue: list[tuple[int, Chain]]
+    chain_records: list[Optional[Chain]]
+    min_end_distance: int
+
+    def __init__(self,  chain_records: list[Optional[Chain]], min_length: int=1):
+        self.chain_records = chain_records
+        self.queue = []
+        self.min_end_distance = gap + min_length
+    
+    def append(self, group: int, chain: Chain):
+        self.queue.append((group, chain))
+    
+    def flush(self):
+        for (group, chain) in self.queue:
+            old_record = self.chain_records[group]
+            if chain.is_better_match_than(old_record):
+                self.chain_records[group] = chain
+        self.queue = []
+    
+    def move_end(self, new_end: int):
+        move_count = 0
+        for (group, chain) in self.queue:
+            if chain.end - new_end >= self.min_end_distance:
+                old_record = self.chain_records[group]
+                if chain.is_better_match_than(old_record):
+                    self.chain_records[group] = chain
+                move_count += 1
+            else:
+                break
+        self.queue = self.queue[move_count:]
+
+
 def find_longest_chain_index_from_group_candidates(group_candidates: list[Optional[Chain]], groups: list[Group]) -> int:
     maximum_idx = 0
     maximum_score = 0
@@ -167,16 +210,18 @@ def find_longest_chain(groups: list[Group]) -> list[Group]:
     ends = map_end_to_group(groups)
     chain_records: list[Optional[Chain]] = [None] * len(groups)
     end_list = sorted(ends.items(), reverse=True)
+    queue = DelayedWriter(chain_records)
     for (end_addr, group_idx) in end_list:
+        queue.move_end(end_addr)
         try:
             next_group_idx = starts[next_addr(end_addr)]
             next_chain = chain_records[next_group_idx]
             current_chain = Chain(end_addr, next_chain)
         except KeyError:
             current_chain = Chain(end_addr, None)
-        old_record = chain_records[group_idx]
-        if current_chain.is_better_match_than(old_record):
-            chain_records[group_idx] = current_chain
+        queue.append(group_idx, current_chain)
+    
+    queue.flush()
     
     longest_chain_idx = find_longest_chain_index_from_group_candidates(chain_records, groups)
     record = chain_records[longest_chain_idx] 
