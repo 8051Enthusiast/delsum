@@ -40,8 +40,8 @@ def delsum(file, model):
 # Returns a list containing, for each gap size corresponding to the current
 # index, the number of blocks that have a gap of that size
 def correlate(size, file_model_data):
-    starts = np.zeros(size, dtype=np.float32)
-    ends = np.zeros(size, dtype=np.float32)
+    starts = np.zeros(size, dtype=np.float64)
+    ends = np.zeros(size, dtype=np.float64)
     for segs in file_model_data:
         for start in segs["start"]:
             starts[start] = 1
@@ -58,8 +58,9 @@ def find_blocks_for_model(sizes, model_data, top):
     scores = np.ones(np.max(sizes) - 1, dtype=np.float64)
     for (size, data) in zip(sizes, model_data):
         # make sure that zeros are not included in the geometric mean
-        scores[:size - 1] *= correlate(size, data) + 1
-    scores = np.power(scores, 1/len(sizes)) - 1
+        # by using log(x + 1)
+        scores[:size - 1] += np.log1p(correlate(size, data))
+    scores = np.exp(scores / len(sizes)) - 1
     top_idx = np.argsort(scores)[::-1][:top]
     return (top_idx, scores[top_idx])
 
