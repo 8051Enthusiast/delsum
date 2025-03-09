@@ -86,7 +86,7 @@ def collect_gapped_boundaries(data: list[Group], ends: dict[int, int]) -> tuple[
         for start in seg.start:
             end_addr = prev_addr(start)
             if (byte_position_matches(start, start_pattern) and
-                byte_position_matches(end_addr, end_pattern) and
+                byte_position_matches(end_addr + 1, end_pattern) and
                 end_addr in ends):
                 block_starts[i].add(start)
                 block_ends[ends[end_addr]].add(end_addr)
@@ -248,5 +248,5 @@ def output_groups(groups: list[Group]):
 groups = data_into_group_list(data)
 blocks = find_blocks(groups)
 if longest_chain:
-    blocks = find_longest_chain(groups)
+    blocks = find_longest_chain(blocks)
 output_groups(blocks)
