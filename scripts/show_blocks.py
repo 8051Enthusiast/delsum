@@ -2,7 +2,7 @@
 import argparse
 from dataclasses import dataclass
 from find_blocks import delsum
-from typing import Optional
+from typing import Optional, Literal
 import pathlib
 
 parser = argparse.ArgumentParser(description='Show checksummed blocks in a file')
@@ -15,6 +15,7 @@ parser.add_argument('-e', '--end-pattern', type=str, default='', help="""A hex p
                     you would use ????beef""")
 parser.add_argument('-s', '--start-pattern', type=str, default='', help='A hex pattern (with "?" for digit wildcards) to match before start addresses.')
 parser.add_argument('-l', '--longest-chain', action='store_true', help='Only display a longest chain of consecutive blocks')
+parser.add_argument('-c', '--chain-score', choices=['count', 'size'], default='count', help='How to score chains in longest-chain mode (default: %(default)s)')
 
 args = parser.parse_args()
 
@@ -24,6 +25,7 @@ file: bytes = open(filename, "rb").read()
 data = delsum(filename, model)[model]
 gap: int = args.gap
 longest_chain: bool = args.longest_chain
+chain_score: Literal['count', 'size'] = args.chain_score
 
 if len(args.start_pattern) % 2 != 0:
     raise ValueError("The start pattern must have an even number of characters.")
@@ -120,25 +122,39 @@ def find_groups_with_gaps(data: list[Group]) -> list[Group]:
     return groups_with_gaps
 
 class Chain:
-    count: int
+    current_score: int
     end: int
     next: Optional["Chain"]
 
     def __init__(self, end: int, next: Optional["Chain"] = None):
         self.end = end
         self.next = next
-        if next:
-            self.count = next.count + 1
-        else:
-            self.count = 0
+        if not next:
+            self.current_score = 0
+            return
+        match chain_score:
+            case "count":
+                self.current_score = next.current_score + 1
+            case "size":
+                added_size = next.end - end
+                # we add 1 here to penalize chains of a few long blocks
+                self.current_score = next.current_score + added_size + 1
 
     def is_better_match_than(self, other: Optional["Chain"]) -> bool:
         if other == None:
             return True
-        return self.count > other.count
+        match chain_score:
+            case "count":
+                return self.current_score > other.current_score
+            case "size":
+                return self.end + self.current_score > other.end + other.current_score
 
     def score(self, start: int) -> int:
-        return self.count + 1
+        match chain_score:
+            case "count":
+                return self.current_score + 1
+            case "size":
+                return self.end - start + 1 + self.current_score
     
     def add_groups(self, groups: list[Group], start: int):
         cur: Optional["Chain"] = self
