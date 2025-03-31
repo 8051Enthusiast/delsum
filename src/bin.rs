@@ -70,18 +70,14 @@ fn reverse(opts: &Reverse) {
 
     if opts.json {
         let algos = match parallel {
-            true =>
-            {
-                #[cfg(feature = "parallel")]
-                models
-                    .par_iter()
-                    .map(|model| (algorithms(model), model))
-                    .flat_map(|(r, model)| {
-                        r.find_all_para()
-                            .flat_map(move |a| handle_errors(model, a))
-                    })
-                    .collect::<Vec<_>>()
-            }
+            #[cfg(feature = "parallel")]
+            true => models
+                .par_iter()
+                .map(|model| (algorithms(model), model))
+                .flat_map(|(r, model)| r.find_all_para().flat_map(move |a| handle_errors(model, a)))
+                .collect::<Vec<_>>(),
+            #[cfg(not(feature = "parallel"))]
+            true => unreachable!(),
             false => models
                 .iter()
                 .map(|model| (algorithms(model), model))
@@ -186,14 +182,13 @@ fn part(opts: &Part) {
     };
     if opts.json {
         let segs = match parallel {
-            true =>
-            {
-                #[cfg(feature = "parallel")]
-                models
-                    .par_iter()
-                    .map(json_format)
-                    .collect::<HashMap<_, _>>()
-            }
+            #[cfg(feature = "parallel")]
+            true => models
+                .par_iter()
+                .map(json_format)
+                .collect::<HashMap<_, _>>(),
+            #[cfg(not(feature = "parallel"))]
+            true => unreachable!(),
             false => models.iter().map(json_format).collect::<HashMap<_, _>>(),
         };
         println!("{}", serde_json::to_string_pretty(&segs).unwrap());
@@ -285,14 +280,13 @@ fn check(opts: &Check) {
     };
     if opts.json {
         let checksums = match parallel {
-            true =>
-            {
-                #[cfg(feature = "parallel")]
-                models
-                    .par_iter()
-                    .map(json_format)
-                    .collect::<HashMap<_, _>>()
-            }
+            #[cfg(feature = "parallel")]
+            true => models
+                .par_iter()
+                .map(json_format)
+                .collect::<HashMap<_, _>>(),
+            #[cfg(not(feature = "parallel"))]
+            true => unreachable!(),
             false => models.iter().map(json_format).collect::<HashMap<_, _>>(),
         };
         println!("{}", serde_json::to_string_pretty(&checksums).unwrap());

@@ -13,10 +13,7 @@ default = ["parallel"]
 parallel = ["delsum-lib/default", "rayon"]
 
 [workspace]
-members = [
-    "delsum-poly",
-    "delsum-lib",
-]
+members = ["delsum-lib"]
 
 [[bin]]
 name = "delsum"
@@ -29,3 +26,12 @@ delsum-lib = { path = "delsum-lib", default-features = false, version = "0.2.1" 
 clap = { version = "4.4", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+
+[profile.dist]
+inherits = "release"
+lto = true
+strip = "symbols"
+codegen-units = 1
+
+[profile.release]
+debug = true

@@ -14,11 +14,10 @@ use super::{CrcBuilder, CRC};
 use crate::checksum::CheckReverserError;
 use crate::endian::{bytes_to_int, int_to_bytes, wordspec_combos, Endian, WordSpec};
 use crate::utils::{cart_prod, unresult_iter};
-use delsum_poly::*;
+use gf2poly::*;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use std::convert::TryInto;
-use std::pin::Pin;
 
 /// Find the parameters of a CRC algorithm.
 ///
@@ -178,7 +177,7 @@ fn reverse<'a>(
         None => return Err(None),
     };
     // sort by reverse file length
-    polys.sort_by(|(fa, la), (fb, lb)| la.cmp(lb).then(deg(fa).cmp(&deg(fb)).reverse()));
+    polys.sort_by(|(fa, la), (fb, lb)| la.cmp(lb).then(fa.deg().cmp(&fb.deg()).reverse()));
     // convert parameters to polynomials
     let revinfo = RevInfo::from_builder(spec, refin, refout, wordspec);
     rev_from_polys(&revinfo, &polys, verbosity).map(|x| x.iter())
@@ -186,9 +185,9 @@ fn reverse<'a>(
 
 struct RevInfo {
     width: usize,
-    init: Option<PolyPtr>,
-    xorout: Option<PolyPtr>,
-    poly: Option<PolyPtr>,
+    init: Option<Gf2Poly>,
+    xorout: Option<Gf2Poly>,
+    poly: Option<Gf2Poly>,
     refin: bool,
     refout: bool,
     wordspec: WordSpec,
@@ -204,17 +203,17 @@ impl RevInfo {
         wordspec: WordSpec,
     ) -> Self {
         let width = spec.width.unwrap();
-        let init = spec.init.map(|i| new_poly(&i.to_le_bytes()));
+        let init = spec.init.map(|i| Gf2Poly::from_bytes(&i.to_le_bytes()));
         let poly = spec.poly.map(|p| {
-            let mut p = new_poly(&p.to_le_bytes());
+            let mut p = Gf2Poly::from_bytes(&p.to_le_bytes());
             // add leading coefficient, which is omitted in binary form
-            p.pin_mut().add_to(&new_poly_shifted(&[1], width as i64));
+            p += Gf2Poly::x_to_the_power_of(width as u64);
             p
         });
         // while init and poly are unaffected by refout, xorout is not
         let xorout = spec
             .xorout
-            .map(|x| new_poly(&cond_reverse(width as u8, x, refout).to_le_bytes()));
+            .map(|x| Gf2Poly::from_bytes(&cond_reverse(width as u8, x, refout).to_le_bytes()));
         RevInfo {
             width,
             init,
@@ -228,7 +227,7 @@ impl RevInfo {
 }
 
 struct RevResult {
-    polys: Vec<PolyPtr>,
+    polys: Vec<Gf2Poly>,
     inits: PrefactorMod,
     xorout: InitPoly,
     width: usize,
@@ -255,9 +254,10 @@ impl RevResult {
                 .iter_inits(&pol, &xorout)
                 .map(move |(poly_p, init_p, xorout_p)| {
                     // convert polynomial parameters to a CRC<u128>
-                    let poly = poly_to_u128(&add(&poly_p, &new_poly_shifted(&[1], width as i64)));
-                    let init = poly_to_u128(&init_p);
-                    let xorout = cond_reverse(width as u8, poly_to_u128(&xorout_p), refout);
+                    let poly =
+                        poly_to_u128(poly_p + Gf2Poly::x_to_the_power_of(width as u64)).unwrap();
+                    let init = poly_to_u128(init_p).unwrap();
+                    let xorout = cond_reverse(width as u8, poly_to_u128(xorout_p).unwrap(), refout);
                     CRC::<u128>::with_options()
                         .width(width)
                         .poly(poly)
@@ -282,7 +282,7 @@ enum InitPlace {
     Pair(usize, usize),
 }
 
-type InitPoly = (PolyPtr, InitPlace);
+type InitPoly = (Gf2Poly, InitPlace);
 
 // The parameter reversing for CRC is quite similar and it may be easier to try to understand that implementation first,
 // since it uses integers instead of 𝔽₂[X].
@@ -329,7 +329,7 @@ type InitPoly = (PolyPtr, InitPlace);
 // Using the factorization, we can then iterate over all divisors of degree width.
 fn rev_from_polys(
     spec: &RevInfo,
-    arg_polys: &[(PolyPtr, usize)],
+    arg_polys: &[(Gf2Poly, usize)],
     verbosity: u64,
 ) -> Result<RevResult, Option<CheckReverserError>> {
     let log = |s| {
@@ -345,7 +345,7 @@ fn rev_from_polys(
     let mut polys: Vec<_> = arg_polys
         .iter()
         .rev()
-        .map(|(p, l)| (copy_poly(p), InitPlace::Single(*l)))
+        .map(|(p, l)| (p.clone(), InitPlace::Single(*l)))
         .collect();
     if let Some(init) = &spec.init {
         log("removing inits");
@@ -356,18 +356,15 @@ fn rev_from_polys(
     log("finding poly");
     let (polys, mut hull) = find_polyhull(spec, polys, verbosity)?;
     log("finding init and refining poly");
-    let init = find_init(&spec.init, hull.pin_mut(), polys);
+    let init = find_init(spec.init.as_ref(), &mut hull, polys);
     let polyhull_factors: Vec<_>;
-    if deg(&hull) > 0 {
-        xorout.0.pin_mut().rem_to(&hull);
+    if hull.deg() > 0 {
+        xorout.0 %= &hull;
         log("factoring poly");
-        polyhull_factors = factor(&hull, if verbosity > 1 { 1 } else { 0 })
-            .into_iter()
-            .map(|PolyI64Pair { poly, l }| (copy_poly(poly), *l))
-            .collect();
+        polyhull_factors = hull.factor();
     } else {
         log("could not find any fitting factors for poly");
-        xorout.0 = new_zero();
+        xorout.0 = Gf2Poly::zero();
         polyhull_factors = vec![];
     }
     log("finding all factor combinations for poly and finishing");
@@ -382,11 +379,11 @@ fn rev_from_polys(
     })
 }
 
-fn remove_inits(init: &Poly, polys: &mut [InitPoly]) {
+fn remove_inits(init: &Gf2Poly, polys: &mut [InitPoly]) {
     for (p, l) in polys {
         match l {
             InitPlace::Single(d) => {
-                p.pin_mut().add_to(&shift(init, 8 * *d as i64));
+                *p += init.clone() << 8 * *d as u64;
                 *l = InitPlace::None;
             }
             // note: this branch shouldn't happen, but it is also no problem if it happens
@@ -400,7 +397,7 @@ fn remove_inits(init: &Poly, polys: &mut [InitPoly]) {
 }
 
 fn remove_xorouts(
-    maybe_xorout: &Option<PolyPtr>,
+    maybe_xorout: &Option<Gf2Poly>,
     mut polys: Vec<InitPoly>,
 ) -> (Vec<InitPoly>, InitPoly) {
     let mut ret_vec = Vec::new();
@@ -411,15 +408,15 @@ fn remove_xorouts(
         Some(xorout) => {
             // if we already have xorout, we can subtract it from the files themselves so
             // that we have one more to get parameters from
-            ret_vec.push((add(&prev.0, xorout), prev.1));
-            (copy_poly(xorout), InitPlace::None)
+            ret_vec.push((&prev.0 + xorout, prev.1));
+            (xorout.clone(), InitPlace::None)
         }
-        None => (copy_poly(&prev.0), prev.1),
+        None => (prev.0.clone(), prev.1),
     };
     for (p, l) in polys.into_iter().rev() {
         let appendix = match (maybe_xorout, l != InitPlace::None && l == prev.1) {
             (None, _) | (_, true) => {
-                let poly_diff = add(&p, &prev.0);
+                let poly_diff = &p + &prev.0;
                 let new_init_place = match (prev.1, l) {
                     // no coefficients being one means it is zero and therefore the neutral element
                     (InitPlace::None, other) | (other, InitPlace::None) => other,
@@ -438,7 +435,7 @@ fn remove_xorouts(
                 (poly_diff, new_init_place)
             }
             (Some(xorout), false) => {
-                let poly_no_xorout = add(&p, xorout);
+                let poly_no_xorout = &p + xorout;
                 (poly_no_xorout, l)
             }
         };
@@ -452,7 +449,7 @@ fn find_polyhull(
     spec: &RevInfo,
     polys: Vec<InitPoly>,
     verbosity: u64,
-) -> Result<(Vec<InitPoly>, PolyPtr), Option<CheckReverserError>> {
+) -> Result<(Vec<InitPoly>, Gf2Poly), Option<CheckReverserError>> {
     let log = |s| {
         if verbosity > 1 {
             eprintln!(
@@ -462,30 +459,26 @@ fn find_polyhull(
         }
     };
     let mut contain_init_vec = Vec::new();
-    let mut hull = spec
-        .poly
-        .as_ref()
-        .map(|x| copy_poly(x))
-        .unwrap_or_else(new_zero);
+    let mut hull = spec.poly.clone().unwrap_or_else(Gf2Poly::zero);
     log("gcd'ing same length files together");
     for (p, l) in polys {
         match l {
             InitPlace::None => {
                 // if init is multiplied by 0, this is already a multiple of poly so we can gcd it to our estimate
-                hull.pin_mut().gcd_to(&p);
+                hull = hull.gcd(p);
             }
             _ => {
                 contain_init_vec.push((p, l));
             }
         }
-        if deg(&hull) == 0 {
+        if hull.is_one() {
             return Ok((contain_init_vec, hull));
         }
     }
 
     log("gcd'ing different length files together");
     for ((p, l), (q, m)) in contain_init_vec.iter().zip(contain_init_vec.iter().skip(1)) {
-        let power_8n = |n: usize| new_poly_shifted(&[1], 8 * n as i64);
+        let power_8n = |n: usize| Gf2Poly::x_to_the_power_of(8 * n as u64);
         // this essentially tries to cancel out the init in the checksums
         // if you have a*init and b*init, you can get 0 by calculating b*a*init - a*b*init
         // this is almost done here, except for cancelling unneccessary common X^k between a and b
@@ -522,8 +515,8 @@ fn find_polyhull(
         q_fac *= p;
         q_fac += &p_fac;
         // q_fac should now contain no init, so we can gcd it to the hull
-        hull.pin_mut().gcd_to(&q_fac);
-        if deg(&hull) == 0 {
+        hull = hull.gcd(q_fac);
+        if hull.is_one() {
             return Ok((contain_init_vec, hull));
         }
     }
@@ -543,9 +536,10 @@ fn find_polyhull(
     // exactly floor(width/k) p_d where k divides d.
     // Now, that polynomial would be quite large, but we only care about the gcd of this polynomial
     // with hull, so we can evaluated this modulo hull.
-    let mut cumulative_prod = new_polyrem(&new_poly(&[1]), &hull);
-    let x = new_polyrem(&new_poly(&[1 << 1]), &hull);
-    let mut x_to_2_to_n = copy_polyrem(&x);
+    let mut cumulative_prod = &Gf2Poly::one() % &hull;
+    let x = &Gf2Poly::x() % &hull;
+    let hullmod = Gf2PolyMod::new(hull);
+    let mut x_to_2_to_n = Gf2Poly::x();
     for i in 0..spec.width {
         if verbosity > 1 {
             eprintln!(
@@ -553,24 +547,22 @@ fn find_polyhull(
                 spec.refin, spec.refout, i, spec.width
             )
         }
-        x_to_2_to_n.pin_mut().sqr();
-        let mut fac = copy_polyrem(&x_to_2_to_n);
-        fac += &x;
+        x_to_2_to_n = hullmod.square(&x_to_2_to_n);
+        let fac = &x_to_2_to_n + &x;
         // (fac = x^(2^n) + x)
-        cumulative_prod *= &fac;
+        cumulative_prod = hullmod.mul(&cumulative_prod, &fac);
     }
     drop(x_to_2_to_n);
-    let reduced_prod = cumulative_prod.rep();
-    drop(cumulative_prod);
     log("doing final gcd");
-    hull.pin_mut().gcd_to(&reduced_prod);
+    hull = hullmod.modulus_value();
+    hull = hull.gcd(cumulative_prod);
     log("removing trailing zeros");
     // we don't care about the factor X^k in the hull, since crc polys should
     // have the lowest bit set (why would you not??)
     // it is also assumed later that this holds, so this can not just be removed
     for i in 0..=spec.width {
-        if hull.coeff(i as i64) {
-            hull = shift(&hull, -(i as i64));
+        if hull.get(i as u64) {
+            hull >>= i as u64;
             break;
         }
     }
@@ -583,32 +575,35 @@ fn find_polyhull(
 // so we can reuse it later
 struct MemoPower {
     prev_power: usize,
-    prev_ppoly: PolyRemPtr,
-    init_fac: PolyPtr,
-    hull: PolyPtr,
+    prev_ppoly: Gf2Poly,
+    init_fac: Gf2Poly,
+    hull: Gf2Poly,
 }
 impl MemoPower {
-    fn new(hull: &Poly) -> Self {
+    fn new(hull: &Gf2Poly) -> Self {
         MemoPower {
             prev_power: 0,
-            prev_ppoly: new_polyrem(&new_poly(&[1]), hull),
-            init_fac: new_zero(),
-            hull: copy_poly(hull),
+            prev_ppoly: Gf2Poly::one() % hull,
+            init_fac: Gf2Poly::zero(),
+            hull: hull.clone(),
         }
     }
-    fn update_init_fac(&mut self, place: &InitPlace) -> &Poly {
+
+    fn update_init_fac(&mut self, place: &InitPlace) -> &Gf2Poly {
         let mut update_power = |&new_level: &usize| {
             if new_level < self.prev_power {
                 panic!("Internal Error: Polynomials non-ascending");
             }
-            let x = new_polyrem(&new_poly(&[1 << 1]), &self.hull);
-            let power_diff = powermod(&x, (new_level - self.prev_power) as i64 * 8);
+            let x = Gf2Poly::x();
+            let power_diff = self
+                .hull
+                .mod_power(&x, (new_level - self.prev_power) as u64 * 8);
             self.prev_power = new_level;
-            self.prev_ppoly *= &power_diff;
-            self.prev_ppoly.rep()
+            self.prev_ppoly = self.hull.mod_mul(&self.prev_ppoly, &power_diff);
+            self.prev_ppoly.clone()
         };
         self.init_fac = match place {
-            InitPlace::None => new_zero(),
+            InitPlace::None => Gf2Poly::zero(),
             InitPlace::Single(d) => update_power(d),
             InitPlace::Pair(d1, d2) => {
                 let mut current_power = update_power(d1);
@@ -618,109 +613,102 @@ impl MemoPower {
         };
         &self.init_fac
     }
-    fn get_init_fac(&self) -> &Poly {
+
+    fn get_init_fac(&self) -> &Gf2Poly {
         &self.init_fac
     }
-    fn update_hull(&mut self, hull: &Poly) {
-        self.hull = copy_poly(hull);
-        self.prev_ppoly = new_polyrem(&self.prev_ppoly.rep(), hull)
+
+    fn update_hull(&mut self, hull: &Gf2Poly) {
+        self.hull = hull.clone();
+        self.prev_ppoly %= hull;
     }
 }
 // describes a set of solutions for unknown*possible % hull
 struct PrefactorMod {
-    unknown: PolyPtr,
-    possible: PolyPtr,
-    hull: PolyPtr,
+    unknown: Gf2Poly,
+    possible: Gf2Poly,
+    hull: Gf2Poly,
 }
 
 impl PrefactorMod {
     fn empty() -> Self {
         PrefactorMod {
-            unknown: new_poly(&[1]),
-            possible: new_zero(),
-            hull: new_poly(&[1]),
+            unknown: Gf2Poly::one(),
+            possible: Gf2Poly::zero(),
+            hull: Gf2Poly::one(),
         }
     }
-    fn new_init(maybe_init: &Option<PolyPtr>, hull: &Poly) -> Self {
+    fn new_init(maybe_init: Option<&Gf2Poly>, hull: &Gf2Poly) -> Self {
         // if we already have init, we can use that for our solution here, otherwise use the
         // set of all possible solutions
         let (unknown, possible) = match maybe_init {
-            None => (copy_poly(hull), new_zero()),
-            Some(init) => (new_poly(&[1]), copy_poly(init)),
+            None => (hull.clone(), Gf2Poly::zero()),
+            Some(init) => (Gf2Poly::one(), init.clone()),
         };
         PrefactorMod {
             unknown,
             possible,
-            hull: copy_poly(hull),
+            hull: hull.clone(),
         }
     }
 
-    fn new_file(
-        mut file: PolyPtr,
-        power: &mut MemoPower,
-        mut hull: Pin<&mut Poly>,
-    ) -> Option<Self> {
-        file.pin_mut().rem_to(&hull);
-        let file_float = gcd(&file, &hull);
-        let power_float = gcd(power.get_init_fac(), &hull);
-        let common_float = gcd(&power_float, &file_float);
+    fn new_file(mut file: Gf2Poly, power: &mut MemoPower, hull: &mut Gf2Poly) -> Option<Self> {
+        file %= &*hull;
+        let file_float = file.clone().gcd(hull.clone());
+        let power_float = power.get_init_fac().clone().gcd(hull.clone());
+        let common_float = power_float.clone().gcd(file_float.clone());
         // power_float has to divide file_float in the hull
-        let discrepancy = div(&power_float, &common_float);
-        if !discrepancy.eq(&new_poly(&[1])) {
+        let discrepancy = &power_float / &common_float;
+        if !discrepancy.is_one() {
             // if it does not, we change the hull so that it does
             // by replacing the hull_part with the file_part in the hull
             let hull_part = highest_power_gcd(&hull, &discrepancy);
-            let file_part = gcd(&file_float, &hull_part);
+            let file_part = file_float.gcd(hull_part.clone());
             // since discrepancy divides file_part and file_part divides hull, resue file_part here
-            hull.as_mut().div_to(&hull_part);
-            hull.as_mut().mul_to(&file_part);
-            if deg(&hull) <= 0 {
+            *hull /= hull_part;
+            *hull *= &file_part;
+            if hull.is_constant() {
                 return None;
             }
             power.update_hull(&hull);
+        } else {
+            drop(file_float);
         }
         drop(discrepancy);
         drop(power_float);
-        drop(file_float);
         // since we only have power*init ≡ mod hull, but want to calculate init,
         // we need to calculate the modular inverse
-        let possible = inverse_fixed(file, power.get_init_fac(), &common_float, &hull);
+        let possible = inverse_divisible(file, power.get_init_fac(), &common_float, &hull);
         Some(PrefactorMod {
             unknown: common_float,
             possible,
-            hull: copy_poly(&hull),
+            hull: hull.clone(),
         })
     }
 
-    fn update_hull(&mut self, hull: &Poly) {
-        if self.hull.eq(hull) {
+    fn update_hull(&mut self, hull: &Gf2Poly) {
+        if &self.hull == hull {
             return;
         }
-        self.hull = copy_poly(hull);
-        self.unknown.pin_mut().gcd_to(hull);
+        self.hull = hull.clone();
+        self.unknown = std::mem::take(&mut self.unknown).gcd(hull.clone());
         self.possible %= &self.valid();
     }
 
     // merge two different sets of solutions into one where the hull is the gcd of both
     // and all solutions are valid in both
-    fn merge(mut self, mut other: Self, mut hull: Pin<&mut Poly>) -> Option<Self> {
+    fn merge(mut self, mut other: Self, hull: &mut Gf2Poly) -> Option<Self> {
         self.update_hull(&hull);
         other.update_hull(&hull);
-        self.adjust_compability(&mut other, hull.as_mut());
-        if deg(&hull) <= 0 {
+        self.adjust_compatibility(&mut other, hull);
+        if hull.is_constant() {
             return None;
         }
-        let mut self_fac = new_zero();
-        let mut other_fac = new_zero();
         let self_valid = self.valid();
         let other_valid = other.valid();
         // this is the chinese remainder theorem for non-coprime ideals
-        let common_valid = xgcd(
-            self_fac.pin_mut(),
-            other_fac.pin_mut(),
-            &self_valid,
-            &other_valid,
-        );
+        let (common_valid, [mut self_fac, mut other_fac]) =
+            self_valid.clone().xgcd(other_valid.clone());
         self_fac *= &self_valid;
         self_fac *= &other.possible;
         other_fac *= &other_valid;
@@ -728,83 +716,76 @@ impl PrefactorMod {
         self_fac += &other_fac;
         self_fac /= &common_valid;
         self.possible = self_fac;
-        self.unknown = gcd(&self.unknown, &other.unknown);
+        self.unknown = self.unknown.gcd(other.unknown);
         Some(self)
     }
 
     // in order to chinese remainder with a common factor, both polynomials modulo
     // the common factor need to be the same
     // if this is not the case, the hull is adjusted
-    fn adjust_compability(&mut self, other: &mut Self, mut hull: Pin<&mut Poly>) {
-        let common_valid = gcd(&self.valid(), &other.valid());
-        let actual_valid = gcd(&add(&self.possible, &other.possible), &common_valid);
-        hull.as_mut().div_to(&common_valid);
-        hull.as_mut().mul_to(&actual_valid);
-        if deg(&hull) <= 0 {
+    fn adjust_compatibility(&mut self, other: &mut Self, hull: &mut Gf2Poly) {
+        let common_valid = self.valid().gcd(other.valid());
+        *hull /= &common_valid;
+        let actual_valid = common_valid.gcd(&self.possible + &other.possible);
+        *hull *= &actual_valid;
+        if hull.is_constant() {
             return;
         }
         self.update_hull(&hull);
         other.update_hull(&hull);
     }
 
-    fn valid(&self) -> PolyPtr {
-        div(&self.hull, &self.unknown)
+    fn valid(&self) -> Gf2Poly {
+        &self.hull / &self.unknown
     }
 
     fn iter_inits(
         &self,
-        red_poly: &Poly,
+        red_poly: &Gf2Poly,
         xorout: &InitPoly,
-    ) -> impl Iterator<Item = (PolyPtr, PolyPtr, PolyPtr)> {
-        let red_unknown = gcd(&self.unknown, red_poly);
-        let red_valid = div(red_poly, &red_unknown);
-        let red_init = rem(&self.possible, &red_valid);
-        let mod_valid = new_polyrem(&red_valid, red_poly);
-        let mod_init = new_polyrem(&red_init, red_poly);
-        let mod_xorout = new_polyrem(&xorout.0, red_poly);
-        let x = new_polyrem(&new_poly(&[&1 << 1]), red_poly);
+    ) -> impl Iterator<Item = (Gf2Poly, Gf2Poly, Gf2Poly)> {
+        let red_unknown = self.unknown.clone().gcd(red_poly.clone());
+        let red_valid = red_poly / &red_unknown;
+        let red_init = &self.possible % &red_valid;
+        let red_xorout = &xorout.0 % red_poly;
         let mod_power = match xorout.1 {
-            InitPlace::None => new_polyrem(&new_zero(), red_poly),
-            InitPlace::Single(l) => powermod(&x, 8 * l as i64),
+            InitPlace::None => Gf2Poly::zero(),
+            InitPlace::Single(l) => red_poly.mod_power(&Gf2Poly::x(), 8 * l as u64),
             _ => panic!("Internal Error: Double"),
         };
-        let poly_copy = copy_poly(red_poly);
+        let red_poly = red_poly.clone();
         let max = 1u128
-            .checked_shl(deg(&red_unknown) as u32)
+            .checked_shl(red_unknown.deg().try_into().unwrap_or(u32::MAX))
             .unwrap_or(0)
             .wrapping_sub(1);
         // iterate over all polynomials p mod red_unknown and calculate possible + valid*p
         (0u128..=max).map(move |p| {
-            let mut current_init = new_polyrem(&new_poly(&p.to_le_bytes()), &poly_copy);
-            current_init *= &mod_valid;
-            current_init += &mod_init;
+            let mut current_init = &Gf2Poly::from_bytes(&p.to_le_bytes()) % &red_poly;
+            current_init = red_poly.mod_mul(&current_init, &red_valid);
+            current_init += &red_init;
             // also calculate the corresponding xorouts while we're at it
-            let mut current_xorout = copy_polyrem(&mod_power);
-            current_xorout *= &current_init;
-            current_xorout += &mod_xorout;
-            (
-                copy_poly(&poly_copy),
-                current_init.rep(),
-                current_xorout.rep(),
-            )
+            let mut current_xorout = mod_power.clone();
+            current_xorout = red_poly.mod_mul(&current_xorout, &current_init);
+            current_xorout += &red_xorout;
+            (red_poly.clone(), current_init, current_xorout)
         })
     }
 }
 
 fn find_init(
-    maybe_init: &Option<PolyPtr>,
-    mut hull: Pin<&mut Poly>,
+    maybe_init: Option<&Gf2Poly>,
+    hull: &mut Gf2Poly,
     polys: Vec<InitPoly>,
 ) -> PrefactorMod {
-    if deg(&hull) <= 0 {
+    if hull.is_constant() {
         return PrefactorMod::empty();
     }
     let mut ret = PrefactorMod::new_init(maybe_init, &hull);
     let mut power = MemoPower::new(&hull);
     for (p, l) in polys {
         power.update_init_fac(&l);
-        let file_solutions = PrefactorMod::new_file(p, &mut power, hull.as_mut());
-        ret = match file_solutions.and_then(|f| ret.merge(f, hull.as_mut())) {
+        let file_solutions = PrefactorMod::new_file(p, &mut power, hull);
+        ret = match file_solutions.and_then(|f| ret.merge(f, hull)) {
             Some(valid) => valid,
             None => return PrefactorMod::empty(),
         }
@@ -813,57 +794,50 @@ fn find_init(
 }
 
 // calculates lim_{n to inf} gcd(a, b^n)
-fn highest_power_gcd(a: &Poly, b: &Poly) -> PolyPtr {
-    let mut prev = new_poly(&[1]);
+fn highest_power_gcd(a: &Gf2Poly, b: &Gf2Poly) -> Gf2Poly {
+    if a.is_zero() {
+        return Gf2Poly::zero();
+    }
+    let mut prev = Gf2Poly::one();
     let mut cur = b % a;
     while !cur.eq(&prev) {
-        prev = copy_poly(&cur);
-        cur.pin_mut().sqr();
-        cur.pin_mut().gcd_to(a);
+        prev = cur.clone();
+        cur = cur.square();
+        cur = cur.gcd(a.clone());
     }
     cur
 }
 
-// ntl's modular division doesn't account for common factors between
-// the arguments, so this is a version which does
-fn inverse_fixed(mut a: PolyPtr, b: &Poly, common: &Poly, hull: &Poly) -> PolyPtr {
+fn inverse_divisible(mut a: Gf2Poly, b: &Gf2Poly, common: &Gf2Poly, hull: &Gf2Poly) -> Gf2Poly {
     a /= common;
-    let mut b = copy_poly(b);
-    b /= common;
-    let module = div(hull, common);
-    if module.eq(&new_poly(&[1])) {
-        return new_zero();
+    let b = b / common;
+    let modulus = hull / common;
+    if modulus.is_one() {
+        return Gf2Poly::zero();
     }
-    let mut ma = new_polyrem(&a, &module);
-    let mb = new_polyrem(&b, &module);
-    ma /= &mb;
-    ma.rep()
+    modulus.mod_div(&a, &b).unwrap()
 }
 
 fn find_prod_comb(
     width: usize,
     // (degree, multiplicity)
-    gens: &[(PolyPtr, i64)],
-) -> Vec<PolyPtr> {
+    gens: &[(Gf2Poly, u64)],
+) -> Vec<Gf2Poly> {
     // there's no reason i implemented it like this in particular; the problem is NP complete
     // and i've got no clue how to efficiently solve it anyway and this seemed like a simple solution
-    let mut ret: Vec<Vec<PolyPtr>> = (0..=width).map(|_| Vec::new()).collect();
+    let mut ret: Vec<Vec<Gf2Poly>> = (0..=width).map(|_| Vec::new()).collect();
     for (p, l) in gens.iter() {
-        // since Poly doesn't implement clone, this will have to do for now
-        let retcopy: Vec<Vec<_>> = ret
-            .iter()
-            .map(|v| v.iter().map(|q| copy_poly(q)).collect())
-            .collect();
-        let mut q = copy_poly(p);
+        let retcopy = ret.clone();
+        let mut q = p.clone();
         for _ in 1..=*l {
-            let inc_deg = deg(&q) as usize;
+            let inc_deg = q.deg() as usize;
             if inc_deg > width {
                 break;
             }
-            ret[inc_deg].push(copy_poly(&q));
+            ret[inc_deg].push(q.clone());
             for (j, el) in retcopy[0..=width - inc_deg].iter().enumerate() {
                 for m in el {
-                    ret[j + inc_deg].push(mul(&q, m));
+                    ret[j + inc_deg].push(&q * m);
                 }
             }
             q *= p;
@@ -879,16 +853,18 @@ fn bytes_to_poly(
     refin: bool,
     refout: bool,
     wordspec: WordSpec,
-) -> Option<PolyPtr> {
+) -> Option<Gf2Poly> {
     let new_bytes = reorder_poly_bytes(bytes, refin, wordspec);
-    let mut poly = new_poly_shifted(&new_bytes, width as i64);
+    let mut poly = Gf2Poly::from_bytes(&new_bytes);
+    poly <<= width;
+
     let sum = bytes_to_int(checksum, wordspec.output_endian);
     let check_mask = 1u128.checked_shl(width as u32).unwrap_or(0).wrapping_sub(1);
     if (!check_mask & sum) != 0 {
         return None;
     }
     let check = cond_reverse(width, sum, refout);
-    poly += &new_poly(&check.to_le_bytes());
+    poly += Gf2Poly::from_bytes(&check.to_le_bytes());
     Some(poly)
 }
 
@@ -915,15 +891,11 @@ fn cond_reverse(width: u8, value: u128, refout: bool) -> u128 {
     }
 }
 
-fn poly_to_u128(poly: &Poly) -> u128 {
-    u128::from_be_bytes(
-        poly.to_bytes(16)
-            .as_ref()
-            .unwrap()
-            .as_slice()
-            .try_into()
-            .unwrap(),
-    )
+fn poly_to_u128(poly: Gf2Poly) -> Option<u128> {
+    let mut bytes = poly.to_bytes();
+    bytes.resize(bytes.len().max(std::mem::size_of::<u128>()), 0);
+    bytes.reverse();
+    Some(u128::from_be_bytes(bytes.as_slice().try_into().ok()?))
 }
 
 #[cfg(test)]
