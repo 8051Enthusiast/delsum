@@ -13,7 +13,7 @@ default = ["parallel"]
 parallel = ["delsum-lib/default", "rayon"]
 
 [workspace]
-members = ["delsum-lib"]
+members = ["delsum-lib", "delsum-web"]
 
 [[bin]]
 name = "delsum"

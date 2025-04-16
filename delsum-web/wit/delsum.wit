@@ -1,0 +1,11 @@
+package delsum:web;
+interface checksums {
+  record checksummed-file {
+    file: list<u8>,
+    checksum: list<u8>,
+  }
+  reverse: func(files: list<checksummed-file>, model: string) -> result<string, string>;
+}
+world delsum {
+  export checksums;
+}
