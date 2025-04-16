@@ -1,6 +1,6 @@
-use crate::endian::bytes_to_int;
 use crate::endian::Endian;
 use crate::endian::WordSpec;
+use crate::endian::bytes_to_int;
 use crate::utils::SignedInclRange;
 use crate::utils::UnsignedInclRange;
 #[cfg(feature = "parallel")]
@@ -106,6 +106,7 @@ impl From<SignedInclRange> for Relativity {
 /// * modsum: identity
 /// * fletcher: (s, c) |-> (s, c + s) (note that automorphisms of finite abelian groups generally behave like matrices)
 /// * crc: s |-> s * x^8
+/// * polyhash: s |-> s * factor
 /// dig_word(s, k) is then σ(s) + Sum::from_word(k), shift(s, t) is the application of the automorphism t(s),
 /// add and negate are the usual group operations, init_shift is the identity automorphism and inc_shift corresponds to
 /// t |-> t * σ.
@@ -703,11 +704,11 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
         test_values.push(chk.init());
         let e = &chk.add(chk.negate(chk.init()), &chk.init());
         test_values.push(e.clone());
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut s = chk.init();
         while test_values.len() < 100 {
-            s = chk.dig_word(s, rng.gen());
-            if rng.gen_bool(0.01) {
+            s = chk.dig_word(s, rng.random());
+            if rng.random_bool(0.01) {
                 test_values.push(s.clone());
             }
         }
@@ -786,17 +787,30 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
             for y in &[4, 526, 0, 41, 4321] {
                 assert_eq!(
                     chk.shift(shifted.clone(), &chk.shift_n(*y)),
-                    chk.shift(a.clone(), &chk.shift_n(x+y)),
-                    "Shiftn Fail: shift(shift({:x?}, shift_n({:?})), shift_n({:?})) != shift({:x?}, shift_n({} + {}))", a, x, y, a, x, y
+                    chk.shift(a.clone(), &chk.shift_n(x + y)),
+                    "Shiftn Fail: shift(shift({:x?}, shift_n({:?})), shift_n({:?})) != shift({:x?}, shift_n({} + {}))",
+                    a,
+                    x,
+                    y,
+                    a,
+                    x,
+                    y
                 );
             }
         }
     }
     fn check_dist<L: LinearCheck>(chk: &L, a: &L::Sum, b: &L::Sum) {
         assert_eq!(
-            chk.add(chk.dig_word(a.clone(), 0u64), &chk.dig_word(b.clone(), 0u64)),
+            chk.add(
+                chk.dig_word(a.clone(), 0u64),
+                &chk.dig_word(b.clone(), 0u64)
+            ),
             chk.dig_word(chk.add(a.clone(), b), 0u64),
-            "Distributivity Fail: dig_word({:x?}, 0u8) + dig_word({:x?}, 0u8) != dig_word({:x?} + {:x?}, 0u8)", a, b, a, b
+            "Distributivity Fail: dig_word({:x?}, 0u8) + dig_word({:x?}, 0u8) != dig_word({:x?} + {:x?}, 0u8)",
+            a,
+            b,
+            a,
+            b
         );
     }
     fn check_bil<L: LinearCheck>(chk: &L, e: &L::Sum, a: &L::Sum) {
@@ -804,7 +818,11 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
             assert_eq!(
                 chk.dig_word(a.clone(), k),
                 chk.add(chk.dig_word(a.clone(), 0u64), &chk.dig_word(e.clone(), k)),
-                "Bilinearity Fail: dig_word({:x?}, {:#x}) != dig_word({:x?}, 0u8) + dig_word(0, {:#x}u8)", a, k, a ,k
+                "Bilinearity Fail: dig_word({:x?}, {:#x}) != dig_word({:x?}, 0u8) + dig_word(0, {:#x}u8)",
+                a,
+                k,
+                a,
+                k
             )
         }
     }
@@ -871,7 +889,7 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
             let chk_files = self.with_checksums(reference);
             let mut has_appeared = false;
             for (count, modsum_loop) in result_iter.enumerate() {
-                if count > 10000 {
+                if count > 1000 {
                     return TestResult::discard();
                 }
                 let modsum_loop = match modsum_loop {

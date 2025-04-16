@@ -16,10 +16,10 @@
 use super::{Fletcher, FletcherBuilder};
 use crate::checksum::CheckReverserError;
 use crate::divisors::divisors_range;
-use crate::endian::{bytes_to_int, wordspec_combos, WordSpec};
+use crate::endian::{WordSpec, bytes_to_int, wordspec_combos};
 use crate::utils::{cart_prod, unresult_iter};
 use num_bigint::BigInt;
-use num_traits::{one, zero, One, Signed, Zero};
+use num_traits::{One, Signed, Zero, one, zero};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use std::convert::{TryFrom, TryInto};
@@ -36,7 +36,7 @@ pub fn reverse_fletcher<'a>(
     chk_bytes: &[(&'a [u8], Vec<u8>)],
     verbosity: u64,
     extended_search: bool,
-) -> impl Iterator<Item = Result<Fletcher<u64>, CheckReverserError>> + 'a {
+) -> impl Iterator<Item = Result<Fletcher<u64>, CheckReverserError>> + use<'a> {
     let spec = spec.clone();
     let mut files = chk_bytes.to_owned();
     files.sort_unstable_by(|a, b| a.0.len().cmp(&b.0.len()).reverse());
@@ -59,7 +59,7 @@ pub fn reverse_fletcher_para<'a>(
     chk_bytes: &[(&'a [u8], Vec<u8>)],
     verbosity: u64,
     extended_search: bool,
-) -> impl ParallelIterator<Item = Result<Fletcher<u64>, CheckReverserError>> + 'a {
+) -> impl ParallelIterator<Item = Result<Fletcher<u64>, CheckReverserError>> + use<'a> {
     let spec = spec.clone();
     let mut files = chk_bytes.to_owned();
     files.sort_unstable_by(|a, b| a.0.len().cmp(&b.0.len()).reverse());
@@ -153,6 +153,7 @@ impl RevResult {
             swap,
             wordspec,
         } = self;
+        let inits = inits;
         modules.into_iter().flat_map(move |m| {
             let module = if m.is_zero() {
                 0u64
@@ -418,11 +419,7 @@ fn mod_red(n: &BigInt, module: &BigInt) -> BigInt {
         n.clone()
     } else {
         let k = n % module;
-        if k < zero() {
-            module + k
-        } else {
-            k
-        }
+        if k < zero() { module + k } else { k }
     }
 }
 fn find_init(
@@ -539,7 +536,7 @@ impl PrefactorMod {
         addout1: &BigInt,
         addout2: &(BigInt, usize),
         module: &BigInt,
-    ) -> impl Iterator<Item = (u64, u64, u64)> {
+    ) -> impl Iterator<Item = (u64, u64, u64)> + use<> {
         let mut red = self.clone();
         red.update_module(module);
         let mod_addout1 = mod_red(addout1, module);
@@ -903,9 +900,10 @@ mod tests {
         naive.width(10).addout(0x81);
         let reverser = reverse_fletcher(&naive, &chk_files, 0, false).collect::<Vec<_>>();
         eprintln!("{:?}", reverser);
-        assert!(!f
-            .check_matching(&f16, reverser.iter().cloned())
-            .is_failure());
+        assert!(
+            !f.check_matching(&f16, reverser.iter().cloned())
+                .is_failure()
+        );
     }
     #[test]
     fn error8() {

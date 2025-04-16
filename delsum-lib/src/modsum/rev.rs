@@ -25,7 +25,7 @@ pub fn reverse_modsum<'a>(
     chk_bytes: &[(&'a [u8], Vec<u8>)],
     verbosity: u64,
     extended_search: bool,
-) -> impl Iterator<Item = Result<ModSum<u64>, CheckReverserError>> + 'a {
+) -> impl Iterator<Item = Result<ModSum<u64>, CheckReverserError>> + use<'a> {
     let chk_bytes = chk_bytes.to_vec();
     let spec = spec.clone();
     wordspec_combos(

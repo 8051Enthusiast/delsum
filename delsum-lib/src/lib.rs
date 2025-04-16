@@ -8,14 +8,16 @@ pub mod crc;
 pub(crate) mod endian;
 pub mod fletcher;
 pub mod modsum;
+pub mod polyhash;
 
 use bitnum::BitNum;
-use checksum::{const_sum, CheckBuilderErr, CheckReverserError, Checksum};
+use checksum::{CheckBuilderErr, CheckReverserError, Checksum, const_sum};
 use checksum::{Digest, LinearCheck, RangePair};
-use crc::{reverse_crc, CrcBuilder, CRC};
-use fletcher::{reverse_fletcher, Fletcher, FletcherBuilder};
-use modsum::{reverse_modsum, ModSum, ModSumBuilder};
+use crc::{CRC, CrcBuilder, reverse_crc};
+use fletcher::{Fletcher, FletcherBuilder, reverse_fletcher};
+use modsum::{ModSum, ModSumBuilder, reverse_modsum};
 use num_traits::Zero;
+use polyhash::{PolyHash, PolyHashBuilder, reverse_polyhash};
 use std::cmp::Ordering;
 use std::str::FromStr;
 use utils::SignedInclRange;
@@ -122,7 +124,7 @@ where
 }
 
 /// The available checksum types
-static PREFIXES: &[&str] = &["fletcher", "crc", "modsum"];
+static PREFIXES: &[&str] = &["fletcher", "crc", "modsum", "polyhash"];
 
 /// A stringy function for determining which segments of a file have a given checksum.
 ///
@@ -169,6 +171,12 @@ pub fn find_checksum_segments(
         (65..=128, "fletcher") => {
             find_segment_str::<Fletcher<u64>>(rest, bytes, sum, start_range, end_range)
         }
+        (1..=32, "polyhash") => {
+            find_segment_str::<PolyHash<u32>>(rest, bytes, sum, start_range, end_range)
+        }
+        (33..=64, "polyhash") => {
+            find_segment_str::<PolyHash<u64>>(rest, bytes, sum, start_range, end_range)
+        }
         _ => Err(CheckBuilderErr::ValueOutOfRange("width")),
     }
 }
@@ -195,21 +203,12 @@ where
 
 pub fn find_checksum(strspec: &str, bytes: &[&[u8]]) -> Result<Vec<Vec<u8>>, CheckBuilderErr> {
     let (prefix, width, rest) = find_prefix_width(strspec)?;
-    // look, it's not really useful to it in this case, but i really like how this looks
     match (width, prefix) {
-        (1..=8, "crc") => get_checksums::<CRC<u8>>(rest, bytes, width),
-        (9..=16, "crc") => get_checksums::<CRC<u16>>(rest, bytes, width),
-        (17..=32, "crc") => get_checksums::<CRC<u32>>(rest, bytes, width),
-        (33..=64, "crc") => get_checksums::<CRC<u64>>(rest, bytes, width),
+        (1..=64, "crc") => get_checksums::<CRC<u64>>(rest, bytes, width),
         (65..=128, "crc") => get_checksums::<CRC<u128>>(rest, bytes, width),
-        (1..=8, "modsum") => get_checksums::<ModSum<u8>>(rest, bytes, width),
-        (9..=16, "modsum") => get_checksums::<ModSum<u16>>(rest, bytes, width),
-        (17..=32, "modsum") => get_checksums::<ModSum<u32>>(rest, bytes, width),
-        (33..=64, "modsum") => get_checksums::<ModSum<u64>>(rest, bytes, width),
-        (1..=16, "fletcher") => get_checksums::<Fletcher<u8>>(rest, bytes, width),
-        (17..=32, "fletcher") => get_checksums::<Fletcher<u16>>(rest, bytes, width),
-        (33..=64, "fletcher") => get_checksums::<Fletcher<u32>>(rest, bytes, width),
-        (65..=128, "fletcher") => get_checksums::<Fletcher<u64>>(rest, bytes, width),
+        (1..=64, "modsum") => get_checksums::<ModSum<u64>>(rest, bytes, width),
+        (2..=64, "polyhash") => get_checksums::<PolyHash<u64>>(rest, bytes, width),
+        (1..=128, "fletcher") => get_checksums::<Fletcher<u64>>(rest, bytes, width),
         _ => Err(CheckBuilderErr::ValueOutOfRange("width")),
     }
 }
@@ -218,6 +217,7 @@ enum BuilderEnum {
     Crc(CrcBuilder<u128>),
     ModSum(ModSumBuilder<u64>),
     Fletcher(FletcherBuilder<u64>),
+    PolyHash(PolyHashBuilder<u64>),
 }
 
 pub struct AlgorithmFinder<'a> {
@@ -228,102 +228,89 @@ pub struct AlgorithmFinder<'a> {
 }
 
 impl<'a> AlgorithmFinder<'a> {
-    pub fn find_all(&self) -> impl Iterator<Item = Result<String, CheckReverserError>> + 'a {
+    fn iter_solutions<T, S: ToString, E, I: Iterator<Item = Result<S, E>>>(
+        &self,
+        x: &T,
+        reverser: fn(&T, &[(&'a [u8], Vec<u8>)], u64, bool) -> I,
+    ) -> impl Iterator<Item = Result<String, E>> + use<T, S, E, I> {
+        reverser(x, &self.pairs, self.verbosity, self.extended_search)
+            .map(|x| x.map(|y| y.to_string()))
+    }
+
+    #[cfg(feature = "parallel")]
+    fn par_iter_solutions<T, S, E: Send + Sync, I: ParallelIterator<Item = Result<S, E>>>(
+        &self,
+        x: &T,
+        reverser: fn(&T, &[(&'a [u8], Vec<u8>)], u64, bool) -> I,
+    ) -> impl ParallelIterator<Item = Result<String, E>> + use<T, S, E, I>
+    where
+        S: ToString,
+    {
+        reverser(x, &self.pairs, self.verbosity, self.extended_search)
+            .map(|x| x.map(|y| y.to_string()))
+    }
+
+    pub fn find_all(&self) -> impl Iterator<Item = Result<String, CheckReverserError>> + use<'a> {
         let maybe_crc = if let BuilderEnum::Crc(crc) = &self.spec {
-            Some(
-                reverse_crc(
-                    crc,
-                    self.pairs.as_slice(),
-                    self.verbosity,
-                    self.extended_search,
-                )
-                .map(|x| x.map(|y| y.to_string())),
-            )
+            Some(self.iter_solutions(crc, reverse_crc))
         } else {
             None
         };
         let maybe_modsum = if let BuilderEnum::ModSum(modsum) = &self.spec {
-            Some(
-                reverse_modsum(
-                    modsum,
-                    self.pairs.as_slice(),
-                    self.verbosity,
-                    self.extended_search,
-                )
-                .map(|x| x.map(|y| y.to_string())),
-            )
+            Some(self.iter_solutions(modsum, reverse_modsum))
         } else {
             None
         };
         let maybe_fletcher = if let BuilderEnum::Fletcher(fletcher) = &self.spec {
-            Some(
-                reverse_fletcher(
-                    fletcher,
-                    self.pairs.as_slice(),
-                    self.verbosity,
-                    self.extended_search,
-                )
-                .map(|x| x.map(|y| y.to_string())),
-            )
+            Some(self.iter_solutions(fletcher, reverse_fletcher))
         } else {
             None
         };
+        let maybe_polyhash = if let BuilderEnum::PolyHash(polyhash) = &self.spec {
+            Some(self.iter_solutions(polyhash, reverse_polyhash))
+        } else {
+            None
+        };
+
         maybe_crc
             .into_iter()
             .flatten()
             .chain(maybe_modsum.into_iter().flatten())
             .chain(maybe_fletcher.into_iter().flatten())
+            .chain(maybe_polyhash.into_iter().flatten())
     }
 
     #[cfg(feature = "parallel")]
     pub fn find_all_para(
         &self,
-    ) -> impl ParallelIterator<Item = Result<String, CheckReverserError>> + 'a {
+    ) -> impl ParallelIterator<Item = Result<String, CheckReverserError>> + use<'a> {
         let maybe_crc = if let BuilderEnum::Crc(crc) = &self.spec {
-            Some(
-                reverse_crc_para(
-                    crc,
-                    self.pairs.as_slice(),
-                    self.verbosity,
-                    self.extended_search,
-                )
-                .map(|x| x.map(|y| y.to_string())),
-            )
+            Some(self.par_iter_solutions(crc, reverse_crc_para))
         } else {
             None
         };
         let maybe_modsum = if let BuilderEnum::ModSum(modsum) = &self.spec {
-            Some(
-                reverse_modsum(
-                    modsum,
-                    self.pairs.as_slice(),
-                    self.verbosity,
-                    self.extended_search,
-                )
-                .map(|x| x.map(|y| y.to_string()))
-                .par_bridge(),
-            )
+            Some(self.iter_solutions(modsum, reverse_modsum).par_bridge())
         } else {
             None
         };
         let maybe_fletcher = if let BuilderEnum::Fletcher(fletcher) = &self.spec {
-            Some(
-                reverse_fletcher_para(
-                    fletcher,
-                    self.pairs.as_slice(),
-                    self.verbosity,
-                    self.extended_search,
-                )
-                .map(|x| x.map(|y| y.to_string())),
-            )
+            Some(self.par_iter_solutions(fletcher, reverse_fletcher_para))
         } else {
             None
         };
+        let maybe_polyhash = if let BuilderEnum::PolyHash(polyhash) = &self.spec {
+            Some(self.iter_solutions(polyhash, reverse_polyhash).par_bridge())
+        } else {
+            None
+        };
+
         maybe_crc
             .into_par_iter()
             .flatten()
             .chain(maybe_modsum.into_par_iter().flatten())
             .chain(maybe_fletcher.into_par_iter().flatten())
+            .chain(maybe_polyhash.into_par_iter().flatten())
     }
 }
 
@@ -340,18 +327,19 @@ pub fn find_algorithm<'a>(
         "crc" => BuilderEnum::Crc(CrcBuilder::<u128>::from_str(rest)?),
         "modsum" => BuilderEnum::ModSum(ModSumBuilder::<u64>::from_str(rest)?),
         "fletcher" => BuilderEnum::Fletcher(FletcherBuilder::<u64>::from_str(rest)?),
+        "polyhash" => BuilderEnum::PolyHash(PolyHashBuilder::<u64>::from_str(rest)?),
         _ => unimplemented!(),
     };
     match sums.len().cmp(&bytes.len()) {
         Ordering::Greater => {
             return Err(CheckBuilderErr::MissingParameter(
                 "not enough files for checksums given",
-            ))
+            ));
         }
         Ordering::Less => {
             return Err(CheckBuilderErr::MissingParameter(
                 "not enough checksums for files given",
-            ))
+            ));
         }
         Ordering::Equal => (),
     };
@@ -439,7 +427,11 @@ mod tests {
                 SignedInclRange::new(0, png.len() as _).unwrap(),
                 SignedInclRange::new(0, png.len() as _).unwrap(),
             ),
-            Ok(vec![(vec![12], vec![28]), (vec![37], vec![50]), (vec![59], vec![62])])
+            Ok(vec![
+                (vec![12], vec![28]),
+                (vec![37], vec![50]),
+                (vec![59], vec![62])
+            ])
         );
     }
 }

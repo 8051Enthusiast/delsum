@@ -10,9 +10,9 @@
 //!
 //! If `init` is not known, it is neccessary to know two checksums of files with different lengths.
 //! In case only checksums of files with a set length are required, setting `init = 0` is sufficient.
-use super::{CrcBuilder, CRC};
+use super::{CRC, CrcBuilder};
 use crate::checksum::CheckReverserError;
-use crate::endian::{bytes_to_int, int_to_bytes, wordspec_combos, Endian, WordSpec};
+use crate::endian::{Endian, WordSpec, bytes_to_int, int_to_bytes, wordspec_combos};
 use crate::utils::{cart_prod, unresult_iter};
 use gf2poly::*;
 #[cfg(feature = "parallel")]
@@ -31,7 +31,7 @@ pub fn reverse_crc<'a>(
     chk_bytes: &[(&'a [u8], Vec<u8>)],
     verbosity: u64,
     extended_search: bool,
-) -> impl Iterator<Item = Result<CRC<u128>, CheckReverserError>> + 'a {
+) -> impl Iterator<Item = Result<CRC<u128>, CheckReverserError>> + use<'a> {
     let spec = spec.clone();
     let mut files = chk_bytes.to_owned();
     files.sort_unstable_by(|a, b| a.0.len().cmp(&b.0.len()).reverse());
@@ -65,7 +65,7 @@ pub fn reverse_crc_para<'a>(
     chk_bytes: &[(&'a [u8], Vec<u8>)],
     verbosity: u64,
     extended_search: bool,
-) -> impl ParallelIterator<Item = Result<CRC<u128>, CheckReverserError>> + 'a {
+) -> impl ParallelIterator<Item = Result<CRC<u128>, CheckReverserError>> + use<'a> {
     let spec = spec.clone();
     let mut files = chk_bytes.to_owned();
     files.sort_unstable_by(|a, b| a.0.len().cmp(&b.0.len()).reverse());
@@ -139,7 +139,7 @@ fn reverse<'a>(
     refin: bool,
     refout: bool,
     wordspec: WordSpec,
-) -> Result<impl Iterator<Item = CRC<u128>> + 'a, Option<CheckReverserError>> {
+) -> Result<impl Iterator<Item = CRC<u128>> + use<'a>, Option<CheckReverserError>> {
     let width = match spec.width {
         Some(x) => x,
         None => return Err(Some(CheckReverserError::MissingParameter("width"))),
@@ -743,7 +743,7 @@ impl PrefactorMod {
         &self,
         red_poly: &Gf2Poly,
         xorout: &InitPoly,
-    ) -> impl Iterator<Item = (Gf2Poly, Gf2Poly, Gf2Poly)> {
+    ) -> impl Iterator<Item = (Gf2Poly, Gf2Poly, Gf2Poly)> + use<> {
         let red_unknown = self.unknown.clone().gcd(red_poly.clone());
         let red_valid = red_poly / &red_unknown;
         let red_init = &self.possible % &red_valid;
@@ -902,7 +902,7 @@ fn poly_to_u128(poly: Gf2Poly) -> Option<u128> {
 mod tests {
     use super::*;
     use crate::checksum::tests::ReverseFileSet;
-    use crate::crc::{CrcBuilder, CRC};
+    use crate::crc::{CRC, CrcBuilder};
     use quickcheck::{Arbitrary, Gen, TestResult};
     impl Arbitrary for CrcBuilder<u128> {
         fn arbitrary(g: &mut Gen) -> Self {

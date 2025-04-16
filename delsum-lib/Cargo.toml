@@ -2,7 +2,7 @@
 name = "delsum-lib"
 version = "0.2.1"
 authors = ["8051Enthusiast <8051enthusiast@protonmail.com>"]
-edition = "2018"
+edition = "2024"
 license = "MIT"
 repository = "https://github.com/8051Enthusiast/delsum"
 description = "Library with most functionality for the delsum crate"
@@ -18,7 +18,7 @@ num-bigint = "0.4"
 rayon = { version = "1.8", optional = true }
 bitvec = "1.0"
 lazy_static = "1.4"
-rand = "0.8"
+rand = "0.9"
 gf2poly = "0.1.0"
 num-prime = "0.4.3"
 
