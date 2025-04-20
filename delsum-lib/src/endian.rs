@@ -39,7 +39,7 @@ pub struct WordSpec {
 }
 
 pub(crate) fn int_to_bytes<N: BitNum>(n: N, e: Endian, bits: usize) -> Vec<u8> {
-    let n_bytes = (bits + 7) / 8;
+    let n_bytes = bits.div_ceil(8);
     let mut ret = Vec::new();
     for x in 0..n_bytes {
         let shift = match e {
@@ -103,7 +103,7 @@ pub(crate) fn wordspec_combos(
 
 impl WordSpec {
     pub fn word_bytes(&self) -> usize {
-        (self.wordsize + 7) / 8
+        self.wordsize.div_ceil(8)
     }
     pub fn output_to_bytes<N: BitNum>(&self, s: N, bits: usize) -> Vec<u8> {
         int_to_bytes(s, self.output_endian, bits)

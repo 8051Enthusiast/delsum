@@ -22,7 +22,7 @@ impl<'a> KeyValIter<'a> {
     }
 }
 
-impl<'a> Iterator for KeyValIter<'a> {
+impl Iterator for KeyValIter<'_> {
     type Item = Result<(String, String), String>;
     fn next(&mut self) -> Option<Self::Item> {
         if self.stop {

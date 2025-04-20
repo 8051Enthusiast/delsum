@@ -227,11 +227,13 @@ pub struct AlgorithmFinder<'a> {
     extended_search: bool,
 }
 
+type ReverserFn<'a, T, I> = fn(&T, &[(&'a [u8], Vec<u8>)], u64, bool) -> I;
+
 impl<'a> AlgorithmFinder<'a> {
     fn iter_solutions<T, S: ToString, E, I: Iterator<Item = Result<S, E>>>(
         &self,
         x: &T,
-        reverser: fn(&T, &[(&'a [u8], Vec<u8>)], u64, bool) -> I,
+        reverser: ReverserFn<'a, T, I>,
     ) -> impl Iterator<Item = Result<String, E>> + use<T, S, E, I> {
         reverser(x, &self.pairs, self.verbosity, self.extended_search)
             .map(|x| x.map(|y| y.to_string()))
@@ -241,7 +243,7 @@ impl<'a> AlgorithmFinder<'a> {
     fn par_iter_solutions<T, S, E: Send + Sync, I: ParallelIterator<Item = Result<S, E>>>(
         &self,
         x: &T,
-        reverser: fn(&T, &[(&'a [u8], Vec<u8>)], u64, bool) -> I,
+        reverser: ReverserFn<'a, T, I>,
     ) -> impl ParallelIterator<Item = Result<String, E>> + use<T, S, E, I>
     where
         S: ToString,

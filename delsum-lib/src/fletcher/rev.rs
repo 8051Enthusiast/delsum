@@ -153,7 +153,6 @@ impl RevResult {
             swap,
             wordspec,
         } = self;
-        let inits = inits;
         modules.into_iter().flat_map(move |m| {
             let module = if m.is_zero() {
                 0u64

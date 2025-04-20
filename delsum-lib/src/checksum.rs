@@ -107,6 +107,7 @@ impl From<SignedInclRange> for Relativity {
 /// * fletcher: (s, c) |-> (s, c + s) (note that automorphisms of finite abelian groups generally behave like matrices)
 /// * crc: s |-> s * x^8
 /// * polyhash: s |-> s * factor
+/// 
 /// dig_word(s, k) is then σ(s) + Sum::from_word(k), shift(s, t) is the application of the automorphism t(s),
 /// add and negate are the usual group operations, init_shift is the identity automorphism and inc_shift corresponds to
 /// t |-> t * σ.

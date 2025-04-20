@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use delsum_lib::checksum::CheckReverserError;
-use delsum_lib::utils::{read_signed_maybe_hex, SignedInclRange};
-use delsum_lib::{find_algorithm, find_checksum, find_checksum_segments, SegmentChecksum};
+use delsum_lib::utils::{SignedInclRange, read_signed_maybe_hex};
+use delsum_lib::{SegmentChecksum, find_algorithm, find_checksum, find_checksum_segments};
 use hex::{FromHex, FromHexError, ToHex};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -106,7 +106,7 @@ fn reverse(opts: &Reverse) {
             }
         }
     }
-    if error_set.lock().unwrap().len() > 0 {
+    if !error_set.lock().unwrap().is_empty() {
         exit(1);
     }
 }

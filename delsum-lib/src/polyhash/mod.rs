@@ -233,11 +233,11 @@ impl<S: Modnum> LinearCheck for PolyHash<S> {
     }
 
     fn shift(&self, sum: Self::Sum, shift: &Self::Shift) -> Self::Sum {
-        self.mask(sum.wrapping_mul(&shift))
+        self.mask(sum.wrapping_mul(shift))
     }
 
     fn add(&self, sum_a: Self::Sum, sum_b: &Self::Sum) -> Self::Sum {
-        self.mask(sum_a.wrapping_add(&sum_b))
+        self.mask(sum_a.wrapping_add(sum_b))
     }
 
     fn negate(&self, sum: Self::Sum) -> Self::Sum {

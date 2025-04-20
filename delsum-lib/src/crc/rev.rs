@@ -383,7 +383,7 @@ fn remove_inits(init: &Gf2Poly, polys: &mut [InitPoly]) {
     for (p, l) in polys {
         match l {
             InitPlace::Single(d) => {
-                *p += init.clone() << 8 * *d as u64;
+                *p += init.clone() << (8 * *d as u64);
                 *l = InitPlace::None;
             }
             // note: this branch shouldn't happen, but it is also no problem if it happens
@@ -662,7 +662,7 @@ impl PrefactorMod {
         if !discrepancy.is_one() {
             // if it does not, we change the hull so that it does
             // by replacing the hull_part with the file_part in the hull
-            let hull_part = highest_power_gcd(&hull, &discrepancy);
+            let hull_part = highest_power_gcd(hull, &discrepancy);
             let file_part = file_float.gcd(hull_part.clone());
             // since discrepancy divides file_part and file_part divides hull, resue file_part here
             *hull /= hull_part;
@@ -670,7 +670,7 @@ impl PrefactorMod {
             if hull.is_constant() {
                 return None;
             }
-            power.update_hull(&hull);
+            power.update_hull(hull);
         } else {
             drop(file_float);
         }
@@ -678,7 +678,7 @@ impl PrefactorMod {
         drop(power_float);
         // since we only have power*init ≡ mod hull, but want to calculate init,
         // we need to calculate the modular inverse
-        let possible = inverse_divisible(file, power.get_init_fac(), &common_float, &hull);
+        let possible = inverse_divisible(file, power.get_init_fac(), &common_float, hull);
         Some(PrefactorMod {
             unknown: common_float,
             possible,
@@ -698,8 +698,8 @@ impl PrefactorMod {
     // merge two different sets of solutions into one where the hull is the gcd of both
     // and all solutions are valid in both
     fn merge(mut self, mut other: Self, hull: &mut Gf2Poly) -> Option<Self> {
-        self.update_hull(&hull);
-        other.update_hull(&hull);
+        self.update_hull(hull);
+        other.update_hull(hull);
         self.adjust_compatibility(&mut other, hull);
         if hull.is_constant() {
             return None;
@@ -731,8 +731,8 @@ impl PrefactorMod {
         if hull.is_constant() {
             return;
         }
-        self.update_hull(&hull);
-        other.update_hull(&hull);
+        self.update_hull(hull);
+        other.update_hull(hull);
     }
 
     fn valid(&self) -> Gf2Poly {
@@ -780,8 +780,8 @@ fn find_init(
     if hull.is_constant() {
         return PrefactorMod::empty();
     }
-    let mut ret = PrefactorMod::new_init(maybe_init, &hull);
-    let mut power = MemoPower::new(&hull);
+    let mut ret = PrefactorMod::new_init(maybe_init, hull);
+    let mut power = MemoPower::new(hull);
     for (p, l) in polys {
         power.update_init_fac(&l);
         let file_solutions = PrefactorMod::new_file(p, &mut power, hull);
