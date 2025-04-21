@@ -20,14 +20,16 @@ pub fn reverse_polyhash<'a>(
         width,
         extended_search,
     );
+    let factor = spec.factor;
     combos
         .into_iter()
-        .flat_map(move |wordspec| reverse(width, &chk_bytes, wordspec))
+        .flat_map(move |wordspec| reverse(width, &chk_bytes, factor, wordspec))
 }
 
 fn reverse<'a>(
     width: usize,
     chk_bytes: &[(&'a [u8], Vec<u8>)],
+    factor: Option<u64>,
     wordspec: WordSpec,
 ) -> impl Iterator<Item = Result<PolyHash<u64>, CheckReverserError>> + use<'a> {
     let revspec = RevSpec {
@@ -37,6 +39,7 @@ fn reverse<'a>(
             .collect(),
         wordspec,
         width,
+        factor,
     };
     find_solutions(revspec.clone()).map(move |solution| {
         Ok(PolyHash::with_options()
@@ -72,6 +75,7 @@ struct RevSpec {
     wordspec: WordSpec,
     polys: Vec<WordPolynomial>,
     width: usize,
+    factor: Option<u64>,
 }
 
 struct PartialSolution {
@@ -81,7 +85,16 @@ struct PartialSolution {
 
 fn find_solutions(spec: RevSpec) -> impl Iterator<Item = PartialSolution> {
     let mut partial_solutions = vec![];
-    partial_solutions.extend(initial_solution(&spec.polys));
+    if let Some(factor) = spec.factor {
+        if is_poly_solution(&spec.polys, factor, u64::MAX >> (64 - spec.width)) {
+            partial_solutions.push(PartialSolution {
+                width: spec.width,
+                factor,
+            })
+        }
+    } else {
+        partial_solutions.extend(initial_solution(&spec.polys));
+    }
 
     std::iter::from_fn(move || {
         while let Some(partial_solution) = partial_solutions.pop() {
@@ -99,13 +112,10 @@ fn find_solutions(spec: RevSpec) -> impl Iterator<Item = PartialSolution> {
 }
 
 fn initial_solution(polys: &[WordPolynomial]) -> Option<PartialSolution> {
-    polys
-        .iter()
-        .all(|p| p.eval(1) & 1 == 0)
-        .then_some(PartialSolution {
-            width: 1,
-            factor: 1,
-        })
+    is_poly_solution(polys, 1, 1).then_some(PartialSolution {
+        width: 1,
+        factor: 1,
+    })
 }
 
 fn lift_solution(polys: &[WordPolynomial], subsolution: PartialSolution) -> Vec<PartialSolution> {
@@ -114,7 +124,7 @@ fn lift_solution(polys: &[WordPolynomial], subsolution: PartialSolution) -> Vec<
     let mut ret = vec![];
 
     for factor in [subsolution.factor, subsolution.factor + step] {
-        if polys.iter().all(|p| p.eval(factor) & mask == 0) {
+        if is_poly_solution(polys, factor, mask) {
             ret.push(PartialSolution {
                 width: subsolution.width + 1,
                 factor,
@@ -123,6 +133,10 @@ fn lift_solution(polys: &[WordPolynomial], subsolution: PartialSolution) -> Vec<
     }
 
     ret
+}
+
+fn is_poly_solution(polys: &[WordPolynomial], factor: u64, mask: u64) -> bool {
+    polys.iter().all(|p| p.eval(factor) & mask == 0)
 }
 
 #[derive(Clone, Debug)]
