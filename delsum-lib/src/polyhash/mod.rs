@@ -13,6 +13,7 @@ use crate::{
 pub struct PolyHashBuilder<S> {
     width: Option<usize>,
     factor: Option<S>,
+    init: Option<S>,
     input_endian: Option<Endian>,
     output_endian: Option<Endian>,
     wordsize: Option<usize>,
@@ -31,6 +32,7 @@ impl<S: Modnum> FromStr for PolyHashBuilder<S> {
             let sum_op = match current_key.as_str() {
                 "width" => usize::from_str(&current_val).ok().map(|x| sum.width(x)),
                 "factor" => S::from_hex(&current_val).ok().map(|x| sum.factor(x)),
+                "init" => S::from_hex(&current_val).ok().map(|x| sum.init(x)),
                 "in_endian" => Endian::from_str(&current_val).ok().map(|x| sum.inendian(x)),
                 "wordsize" => usize::from_str(&current_val).ok().map(|x| sum.wordsize(x)),
                 "out_endian" => Endian::from_str(&current_val)
@@ -61,6 +63,11 @@ impl<S: Modnum> PolyHashBuilder<S> {
     /// the next input byte.
     pub fn factor(&mut self, w: S) -> &mut Self {
         self.factor = Some(w);
+        self
+    }
+    /// The initial value of the checksum, default 0.
+    pub fn init(&mut self, i: S) -> &mut Self {
+        self.init = Some(i);
         self
     }
     /// The endian of the words of the input file
@@ -102,6 +109,8 @@ impl<S: Modnum> PolyHashBuilder<S> {
         if factor & S::one() == S::zero() || factor == S::one() {
             return Err(CheckBuilderErr::ValueOutOfRange("factor"));
         };
+        let init = self.init.unwrap_or_else(S::zero);
+        let init = mask(width, init);
         let wordsize = self.wordsize.unwrap_or(8);
         if wordsize == 0 || wordsize % 8 != 0 || wordsize > 64 {
             return Err(CheckBuilderErr::ValueOutOfRange("wordsize"));
@@ -114,6 +123,7 @@ impl<S: Modnum> PolyHashBuilder<S> {
         let s = PolyHash {
             width,
             factor,
+            init,
             wordspec,
             name: self.name.clone(),
         };
@@ -138,23 +148,29 @@ impl<S: Modnum> PolyHashBuilder<S> {
 pub struct PolyHash<S> {
     width: usize,
     factor: S,
+    init: S,
     wordspec: WordSpec,
     name: Option<String>,
 }
 
+fn mask<S: Modnum>(width: usize, word: S) -> S {
+    if word.bits() > width {
+        word & ((S::one() << width) - S::one())
+    } else {
+        word
+    }
+}
+
 impl<S: Modnum> PolyHash<S> {
     fn mask(&self, word: S) -> S {
-        if word.bits() > self.width {
-            word & ((S::one() << self.width) - S::one())
-        } else {
-            word
-        }
+        mask(self.width, word)
     }
 
     pub fn with_options() -> PolyHashBuilder<S> {
         PolyHashBuilder {
             width: None,
             factor: None,
+            init: None,
             input_endian: None,
             output_endian: None,
             wordsize: None,
@@ -169,7 +185,11 @@ impl<S: Modnum> Display for PolyHash<S> {
         match &self.name {
             Some(n) => write!(f, "{}", n),
             None => {
-                write!(f, "polyhash width={} factor={:#x}", self.width, self.factor)?;
+                write!(
+                    f,
+                    "polyhash width={} factor={:#x} init={:#x}",
+                    self.width, self.factor, self.init
+                )?;
                 if self.wordspec.word_bytes() != 1 {
                     write!(
                         f,
@@ -198,7 +218,7 @@ impl<S: Modnum> Digest for PolyHash<S> {
     type Sum = S;
 
     fn init(&self) -> Self::Sum {
-        S::zero()
+        self.init
     }
 
     fn dig_word(&self, sum: Self::Sum, word: u64) -> Self::Sum {
@@ -262,6 +282,21 @@ mod tests {
         test_find(&sdbm);
         test_prop(&sdbm);
         check_example(&sdbm, 0x694c5cd2);
+    }
+
+    #[test]
+    fn djb2() {
+        let djb2 = PolyHash::<u32>::with_options()
+            .width(32)
+            .factor(33)
+            .init(5381)
+            .name("djb2")
+            .build()
+            .unwrap();
+        test_shifts(&djb2);
+        test_find(&djb2);
+        test_prop(&djb2);
+        check_example(&djb2, 0x84a046e5);
     }
 
     #[test]

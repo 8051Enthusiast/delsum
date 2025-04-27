@@ -151,14 +151,14 @@ fn reverse<'a>(
         + spec.poly.is_some() as usize
     {
         return Err(Some(CheckReverserError::MissingParameter(
-            "at least 3 parameters/files",
+            "at least 3 files + parameters (init, xorout, poly)",
         )));
     }
     if spec.init.is_none()
         && chk_bytes.iter().map(|x| x.0.len()).max() == chk_bytes.iter().map(|x| x.0.len()).min()
     {
         return Err(Some(CheckReverserError::UnsuitableFiles(
-            "need at least one file with different length",
+            "need at least one file with different length (or set init to 0)",
         )));
     }
     // convert the files to polynomials
