@@ -14,6 +14,7 @@ pub struct PolyHashBuilder<S> {
     width: Option<usize>,
     factor: Option<S>,
     init: Option<S>,
+    addout: Option<S>,
     input_endian: Option<Endian>,
     output_endian: Option<Endian>,
     wordsize: Option<usize>,
@@ -33,6 +34,7 @@ impl<S: Modnum> FromStr for PolyHashBuilder<S> {
                 "width" => usize::from_str(&current_val).ok().map(|x| sum.width(x)),
                 "factor" => S::from_hex(&current_val).ok().map(|x| sum.factor(x)),
                 "init" => S::from_hex(&current_val).ok().map(|x| sum.init(x)),
+                "addout" => S::from_hex(&current_val).ok().map(|x| sum.addout(x)),
                 "in_endian" => Endian::from_str(&current_val).ok().map(|x| sum.inendian(x)),
                 "wordsize" => usize::from_str(&current_val).ok().map(|x| sum.wordsize(x)),
                 "out_endian" => Endian::from_str(&current_val)
@@ -68,6 +70,11 @@ impl<S: Modnum> PolyHashBuilder<S> {
     /// The initial value of the checksum, default 0.
     pub fn init(&mut self, i: S) -> &mut Self {
         self.init = Some(i);
+        self
+    }
+    /// The value that gets added to the checksum at the out.
+    pub fn addout(&mut self, i: S) -> &mut Self {
+        self.addout = Some(i);
         self
     }
     /// The endian of the words of the input file
@@ -109,8 +116,8 @@ impl<S: Modnum> PolyHashBuilder<S> {
         if factor & S::one() == S::zero() || factor == S::one() {
             return Err(CheckBuilderErr::ValueOutOfRange("factor"));
         };
-        let init = self.init.unwrap_or_else(S::zero);
-        let init = mask(width, init);
+        let init = mask(width, self.init.unwrap_or_else(S::zero));
+        let addout = mask(width, self.addout.unwrap_or_else(S::zero));
         let wordsize = self.wordsize.unwrap_or(8);
         if wordsize == 0 || wordsize % 8 != 0 || wordsize > 64 {
             return Err(CheckBuilderErr::ValueOutOfRange("wordsize"));
@@ -124,6 +131,7 @@ impl<S: Modnum> PolyHashBuilder<S> {
             width,
             factor,
             init,
+            addout,
             wordspec,
             name: self.name.clone(),
         };
@@ -149,6 +157,7 @@ pub struct PolyHash<S> {
     width: usize,
     factor: S,
     init: S,
+    addout: S,
     wordspec: WordSpec,
     name: Option<String>,
 }
@@ -171,6 +180,7 @@ impl<S: Modnum> PolyHash<S> {
             width: None,
             factor: None,
             init: None,
+            addout: None,
             input_endian: None,
             output_endian: None,
             wordsize: None,
@@ -187,8 +197,8 @@ impl<S: Modnum> Display for PolyHash<S> {
             None => {
                 write!(
                     f,
-                    "polyhash width={} factor={:#x} init={:#x}",
-                    self.width, self.factor, self.init
+                    "polyhash width={} factor={:#x} init={:#x} addout={:#x}",
+                    self.width, self.factor, self.init, self.addout
                 )?;
                 if self.wordspec.word_bytes() != 1 {
                     write!(
@@ -229,7 +239,7 @@ impl<S: Modnum> Digest for PolyHash<S> {
     }
 
     fn finalize(&self, sum: Self::Sum) -> Self::Sum {
-        sum
+        self.mask(sum.wrapping_add(&self.addout))
     }
 
     fn to_bytes(&self, s: Self::Sum) -> Vec<u8> {

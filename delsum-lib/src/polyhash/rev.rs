@@ -23,9 +23,12 @@ pub fn reverse_polyhash<'a>(
     );
     let factor = spec.factor;
     let init = spec.init;
+    let addout = spec.addout;
     combos
         .into_iter()
-        .flat_map(move |wordspec| unresult_iter(reverse(width, &chk_bytes, factor, init, wordspec)))
+        .flat_map(move |wordspec| {
+            unresult_iter(reverse(width, &chk_bytes, factor, init, addout, wordspec))
+        })
         .filter_map(|x| match x {
             Ok(a) => Some(Ok(a)),
             Err(Some(e)) => Some(Err(e)),
@@ -38,15 +41,17 @@ fn reverse<'a>(
     chk_bytes: &[(&'a [u8], Vec<u8>)],
     factor: Option<u64>,
     init: Option<u64>,
+    addout: Option<u64>,
     wordspec: WordSpec,
 ) -> Result<impl Iterator<Item = PolyHash<u64>> + use<'a>, Option<CheckReverserError>> {
     let mut polys = chk_bytes
         .iter()
         .map(|x| poly_from_data(width, &wordspec, x))
         .collect::<Vec<_>>();
-    polys.sort_by_key(|x| x.init);
+    polys.sort();
+    polys.dedup();
 
-    if let Some(value) = check_params(chk_bytes, factor, init) {
+    if let Some(value) = check_params(chk_bytes, factor, init, addout) {
         return Err(Some(value));
     }
 
@@ -59,36 +64,69 @@ fn reverse<'a>(
         return Err(None);
     }
 
-    let (filtered, init_info) = filter_inits(polys, init, width);
+    let (filtered, addout_info) = filter_addouts(polys, addout);
+    let (filtered, init_info) = filter_inits(filtered, init, width);
 
     let revspec = RevSpec {
         polys: filtered,
         width,
         init: init_info,
+        addout: addout_info,
         factor,
     };
 
-    Ok(find_solutions(revspec).map(move |solution| {
+    Ok(find_solutions(revspec, wordspec))
+}
+
+fn complete_solution(
+    revspec: &RevSpec,
+    solution: PartialSolution,
+    wordspec: WordSpec,
+) -> Option<PolyHash<u64>> {
+    let addout = match &revspec.addout {
+        ParamSource::Given(addout) => *addout,
+        ParamSource::Files(files) => find_addout(files, solution.factor, solution.init)?,
+    };
+    Some(
         PolyHash::with_options()
             .factor(solution.factor)
             .init(solution.init)
+            .addout(addout)
             .width(solution.width)
             .inendian(wordspec.input_endian)
             .outendian(wordspec.output_endian)
             .wordsize(wordspec.wordsize)
             .build()
-            .unwrap()
-    }))
+            .unwrap(),
+    )
+}
+
+fn find_addout(file_polys: &[FilePoly], factor: u64, init: u64) -> Option<u64> {
+    let (first, rest) = file_polys.split_first()?;
+    let addout = find_single_addout(first, factor, init);
+    rest.iter()
+        .all(|p| find_single_addout(p, factor, init) == addout)
+        .then_some(addout)
+}
+
+fn find_single_addout(p: &FilePoly, factor: u64, init: u64) -> u64 {
+    let mask = mask_val(p.width as u8);
+    p.eval_with_init(factor, init).wrapping_neg() & mask
 }
 
 fn check_params(
     chk_bytes: &[(&[u8], Vec<u8>)],
     factor: Option<u64>,
     init: Option<u64>,
+    addout: Option<u64>,
 ) -> Option<CheckReverserError> {
-    if 2 > chk_bytes.len() + init.is_some() as usize + factor.is_some() as usize {
+    if 3 > chk_bytes.len()
+        + init.is_some() as usize
+        + factor.is_some() as usize
+        + addout.is_some() as usize
+    {
         return Some(CheckReverserError::MissingParameter(
-            "at least 2 files + parameters (init, factor)",
+            "need at least 3 files + parameters (init, factor, addout)",
         ));
     }
 
@@ -127,17 +165,50 @@ struct RevSpec {
     polys: Vec<WordPolynomial>,
     width: usize,
     factor: Option<u64>,
-    init: InitSource,
+    init: ParamSource,
+    addout: ParamSource,
+}
+
+fn filter_addouts(original: Vec<FilePoly>, addout: Option<u64>) -> (Vec<FilePoly>, ParamSource) {
+    if let Some(addout) = addout {
+        let clean = original
+            .into_iter()
+            .map(|x| x.remove_addout(addout))
+            .collect();
+        return (clean, ParamSource::Given(addout));
+    }
+
+    let mut result = vec![];
+    for x in original.windows(2) {
+        let [lhs, rhs] = x else { unreachable!() };
+        let (InitPlace::Single(lhs_len), InitPlace::Single(rhs_len)) = (lhs.init, rhs.init) else {
+            unreachable!();
+        };
+
+        let init = if lhs_len == rhs_len {
+            InitPlace::None
+        } else {
+            InitPlace::Duo(lhs_len, rhs_len)
+        };
+        let poly = rhs.poly.clone() - lhs.poly.clone();
+
+        result.push(FilePoly {
+            poly,
+            init,
+            width: lhs.width,
+        })
+    }
+    (result, ParamSource::Files(original))
 }
 
 fn filter_inits(
     original: Vec<FilePoly>,
     init: Option<u64>,
     width: usize,
-) -> (Vec<WordPolynomial>, InitSource) {
+) -> (Vec<WordPolynomial>, ParamSource) {
     if let Some(init) = init {
         let clean = original.into_iter().map(|x| x.remove_init(init)).collect();
-        return (clean, InitSource::Given(init));
+        return (clean, ParamSource::Given(init));
     }
 
     let mut init_free = vec![];
@@ -152,30 +223,41 @@ fn filter_inits(
         let [lhs, rhs] = x else { unreachable!() };
 
         match (lhs.init, rhs.init) {
-            (InitPlace::None, _) | (_, InitPlace::None) => unreachable!(),
             (InitPlace::Single(l), InitPlace::Single(r)) => {
                 let diff = r - l;
                 let mut cancelled = rhs.poly.clone() - (lhs.poly.clone() << diff);
                 cancelled.shorten(width);
                 init_free.push(cancelled);
             }
+            (InitPlace::Duo(ll, lr), InitPlace::Duo(rl, rr)) => {
+                let ldiff = lr - ll;
+                let rdiff = rr - rl;
+                let lhs = (lhs.poly.clone() << rdiff) - lhs.poly.clone();
+                let rhs = (rhs.poly.clone() << ldiff) - rhs.poly.clone();
+                let diff = rl - ll;
+                let mut cancelled = rhs - (lhs << diff);
+                cancelled.shorten(width);
+                init_free.push(cancelled);
+            }
+            (InitPlace::None | InitPlace::Duo(..), _)
+            | (_, InitPlace::None | InitPlace::Duo(..)) => unreachable!(),
         }
     }
 
-    (init_free, InitSource::Files(initiferous))
+    (init_free, ParamSource::Files(initiferous))
 }
 
 #[derive(Debug, Clone)]
-enum InitSource {
+enum ParamSource {
     Given(u64),
     Files(Vec<FilePoly>),
 }
 
-impl InitSource {
-    fn matches(&self, factor: u64, init: u64, mask: u64) -> bool {
+impl ParamSource {
+    fn matches_init(&self, factor: u64, init: u64, mask: u64) -> bool {
         match self {
-            InitSource::Given(given_init) => init & mask == given_init & mask,
-            InitSource::Files(items) => items.iter().all(|p| {
+            ParamSource::Given(given_init) => init & mask == given_init & mask,
+            ParamSource::Files(items) => items.iter().all(|p| {
                 p.poly
                     .eval(factor)
                     .wrapping_add(p.init.init_value(factor, init))
@@ -186,10 +268,10 @@ impl InitSource {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct FilePoly {
-    poly: WordPolynomial,
     init: InitPlace,
+    poly: WordPolynomial,
     width: usize,
 }
 
@@ -202,15 +284,32 @@ impl FilePoly {
                 result.shorten(self.width);
                 result
             }
+            InitPlace::Duo(llength, rlength) => {
+                let mut result = self.poly + (WordPolynomial::constant(init) << rlength)
+                    - (WordPolynomial::constant(init) << llength);
+                result.shorten(self.width);
+                result
+            }
         }
+    }
+
+    fn remove_addout(self, addout: u64) -> FilePoly {
+        let poly = self.poly + WordPolynomial::constant(addout);
+        FilePoly { poly, ..self }
+    }
+
+    fn eval_with_init(&self, factor: u64, init: u64) -> u64 {
+        self.poly
+            .eval(factor)
+            .wrapping_add(self.init.init_value(factor, init))
     }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 enum InitPlace {
-    #[allow(unused)]
     None,
     Single(usize),
+    Duo(usize, usize),
 }
 
 impl InitPlace {
@@ -218,6 +317,9 @@ impl InitPlace {
         match self {
             InitPlace::None => 0,
             InitPlace::Single(pos) => pow(factor, pos).wrapping_mul(init),
+            InitPlace::Duo(posl, posr) => pow(factor, posr)
+                .wrapping_sub(pow(factor, posl))
+                .wrapping_mul(init),
         }
     }
 }
@@ -238,7 +340,7 @@ impl PartialSolution {
             }
         }
         if is_poly_solution(&spec.polys, self.factor, mask)
-            && spec.init.matches(self.factor, self.init, mask)
+            && spec.init.matches_init(self.factor, self.init, mask)
         {
             true
         } else {
@@ -247,7 +349,7 @@ impl PartialSolution {
     }
 }
 
-fn find_solutions(spec: RevSpec) -> impl Iterator<Item = PartialSolution> {
+fn find_solutions(spec: RevSpec, wordspec: WordSpec) -> impl Iterator<Item = PolyHash<u64>> {
     let mut partial_solutions = vec![];
     partial_solutions.extend(
         INITIAL_SOLUTIONS
@@ -258,13 +360,14 @@ fn find_solutions(spec: RevSpec) -> impl Iterator<Item = PartialSolution> {
     std::iter::from_fn(move || {
         while let Some(partial_solution) = partial_solutions.pop() {
             if partial_solution.width == spec.width {
-                if partial_solution.factor == 1 {
-                    continue;
+                if partial_solution.factor != 1 {
+                    if let Some(solution) = complete_solution(&spec, partial_solution, wordspec) {
+                        return Some(solution);
+                    }
                 }
-                return Some(partial_solution);
+            } else {
+                partial_solutions.extend(lift_solution(&spec, partial_solution));
             }
-
-            partial_solutions.extend(lift_solution(&spec, partial_solution));
         }
         None
     })
@@ -329,7 +432,7 @@ fn pow(mut base: u64, mut exp: usize) -> u64 {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 struct WordPolynomial {
     coefficients: Vec<u64>,
 }
@@ -524,6 +627,8 @@ mod tests {
             new_polyhash.factor(factor);
             let init = mask(u64::arbitrary(g), width);
             new_polyhash.init(init);
+            let addout = mask(u64::arbitrary(g), width);
+            new_polyhash.addout(addout);
             let wordspec = WordSpec::arbitrary(g);
             let max_word_width = ((width as usize).div_ceil(8)).next_power_of_two() * 8;
             new_polyhash.wordsize(max_word_width.min(wordspec.wordsize));
@@ -536,7 +641,7 @@ mod tests {
     fn run_polyhash_rev(
         files: ReverseFileSet,
         polyhash_build: PolyHashBuilder<u64>,
-        known: (bool, bool),
+        known: (bool, bool, bool),
         wordspec_known: (bool, bool, bool),
     ) -> TestResult {
         let polyhash = polyhash_build.build().unwrap();
@@ -547,6 +652,9 @@ mod tests {
         }
         if known.1 {
             naive.init(polyhash_build.init.unwrap());
+        }
+        if known.2 {
+            naive.addout(polyhash_build.addout.unwrap());
         }
         if wordspec_known.0 {
             naive.wordsize(polyhash_build.wordsize.unwrap());
@@ -566,7 +674,7 @@ mod tests {
     fn qc_polyhash_rev(
         files: ReverseFileSet,
         polyhash_build: PolyHashBuilder<u64>,
-        known: (bool, bool),
+        known: (bool, bool, bool),
         wordspec_known: (bool, bool, bool),
     ) -> TestResult {
         run_polyhash_rev(files, polyhash_build, known, wordspec_known)
@@ -579,13 +687,17 @@ mod tests {
         polyhash_build
             .width(7)
             .factor(47)
+            .addout(0)
             .inendian(Endian::Little)
             .outendian(Endian::Big)
             .wordsize(8);
-        assert!(
-            !run_polyhash_rev(files, polyhash_build, (false, false), (false, false, false))
-                .is_failure()
+        let res = run_polyhash_rev(
+            files,
+            polyhash_build,
+            (false, false, true),
+            (false, false, false),
         );
+        assert!(!res.is_failure());
     }
 
     #[test]
@@ -617,8 +729,13 @@ mod tests {
             .outendian(Endian::Little)
             .wordsize(16);
         assert!(
-            !run_polyhash_rev(files, polyhash_build, (false, false), (false, false, false))
-                .is_failure()
+            !run_polyhash_rev(
+                files,
+                polyhash_build,
+                (false, false, false),
+                (false, false, false)
+            )
+            .is_failure()
         );
     }
 
@@ -646,8 +763,13 @@ mod tests {
             .outendian(Endian::Big)
             .wordsize(64);
         assert!(
-            !run_polyhash_rev(files, polyhash_build, (true, false), (true, true, true))
-                .is_failure()
+            !run_polyhash_rev(
+                files,
+                polyhash_build,
+                (true, false, false),
+                (true, true, true)
+            )
+            .is_failure()
         );
     }
 
@@ -664,8 +786,13 @@ mod tests {
             .outendian(Endian::Little)
             .wordsize(64);
         assert!(
-            !run_polyhash_rev(files, polyhash_build, (false, true), (true, true, true))
-                .is_failure()
+            !run_polyhash_rev(
+                files,
+                polyhash_build,
+                (false, true, false),
+                (true, true, true)
+            )
+            .is_failure()
         );
     }
 
@@ -677,13 +804,19 @@ mod tests {
         polyhash_build
             .width(16)
             .factor(0x103)
+            .addout(0)
             .init(1)
             .inendian(Endian::Big)
             .outendian(Endian::Little)
             .wordsize(16);
         assert!(
-            !run_polyhash_rev(files, polyhash_build, (true, true), (true, false, true))
-                .is_failure()
+            !run_polyhash_rev(
+                files,
+                polyhash_build,
+                (true, true, true),
+                (true, false, true)
+            )
+            .is_failure()
         );
     }
 
