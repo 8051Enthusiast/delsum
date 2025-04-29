@@ -40,7 +40,7 @@
 mod rev;
 use crate::bitnum::{BitNum, Modnum};
 use crate::checksum::{CheckBuilderErr, Digest, LinearCheck};
-use crate::endian::{Endian, WordSpec};
+use crate::endian::{Endian, SignedInt, Signedness, WordSpec};
 use crate::keyval::KeyValIter;
 use num_traits::{One, Zero};
 pub use rev::reverse_fletcher;
@@ -74,6 +74,7 @@ pub struct FletcherBuilder<Sum: Modnum> {
     swap: Option<bool>,
     input_endian: Option<Endian>,
     output_endian: Option<Endian>,
+    signedness: Option<Signedness>,
     wordsize: Option<usize>,
     check: Option<Sum::Double>,
     name: Option<String>,
@@ -125,6 +126,11 @@ impl<S: Modnum> FletcherBuilder<S> {
         self.output_endian = Some(e);
         self
     }
+    /// The signedness of the input words
+    pub fn signedness(&mut self, s: Signedness) -> &mut Self {
+        self.signedness = Some(s);
+        self
+    }
     /// Checks whether c is the same as the checksum of "123456789" on creation
     pub fn check(&mut self, c: S::Double) -> &mut Self {
         self.check = Some(c);
@@ -161,6 +167,7 @@ impl<S: Modnum> FletcherBuilder<S> {
             input_endian: self.input_endian.unwrap_or(Endian::Big),
             wordsize,
             output_endian: self.output_endian.unwrap_or(Endian::Big),
+            signedness: self.signedness.unwrap_or(Signedness::Unsigned),
         };
         let mut fletch = Fletcher {
             hwidth,
@@ -248,6 +255,7 @@ impl<Sum: Modnum> Fletcher<Sum> {
             swap: None,
             input_endian: None,
             output_endian: None,
+            signedness: None,
             wordsize: None,
             check: None,
             name: None,
@@ -256,11 +264,7 @@ impl<Sum: Modnum> Fletcher<Sum> {
     fn convert_from_compact(&self, x: Sum::Double) -> (Sum, Sum) {
         let l = Sum::from_double(x & self.mask);
         let h = Sum::from_double((x >> self.hwidth) & self.mask);
-        if self.swap {
-            (h, l)
-        } else {
-            (l, h)
-        }
+        if self.swap { (h, l) } else { (l, h) }
     }
     fn to_compact(&self, (s, c): (Sum, Sum)) -> Sum::Double {
         let (l, h) = if self.swap { (c, s) } else { (s, c) };
@@ -294,6 +298,9 @@ impl<Sum: Modnum> FromStr for FletcherBuilder<Sum> {
                 "out_endian" => Endian::from_str(&current_val)
                     .ok()
                     .map(|x| fletch.outendian(x)),
+                "signedness" => Signedness::from_str(&current_val)
+                    .ok()
+                    .map(|x| fletch.signedness(x)),
                 "check" => Sum::Double::from_hex(&current_val)
                     .ok()
                     .map(|x| fletch.check(x)),
@@ -332,9 +339,9 @@ impl<S: Modnum> Digest for Fletcher<S> {
     fn init(&self) -> Self::Sum {
         self.to_compact((self.init, S::zero()))
     }
-    fn dig_word(&self, sum: Self::Sum, word: u64) -> Self::Sum {
+    fn dig_word(&self, sum: Self::Sum, word: SignedInt<u64>) -> Self::Sum {
         let (mut s, mut c) = self.convert_from_compact(sum);
-        let modword = S::mod_from(word, &self.module);
+        let modword = S::mod_from_signed(word, &self.module);
         s = S::add_mod(s, &modword, &self.module);
         c = S::add_mod(c, &s, &self.module);
         self.to_compact((s, c))

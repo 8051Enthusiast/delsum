@@ -18,6 +18,7 @@ pub fn reverse_polyhash<'a>(
         spec.wordsize,
         spec.input_endian,
         spec.output_endian,
+        spec.signedness,
         width,
         extended_search,
     );
@@ -96,6 +97,7 @@ fn complete_solution(
             .inendian(wordspec.input_endian)
             .outendian(wordspec.output_endian)
             .wordsize(wordspec.wordsize)
+            .signedness(wordspec.signedness)
             .build()
             .unwrap(),
     )
@@ -143,7 +145,17 @@ fn check_params(
 fn poly_from_data(width: usize, wordspec: &WordSpec, chk_bytes: &(&[u8], Vec<u8>)) -> FilePoly {
     let chk = wordspec.bytes_to_output::<u64>(&chk_bytes.1);
     let mut poly = WordPolynomial {
-        coefficients: wordspec.iter_words(chk_bytes.0).rev().collect(),
+        coefficients: wordspec
+            .iter_words(chk_bytes.0)
+            .rev()
+            .map(|x| {
+                if x.negative {
+                    x.value.wrapping_neg()
+                } else {
+                    x.value
+                }
+            })
+            .collect(),
     };
     let size = poly.coefficients.len();
     poly.shorten(width);
@@ -598,7 +610,7 @@ fn mask_val(width: u8) -> u64 {
 mod tests {
     use quickcheck::{Arbitrary, Gen, TestResult};
 
-    use crate::{checksum::tests::ReverseFileSet, endian::Endian};
+    use crate::{checksum::tests::ReverseFileSet, endian::{Endian, Signedness}};
 
     use super::*;
 
@@ -634,6 +646,7 @@ mod tests {
             new_polyhash.wordsize(max_word_width.min(wordspec.wordsize));
             new_polyhash.inendian(wordspec.input_endian);
             new_polyhash.outendian(wordspec.output_endian);
+            new_polyhash.signedness(wordspec.signedness);
             new_polyhash
         }
     }
@@ -642,7 +655,7 @@ mod tests {
         files: ReverseFileSet,
         polyhash_build: PolyHashBuilder<u64>,
         known: (bool, bool, bool),
-        wordspec_known: (bool, bool, bool),
+        wordspec_known: (bool, bool, bool, bool),
     ) -> TestResult {
         let polyhash = polyhash_build.build().unwrap();
         let mut naive = PolyHash::<u64>::with_options();
@@ -665,6 +678,9 @@ mod tests {
         if wordspec_known.2 {
             naive.outendian(polyhash_build.output_endian.unwrap());
         }
+        if wordspec_known.3 {
+            naive.signedness(polyhash_build.signedness.unwrap());
+        }
         let chk_files: Vec<_> = files.with_checksums(&polyhash);
         let reverser = reverse_polyhash(&naive, &chk_files, 0, false);
         files.check_matching(&polyhash, reverser)
@@ -675,7 +691,7 @@ mod tests {
         files: ReverseFileSet,
         polyhash_build: PolyHashBuilder<u64>,
         known: (bool, bool, bool),
-        wordspec_known: (bool, bool, bool),
+        wordspec_known: (bool, bool, bool, bool),
     ) -> TestResult {
         run_polyhash_rev(files, polyhash_build, known, wordspec_known)
     }
@@ -690,12 +706,13 @@ mod tests {
             .addout(0)
             .inendian(Endian::Little)
             .outendian(Endian::Big)
+            .signedness(Signedness::Unsigned)
             .wordsize(8);
         let res = run_polyhash_rev(
             files,
             polyhash_build,
             (false, false, true),
-            (false, false, false),
+            (false, false, false, false),
         );
         assert!(!res.is_failure());
     }
@@ -727,13 +744,14 @@ mod tests {
             .factor(177519018992307695)
             .inendian(Endian::Little)
             .outendian(Endian::Little)
+            .signedness(Signedness::Unsigned)
             .wordsize(16);
         assert!(
             !run_polyhash_rev(
                 files,
                 polyhash_build,
                 (false, false, false),
-                (false, false, false)
+                (false, false, false, false)
             )
             .is_failure()
         );
@@ -761,13 +779,14 @@ mod tests {
             .init(0x2b3ac03d788)
             .inendian(Endian::Little)
             .outendian(Endian::Big)
+            .signedness(Signedness::Unsigned)
             .wordsize(64);
         assert!(
             !run_polyhash_rev(
                 files,
                 polyhash_build,
                 (true, false, false),
-                (true, true, true)
+                (true, true, true, true)
             )
             .is_failure()
         );
@@ -784,13 +803,14 @@ mod tests {
             .init(0x14f8d8416e7)
             .inendian(Endian::Little)
             .outendian(Endian::Little)
+            .signedness(Signedness::Unsigned)
             .wordsize(64);
         assert!(
             !run_polyhash_rev(
                 files,
                 polyhash_build,
                 (false, true, false),
-                (true, true, true)
+                (true, true, true, true)
             )
             .is_failure()
         );
@@ -808,13 +828,14 @@ mod tests {
             .init(1)
             .inendian(Endian::Big)
             .outendian(Endian::Little)
+            .signedness(Signedness::Unsigned)
             .wordsize(16);
         assert!(
             !run_polyhash_rev(
                 files,
                 polyhash_build,
                 (true, true, true),
-                (true, false, true)
+                (true, false, true, true)
             )
             .is_failure()
         );

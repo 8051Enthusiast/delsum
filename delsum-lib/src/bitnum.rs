@@ -1,5 +1,7 @@
 use num_traits::{Num, One};
 use std::{convert::TryInto, ops};
+
+use crate::endian::SignedInt;
 /// Me: can I have a trait for either u8, u16, u32, u64 or u128?
 /// Mom: We have a trait for either u8, u16, u32, u64 or u128 at home
 /// trait for either u8, u16, u32, u64 or u128 at home:
@@ -8,9 +10,11 @@ pub trait BitNum:
     + num_traits::ops::wrapping::WrappingSub
     + num_traits::ops::wrapping::WrappingAdd
     + num_traits::ops::wrapping::WrappingMul
+    + num_traits::ops::wrapping::WrappingNeg
     + num_traits::ops::checked::CheckedSub
     + num_traits::ops::checked::CheckedAdd
     + num_traits::ops::checked::CheckedMul
+    + num_traits::ops::checked::CheckedNeg
     + ops::BitXor<Output = Self>
     + ops::Shl<usize, Output = Self>
     + ops::Shr<usize, Output = Self>
@@ -142,6 +146,15 @@ pub trait Modnum: BitNum {
     }
     /// convert from u64 with some modulo to the number (0 is again 2^n)
     fn mod_from(n: u64, modulo: &Self) -> Self;
+
+    /// convert from a signed u64 with some modulo to the number (0 is again 2^n)
+    fn mod_from_signed(n: SignedInt<u64>, modulo: &Self) -> Self {
+        let mut val = Self::mod_from(n.value, modulo);
+        if n.negative {
+            val = val.neg_mod(modulo);
+        }
+        val
+    }
 }
 // the same stuff a bunch of times (not u128 because i can't be bothered)
 impl Modnum for u8 {
@@ -177,10 +190,6 @@ impl Modnum for u32 {
 impl Modnum for u64 {
     type Double = u128;
     fn mod_from(n: u64, modulo: &Self) -> Self {
-        if *modulo != 0 {
-            n % *modulo
-        } else {
-            n
-        }
+        if *modulo != 0 { n % *modulo } else { n }
     }
 }

@@ -10,7 +10,7 @@
 use super::{ModSum, ModSumBuilder};
 use crate::checksum::CheckReverserError;
 use crate::divisors::{divisors_range, gcd};
-use crate::endian::{bytes_to_int, wordspec_combos, WordSpec};
+use crate::endian::{SignedInt, WordSpec, bytes_to_int, wordspec_combos};
 use crate::utils::unresult_iter;
 use std::iter::Iterator;
 /// Find the parameters of a modsum algorithm.
@@ -32,6 +32,7 @@ pub fn reverse_modsum<'a>(
         spec.wordsize,
         spec.input_endian,
         spec.output_endian,
+        spec.signedness,
         spec.width.unwrap(),
         extended_search,
     )
@@ -98,6 +99,7 @@ impl RevResult {
                 .inendian(wordspec.input_endian)
                 .outendian(wordspec.output_endian)
                 .wordsize(wordspec.wordsize)
+                .signedness(wordspec.signedness)
                 .build()
                 .unwrap()
         })
@@ -111,7 +113,7 @@ impl RevResult {
 // The solutions are then the divisors m in the appropiate range.
 fn reverse(
     spec: RevSpec,
-    chk_bytes: Vec<(impl Iterator<Item = u64>, u128)>,
+    chk_bytes: Vec<(impl Iterator<Item = SignedInt<u64>>, u128)>,
     verbosity: u64,
 ) -> Result<RevResult, CheckReverserError> {
     let log = |s| {
@@ -127,7 +129,15 @@ fn reverse(
     for (f, chk) in chk_bytes {
         min_sum = min_sum.max(chk);
         // here we calculate (init mod m)
-        sums.push(f.map(i128::from).sum::<i128>() - chk as i128);
+        let mut sum = -(chk as i128);
+        for word in f {
+            if word.negative {
+                sum -= word.value as i128;
+            } else {
+                sum += word.value as i128;
+            }
+        }
+        sums.push(sum);
     }
     let original_mod = spec
         .module
@@ -208,16 +218,16 @@ mod tests {
             new_modsum.wordsize(max_word_width.min(wordspec.wordsize));
             new_modsum.inendian(wordspec.input_endian);
             new_modsum.outendian(wordspec.output_endian);
+            new_modsum.signedness(wordspec.signedness);
             new_modsum
         }
     }
 
-    #[quickcheck]
-    fn qc_modsum_rev(
+    fn run_modsum_rev(
         files: ReverseFileSet,
         modsum_build: ModSumBuilder<u64>,
         known: (bool, bool),
-        wordspec_known: (bool, bool, bool),
+        wordspec_known: (bool, bool, bool, bool),
     ) -> TestResult {
         let modsum = modsum_build.build().unwrap();
         let mut naive = ModSum::<u64>::with_options();
@@ -237,9 +247,21 @@ mod tests {
         if wordspec_known.2 {
             naive.outendian(modsum_build.output_endian.unwrap());
         }
+        if wordspec_known.3 {
+            naive.signedness(modsum_build.signedness.unwrap());
+        }
         let chk_files: Vec<_> = files.with_checksums(&modsum);
         let reverser = reverse_modsum(&naive, &chk_files, 0, false);
         files.check_matching(&modsum, reverser)
+    }
+    #[quickcheck]
+    fn qc_modsum_rev(
+        files: ReverseFileSet,
+        modsum_build: ModSumBuilder<u64>,
+        known: (bool, bool),
+        wordspec_known: (bool, bool, bool, bool),
+    ) -> TestResult {
+        run_modsum_rev(files, modsum_build, known, wordspec_known)
     }
     #[test]
     fn error1() {

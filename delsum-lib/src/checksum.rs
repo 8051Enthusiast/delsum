@@ -1,4 +1,5 @@
 use crate::endian::Endian;
+use crate::endian::SignedInt;
 use crate::endian::WordSpec;
 use crate::endian::bytes_to_int;
 use crate::utils::SignedInclRange;
@@ -35,7 +36,7 @@ pub trait Digest {
     /// Processes a single word from the text.
     ///
     /// For a crc, this corresponds to shifting, adding the word and reducing.
-    fn dig_word(&self, sum: Self::Sum, word: u64) -> Self::Sum;
+    fn dig_word(&self, sum: Self::Sum, word: SignedInt<u64>) -> Self::Sum;
     /// After all words are read, this function is called to do some finalization.
     ///
     /// In the case of crc, this corresponds to adding a constant at the end
@@ -107,7 +108,7 @@ impl From<SignedInclRange> for Relativity {
 /// * fletcher: (s, c) |-> (s, c + s) (note that automorphisms of finite abelian groups generally behave like matrices)
 /// * crc: s |-> s * x^8
 /// * polyhash: s |-> s * factor
-/// 
+///
 /// dig_word(s, k) is then σ(s) + Sum::from_word(k), shift(s, t) is the application of the automorphism t(s),
 /// add and negate are the usual group operations, init_shift is the identity automorphism and inc_shift corresponds to
 /// t |-> t * σ.
@@ -651,13 +652,14 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
         let shift3 = chk.shift_n(3);
         let shift4 = chk.inc_shift(shift3.clone());
         let mut new_sum = chk.init();
-        new_sum = chk.dig_word(new_sum, b'T' as u64);
+        let pos = SignedInt::pos;
+        new_sum = chk.dig_word(new_sum, pos(b'T' as u64));
         new_sum = chk.shift(new_sum, &shift3);
-        new_sum = chk.dig_word(new_sum, b'E' as u64);
+        new_sum = chk.dig_word(new_sum, pos(b'E' as u64));
         new_sum = chk.shift(new_sum, &shift3);
-        new_sum = chk.dig_word(new_sum, b'S' as u64);
+        new_sum = chk.dig_word(new_sum, pos(b'S' as u64));
         new_sum = chk.shift(new_sum, &shift4);
-        new_sum = chk.dig_word(new_sum, b'T' as u64);
+        new_sum = chk.dig_word(new_sum, pos(b'T' as u64));
         assert_eq!(test_sum, chk.finalize(new_sum));
     }
     pub fn test_find<L: LinearCheck>(chk: &L) {
@@ -708,7 +710,7 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
         let mut rng = rand::rng();
         let mut s = chk.init();
         while test_values.len() < 100 {
-            s = chk.dig_word(s, rng.random());
+            s = chk.dig_word(s, SignedInt::pos(rng.random()));
             if rng.random_bool(0.01) {
                 test_values.push(s.clone());
             }
@@ -776,7 +778,7 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
     fn check_shift1<L: LinearCheck>(chk: &L, a: &L::Sum) {
         assert_eq!(
             chk.shift(a.clone(), &chk.shift_n(1)),
-            chk.dig_word(a.clone(), 0u64),
+            chk.dig_word(a.clone(), SignedInt::pos(0u64)),
             "Shift1 Fail: shift({:x?}, shift_n1(1)) != dig_word({:x?}, 0u8)",
             a,
             a
@@ -803,10 +805,10 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
     fn check_dist<L: LinearCheck>(chk: &L, a: &L::Sum, b: &L::Sum) {
         assert_eq!(
             chk.add(
-                chk.dig_word(a.clone(), 0u64),
-                &chk.dig_word(b.clone(), 0u64)
+                chk.dig_word(a.clone(), SignedInt::pos(0u64)),
+                &chk.dig_word(b.clone(), SignedInt::pos(0u64))
             ),
-            chk.dig_word(chk.add(a.clone(), b), 0u64),
+            chk.dig_word(chk.add(a.clone(), b), SignedInt::pos(0u64)),
             "Distributivity Fail: dig_word({:x?}, 0u8) + dig_word({:x?}, 0u8) != dig_word({:x?} + {:x?}, 0u8)",
             a,
             b,
@@ -817,8 +819,11 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
     fn check_bil<L: LinearCheck>(chk: &L, e: &L::Sum, a: &L::Sum) {
         for k in 0u64..=255 {
             assert_eq!(
-                chk.dig_word(a.clone(), k),
-                chk.add(chk.dig_word(a.clone(), 0u64), &chk.dig_word(e.clone(), k)),
+                chk.dig_word(a.clone(), SignedInt::pos(k)),
+                chk.add(
+                    chk.dig_word(a.clone(), SignedInt::pos(0u64)),
+                    &chk.dig_word(e.clone(), SignedInt::pos(k))
+                ),
                 "Bilinearity Fail: dig_word({:x?}, {:#x}) != dig_word({:x?}, 0u8) + dig_word(0, {:#x}u8)",
                 a,
                 k,

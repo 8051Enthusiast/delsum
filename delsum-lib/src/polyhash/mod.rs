@@ -5,7 +5,7 @@ pub use rev::reverse_polyhash;
 use crate::{
     bitnum::Modnum,
     checksum::{CheckBuilderErr, Digest, LinearCheck},
-    endian::{Endian, WordSpec},
+    endian::{Endian, SignedInt, Signedness, WordSpec},
     keyval::KeyValIter,
 };
 
@@ -18,6 +18,7 @@ pub struct PolyHashBuilder<S> {
     input_endian: Option<Endian>,
     output_endian: Option<Endian>,
     wordsize: Option<usize>,
+    signedness: Option<Signedness>,
     check: Option<S>,
     name: Option<String>,
 }
@@ -40,6 +41,9 @@ impl<S: Modnum> FromStr for PolyHashBuilder<S> {
                 "out_endian" => Endian::from_str(&current_val)
                     .ok()
                     .map(|x| sum.outendian(x)),
+                "signedness" => Signedness::from_str(&current_val)
+                    .ok()
+                    .map(|x| sum.signedness(x)),
                 "name" => Some(sum.name(&current_val)),
                 _ => return Err(CheckBuilderErr::UnknownKey(current_key)),
             };
@@ -92,6 +96,10 @@ impl<S: Modnum> PolyHashBuilder<S> {
         self.output_endian = Some(e);
         self
     }
+    fn signedness(&mut self, s: Signedness) -> &mut Self {
+        self.signedness = Some(s);
+        self
+    }
     /// The checksum of "123456789", gets checked on creation.
     pub fn check(&mut self, c: S) -> &mut Self {
         self.check = Some(c);
@@ -126,6 +134,7 @@ impl<S: Modnum> PolyHashBuilder<S> {
             input_endian: self.input_endian.unwrap_or(Endian::Big),
             wordsize,
             output_endian: self.output_endian.unwrap_or(Endian::Big),
+            signedness: self.signedness.unwrap_or(Signedness::Unsigned),
         };
         let s = PolyHash {
             width,
@@ -139,7 +148,7 @@ impl<S: Modnum> PolyHashBuilder<S> {
             Some(c) => {
                 let mut sum = s.init();
                 for &x in b"123456789" {
-                    sum = s.dig_word(sum, x as u64);
+                    sum = s.dig_word(sum, SignedInt::pos(x as u64));
                 }
                 s.finalize(sum);
                 if sum == c {
@@ -183,6 +192,7 @@ impl<S: Modnum> PolyHash<S> {
             addout: None,
             input_endian: None,
             output_endian: None,
+            signedness: None,
             wordsize: None,
             check: None,
             name: None,
@@ -197,8 +207,8 @@ impl<S: Modnum> Display for PolyHash<S> {
             None => {
                 write!(
                     f,
-                    "polyhash width={} factor={:#x} init={:#x} addout={:#x}",
-                    self.width, self.factor, self.init, self.addout
+                    "polyhash width={} factor={:#x} init={:#x} addout={:#x} signedness={}",
+                    self.width, self.factor, self.init, self.addout, self.wordspec.signedness
                 )?;
                 if self.wordspec.word_bytes() != 1 {
                     write!(
@@ -231,11 +241,12 @@ impl<S: Modnum> Digest for PolyHash<S> {
         self.init
     }
 
-    fn dig_word(&self, sum: Self::Sum, word: u64) -> Self::Sum {
-        self.mask(
-            sum.wrapping_mul(&self.factor)
-                .wrapping_add(&S::mod_from(word, &S::zero())),
-        )
+    fn dig_word(&self, sum: Self::Sum, word: SignedInt<u64>) -> Self::Sum {
+        let mut value = S::mod_from(word.value, &S::zero());
+        if word.negative {
+            value = value.wrapping_neg();
+        }
+        self.mask(sum.wrapping_mul(&self.factor).wrapping_add(&value))
     }
 
     fn finalize(&self, sum: Self::Sum) -> Self::Sum {

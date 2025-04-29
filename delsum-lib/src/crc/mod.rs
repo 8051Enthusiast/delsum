@@ -1,10 +1,10 @@
 mod rev;
 use super::{
-    endian::{Endian, WordSpec},
     CheckBuilderErr, Digest, LinearCheck,
+    endian::{Endian, WordSpec},
 };
-use crate::bitnum::BitNum;
-use crate::keyval::KeyValIter;
+use crate::{endian::SignedInt, keyval::KeyValIter};
+use crate::{bitnum::BitNum, endian::Signedness};
 pub use rev::reverse_crc;
 #[cfg(feature = "parallel")]
 pub use rev::reverse_crc_para;
@@ -146,6 +146,7 @@ impl<Sum: BitNum> CrcBuilder<Sum> {
             input_endian,
             wordsize,
             output_endian: self.output_endian.unwrap_or(Endian::Big),
+            signedness: Signedness::Unsigned,
         };
         let crc = CRC {
             width,
@@ -324,14 +325,14 @@ impl<S: BitNum> Digest for CRC<S> {
         // because it is needed for the linearity conditions of LinearCheck.
         self.regularize(self.init)
     }
-    fn dig_word(&self, sum: Self::Sum, word: u64) -> Self::Sum {
+    fn dig_word(&self, sum: Self::Sum, word: SignedInt<u64>) -> Self::Sum {
         // sum is reflected both at beginning and end to do operations on it in unreflected state
         // (this could be prevented by implementing a proper implementation for the reflected case)
         let mut refsum = self.regularize(sum);
         let inword = if self.refin {
-            word.reverse_bits() >> (64 - self.wordspec.wordsize)
+            word.value.reverse_bits() >> (64 - self.wordspec.wordsize)
         } else {
-            word
+            word.value
         };
         for x in (0..self.wordspec.word_bytes()).rev() {
             let inbyte = (inword >> (x * 8)) as u8;
@@ -428,13 +429,15 @@ mod tests {
     use crate::checksum::tests::{check_example, test_find, test_prop, test_shifts};
     #[test]
     fn cms_16() {
-        assert!(CRC::<u32>::with_options()
-            .poly(0x8005)
-            .width(16)
-            .init(0xffff)
-            .check(0xaee7)
-            .build()
-            .is_ok());
+        assert!(
+            CRC::<u32>::with_options()
+                .poly(0x8005)
+                .width(16)
+                .init(0xffff)
+                .check(0xaee7)
+                .build()
+                .is_ok()
+        );
         let crc = CRC::<u16>::with_options()
             .poly(0x8005)
             .width(16)

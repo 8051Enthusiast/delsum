@@ -11,7 +11,7 @@
 mod rev;
 use crate::bitnum::Modnum;
 use crate::checksum::{CheckBuilderErr, Digest, LinearCheck};
-use crate::endian::{Endian, WordSpec};
+use crate::endian::{Endian, SignedInt, Signedness, WordSpec};
 use crate::keyval::KeyValIter;
 pub(crate) use rev::find_largest_mod;
 pub use rev::reverse_modsum;
@@ -37,6 +37,7 @@ pub struct ModSumBuilder<S: Modnum> {
     init: Option<S>,
     input_endian: Option<Endian>,
     output_endian: Option<Endian>,
+    signedness: Option<Signedness>,
     wordsize: Option<usize>,
     check: Option<S>,
     name: Option<String>,
@@ -77,6 +78,11 @@ impl<S: Modnum> ModSumBuilder<S> {
         self.output_endian = Some(e);
         self
     }
+    /// The signedness of the input words
+    pub fn signedness(&mut self, s: Signedness) -> &mut Self {
+        self.signedness = Some(s);
+        self
+    }
     /// The checksum of "123456789", gets checked on creation.
     pub fn check(&mut self, c: S) -> &mut Self {
         self.check = Some(c);
@@ -108,6 +114,7 @@ impl<S: Modnum> ModSumBuilder<S> {
             input_endian: self.input_endian.unwrap_or(Endian::Big),
             wordsize,
             output_endian: self.output_endian.unwrap_or(Endian::Big),
+            signedness: self.signedness.unwrap_or(Signedness::Unsigned),
         };
         let s = ModSum {
             width,
@@ -120,7 +127,7 @@ impl<S: Modnum> ModSumBuilder<S> {
             Some(c) => {
                 let mut sum = s.init();
                 for &x in b"123456789" {
-                    sum = s.dig_word(sum, x as u64);
+                    sum = s.dig_word(sum, SignedInt::pos(x as u64));
                 }
                 s.finalize(sum);
                 if sum == c {
@@ -154,6 +161,7 @@ impl<S: Modnum> ModSum<S> {
             init: None,
             input_endian: None,
             output_endian: None,
+            signedness: None,
             wordsize: None,
             check: None,
             name: None,
@@ -168,8 +176,8 @@ impl<Sum: Modnum> Display for ModSum<Sum> {
             None => {
                 write!(
                     f,
-                    "modsum width={} module={:#x} init={:#x}",
-                    self.width, self.module, self.init
+                    "modsum width={} module={:#x} init={:#x} signedness={}",
+                    self.width, self.module, self.init, self.wordspec.signedness,
                 )?;
                 if self.wordspec.word_bytes() != 1 {
                     write!(
@@ -205,6 +213,9 @@ impl<Sum: Modnum> FromStr for ModSumBuilder<Sum> {
                 "out_endian" => Endian::from_str(&current_val)
                     .ok()
                     .map(|x| sum.outendian(x)),
+                "signedness" => Signedness::from_str(&current_val)
+                    .ok()
+                    .map(|x| sum.signedness(x)),
                 "name" => Some(sum.name(&current_val)),
                 _ => return Err(CheckBuilderErr::UnknownKey(current_key)),
             };
@@ -235,8 +246,8 @@ impl<S: Modnum> Digest for ModSum<S> {
     fn init(&self) -> Self::Sum {
         self.init
     }
-    fn dig_word(&self, sum: Self::Sum, word: u64) -> Self::Sum {
-        let modword = S::mod_from(word, &self.module);
+    fn dig_word(&self, sum: Self::Sum, word: SignedInt<u64>) -> Self::Sum {
+        let modword = S::mod_from_signed(word, &self.module);
         sum.add_mod(&modword, &self.module)
     }
     fn finalize(&self, sum: Self::Sum) -> Self::Sum {
@@ -279,7 +290,7 @@ impl<S: Modnum> LinearCheck for ModSum<S> {
 mod tests {
     use super::*;
     use crate::checksum::tests::{test_prop, test_shifts};
-    use crate::checksum::{const_sum, Relativity};
+    use crate::checksum::{Relativity, const_sum};
     #[test]
     fn modsum_8() {
         let s = ModSum::<u8>::with_options()

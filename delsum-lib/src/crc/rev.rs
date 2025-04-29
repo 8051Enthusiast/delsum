@@ -12,7 +12,7 @@
 //! In case only checksums of files with a set length are required, setting `init = 0` is sufficient.
 use super::{CRC, CrcBuilder};
 use crate::checksum::CheckReverserError;
-use crate::endian::{Endian, WordSpec, bytes_to_int, int_to_bytes, wordspec_combos};
+use crate::endian::{Endian, Signedness, WordSpec, bytes_to_int, int_to_bytes, wordspec_combos};
 use crate::utils::{cart_prod, unresult_iter};
 use gf2poly::*;
 #[cfg(feature = "parallel")]
@@ -123,6 +123,7 @@ fn discrete_combos(
             spec.wordsize,
             input_endian,
             spec.output_endian,
+            Some(Signedness::Unsigned),
             width,
             extended_search,
         );
@@ -874,9 +875,9 @@ fn reorder_poly_bytes(bytes: &[u8], refin: bool, wordspec: WordSpec) -> Vec<u8> 
         .rev()
         .flat_map(|n| {
             let n_ref = if refin {
-                n.reverse_bits() >> (64 - wordspec.wordsize)
+                n.value.reverse_bits() >> (64 - wordspec.wordsize)
             } else {
-                n
+                n.value
             };
             int_to_bytes(n_ref, Endian::Little, wordspec.wordsize)
         })

@@ -16,7 +16,7 @@
 use super::{Fletcher, FletcherBuilder};
 use crate::checksum::CheckReverserError;
 use crate::divisors::divisors_range;
-use crate::endian::{WordSpec, bytes_to_int, wordspec_combos};
+use crate::endian::{SignedInt, WordSpec, bytes_to_int, wordspec_combos};
 use crate::utils::{cart_prod, unresult_iter};
 use num_bigint::BigInt;
 use num_traits::{One, Signed, Zero, one, zero};
@@ -83,6 +83,7 @@ fn discrete_combos(spec: FletcherBuilder<u64>, extended_search: bool) -> Vec<(bo
         spec.wordsize,
         spec.input_endian,
         spec.output_endian,
+        spec.signedness,
         spec.width.unwrap(),
         extended_search,
     );
@@ -170,6 +171,7 @@ impl RevResult {
                     .inendian(wordspec.input_endian)
                     .outendian(wordspec.output_endian)
                     .wordsize(wordspec.wordsize)
+                    .signedness(wordspec.signedness)
                     .build()
                     .unwrap()
             })
@@ -205,7 +207,7 @@ impl RevResult {
 // Finding out addout2 is now as easy as subtracting 5*init from (5*init + addout2) mod m.
 fn reverse(
     spec: RevSpec,
-    chk_bytes: Vec<(impl Iterator<Item = u64>, u128)>,
+    chk_bytes: Vec<(impl Iterator<Item = SignedInt<u64>>, u128)>,
     verbosity: u64,
 ) -> Result<RevResult, CheckReverserError> {
     let log = |s| {
@@ -295,7 +297,7 @@ fn glue_sum(mut s1: u64, mut s2: u64, width: usize, swap: bool) -> u128 {
 }
 
 fn summarize(
-    chks: Vec<(impl Iterator<Item = u64>, u128)>,
+    chks: Vec<(impl Iterator<Item = SignedInt<u64>>, u128)>,
     width: usize,
     swap: bool,
 ) -> (u128, u128, Vec<(BigInt, usize)>, Vec<i128>) {
@@ -311,7 +313,11 @@ fn summarize(
         let mut size = 0usize;
         for word in words {
             size += 1;
-            current_sum += BigInt::from(word);
+            if word.negative {
+                current_sum -= BigInt::from(word.value);
+            } else {
+                current_sum += BigInt::from(word.value);
+            }
             cumusum += &current_sum;
         }
         let (check1, check2) = split_sum(chk, width, swap);
@@ -655,6 +661,7 @@ mod tests {
             new_fletcher.wordsize(max_word_width.min(wordspec.wordsize));
             new_fletcher.inendian(wordspec.input_endian);
             new_fletcher.outendian(wordspec.output_endian);
+            new_fletcher.signedness(wordspec.signedness);
             new_fletcher
         }
     }
@@ -683,7 +690,7 @@ mod tests {
         files: ReverseFileSet,
         fletch_build: FletcherBuilder<u64>,
         known: (bool, bool, bool, bool),
-        wordspec_known: (bool, bool, bool),
+        wordspec_known: (bool, bool, bool, bool),
     ) -> TestResult {
         let fletcher = fletch_build.build().expect("Could not build checksum");
         let mut naive = Fletcher::<u64>::with_options();
@@ -708,6 +715,9 @@ mod tests {
         }
         if wordspec_known.2 {
             naive.outendian(fletch_build.output_endian.unwrap());
+        }
+        if wordspec_known.3 {
+            naive.signedness(fletch_build.signedness.unwrap());
         }
         let chk_files: Vec<_> = files.with_checksums(&fletcher);
         let reverser = reverse_fletcher(&naive, &chk_files, 0, false);
