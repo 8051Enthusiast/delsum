@@ -3,8 +3,8 @@ use super::{
     CheckBuilderErr, Digest, LinearCheck,
     endian::{Endian, WordSpec},
 };
-use crate::{endian::SignedInt, keyval::KeyValIter};
 use crate::{bitnum::BitNum, endian::Signedness};
+use crate::{checksum::Checksum, endian::SignedInt, keyval::KeyValIter};
 pub use rev::reverse_crc;
 #[cfg(feature = "parallel")]
 pub use rev::reverse_crc_para;
@@ -355,6 +355,10 @@ impl<S: BitNum> Digest for CRC<S> {
 
     fn to_bytes(&self, s: Self::Sum) -> Vec<u8> {
         self.wordspec.output_to_bytes(s, self.width)
+    }
+
+    fn from_bytes(&self, bytes: &[u8]) -> Option<Self::Sum> {
+        Checksum::from_bytes(bytes, self.wordspec.output_endian, self.width)
     }
 
     fn wordspec(&self) -> WordSpec {

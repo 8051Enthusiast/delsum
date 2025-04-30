@@ -11,8 +11,8 @@
 //! If `init` is not known, it is neccessary to know two checksums of files with different lengths.
 //! In case only checksums of files with a set length are required, setting `init = 0` is sufficient.
 use super::{CRC, CrcBuilder};
-use crate::checksum::CheckReverserError;
-use crate::endian::{Endian, Signedness, WordSpec, bytes_to_int, int_to_bytes, wordspec_combos};
+use crate::checksum::{CheckReverserError, Checksum};
+use crate::endian::{Endian, Signedness, WordSpec, int_to_bytes, wordspec_combos};
 use crate::utils::{cart_prod, unresult_iter};
 use gf2poly::*;
 #[cfg(feature = "parallel")]
@@ -859,11 +859,7 @@ fn bytes_to_poly(
     let mut poly = Gf2Poly::from_bytes(&new_bytes);
     poly <<= width;
 
-    let sum = bytes_to_int(checksum, wordspec.output_endian);
-    let check_mask = 1u128.checked_shl(width as u32).unwrap_or(0).wrapping_sub(1);
-    if (!check_mask & sum) != 0 {
-        return None;
-    }
+    let sum = Checksum::from_bytes(checksum, wordspec.output_endian, width as usize)?;
     let check = cond_reverse(width, sum, refout);
     poly += Gf2Poly::from_bytes(&check.to_le_bytes());
     Some(poly)

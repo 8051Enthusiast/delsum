@@ -4,7 +4,7 @@ pub use rev::reverse_polyhash;
 
 use crate::{
     bitnum::Modnum,
-    checksum::{CheckBuilderErr, Digest, LinearCheck},
+    checksum::{CheckBuilderErr, Checksum, Digest, LinearCheck},
     endian::{Endian, SignedInt, Signedness, WordSpec},
     keyval::KeyValIter,
 };
@@ -255,6 +255,10 @@ impl<S: Modnum> Digest for PolyHash<S> {
 
     fn to_bytes(&self, s: Self::Sum) -> Vec<u8> {
         self.wordspec.output_to_bytes(s, self.width)
+    }
+
+    fn from_bytes(&self, bytes: &[u8]) -> Option<Self::Sum> {
+        Checksum::from_bytes(bytes, self.wordspec.output_endian, self.width)
     }
 
     fn wordspec(&self) -> WordSpec {

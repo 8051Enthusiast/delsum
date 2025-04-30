@@ -44,6 +44,8 @@ pub trait Digest {
     fn finalize(&self, sum: Self::Sum) -> Self::Sum;
     /// Takes the sum and turns it into an array of bytes (may depend on configured endian)
     fn to_bytes(&self, s: Self::Sum) -> Vec<u8>;
+    /// Takes a slice of bytes and turns it into a sum, if it fits (may depend on configured endian).
+    fn from_bytes(&self, bytes: &[u8]) -> Option<Self::Sum>;
     /// Iterate over the words of a file so that digest calculates the checksum
     fn wordspec(&self) -> WordSpec;
     /// Takes a reader and calculates the checksums of all words therein.
@@ -149,7 +151,7 @@ pub trait LinearCheck: Digest + Send + Sync {
     fn find_segments<'a>(
         &self,
         bytes: &'a [Vec<u8>],
-        sum: &'a [impl Fn(&'a [u8], usize) -> Self::Sum + Send + Sync],
+        sum: &'a [impl Fn(&'a [u8], usize) -> Option<Self::Sum> + Send + Sync],
         rel: Relativity,
     ) -> Vec<RangePair> {
         if bytes.is_empty() {
@@ -175,7 +177,7 @@ pub trait LinearCheck: Digest + Send + Sync {
     fn find_segments_range<'a>(
         &self,
         bytes: &'a [Vec<u8>],
-        sum: &'a [impl Fn(&'a [u8], usize) -> Self::Sum + Send + Sync],
+        sum: &'a [impl Fn(&'a [u8], usize) -> Option<Self::Sum> + Send + Sync],
         start_range: SignedInclRange,
         end_range: SignedInclRange,
     ) -> Vec<RangePair> {
@@ -223,7 +225,7 @@ pub trait LinearCheck: Digest + Send + Sync {
 fn find_segments_aligned<'a, S: LinearCheck + ?Sized>(
     summer: &S,
     bytes: &'a [Vec<u8>],
-    sum: &'a [impl Fn(&'a [u8], usize) -> S::Sum + Send + Sync],
+    sum: &'a [impl Fn(&'a [u8], usize) -> Option<S::Sum> + Send + Sync],
     start_range: SignedInclRange,
     end_range: SignedInclRange,
 ) -> Option<Vec<RangePair>> {
@@ -344,10 +346,10 @@ fn normalize_range(
 fn presums<'a, S: LinearCheck + ?Sized>(
     summer: &S,
     bytes: &'a [u8],
-    sum: impl Fn(&'a [u8], usize) -> S::Sum,
+    sum: impl Fn(&'a [u8], usize) -> Option<S::Sum>,
     start_range: UnsignedInclRange,
     end_range: UnsignedInclRange,
-) -> (Vec<S::Sum>, Vec<S::Sum>) {
+) -> (Vec<S::Sum>, Vec<Option<S::Sum>>) {
     if start_range.start() > start_range.end() || end_range.start() > end_range.end() {
         return (Vec::new(), Vec::new());
     }
@@ -373,11 +375,10 @@ fn presums<'a, S: LinearCheck + ?Sized>(
         }
         state = summer.dig_word(state, c);
         if end_range.contains(i + step - 1) {
+            let checksum = sum(bytes, i + step);
             // from the endsums, we finalize them and subtract the given final sum
-            let endstate = summer.add(
-                summer.finalize(state.clone()),
-                &summer.negate(sum(bytes, i + step)),
-            );
+            let endstate = checksum
+                .map(|chksum| summer.add(summer.finalize(state.clone()), &summer.negate(chksum)));
             end_presums.push(endstate);
         }
     }
@@ -391,7 +392,9 @@ fn presums<'a, S: LinearCheck + ?Sized>(
     {
         if end_range.contains(i + step - 1) {
             end_index -= 1;
-            end_presums[end_index] = summer.shift(end_presums[end_index].clone(), &shift)
+            end_presums[end_index] = end_presums[end_index]
+                .clone()
+                .map(|end_presum| summer.shift(end_presum, &shift));
         }
         shift = summer.inc_shift(shift);
         if start_range.contains(i) {
@@ -438,6 +441,39 @@ struct PresumSet<Sum: Clone + Eq + Ord + Debug> {
     presum: Vec<Vec<Sum>>,
 }
 
+fn cmp_idx_generic<A, B>(
+    presum_a: &[Vec<A>],
+    a: u32,
+    presum_b: &[Vec<B>],
+    b: u32,
+    cmp: impl Fn(&A, &B) -> Ordering,
+) -> Ordering {
+    for (x, y) in presum_a.iter().zip(presum_b.iter()) {
+        let cmp = cmp(&x[a as usize], &y[b as usize]);
+        if cmp != Ordering::Equal {
+            return cmp;
+        }
+    }
+    Ordering::Equal
+}
+
+/// Compares all elements of the first vector at an index to the ones of the second vector lexicographically (assuming same length).
+fn cmp_idx<Sum: Ord>(presum_a: &[Vec<Sum>], a: u32, presum_b: &[Vec<Sum>], b: u32) -> Ordering {
+    cmp_idx_generic(presum_a, a, presum_b, b, |x, y| x.cmp(y))
+}
+
+fn cmp_idx_opt<Sum: Ord>(
+    presum_a: &[Vec<Sum>],
+    a: u32,
+    presum_b: &[Vec<Option<Sum>>],
+    b: u32,
+) -> Ordering {
+    cmp_idx_generic(presum_a, a, presum_b, b, |x, y| match y {
+        Some(y) => x.cmp(y),
+        None => Ordering::Greater,
+    })
+}
+
 impl<Sum: Clone + Eq + Ord + Debug + Send + Sync> PresumSet<Sum> {
     /// Gets a new PresumSet. Gets sorted on construction.
     fn new(presum: Vec<Vec<Sum>>) -> Self {
@@ -451,34 +487,24 @@ impl<Sum: Clone + Eq + Ord + Debug + Send + Sync> PresumSet<Sum> {
         // get a permutation vector representing the sort of the presum arrays first by value and then by index
 
         #[cfg(feature = "parallel")]
-        idxvec.par_sort_unstable_by(|a, b| Self::cmp_idx(&presum, *a, &presum, *b).then(a.cmp(b)));
+        idxvec.par_sort_unstable_by(|a, b| cmp_idx(&presum, *a, &presum, *b).then(a.cmp(b)));
         #[cfg(not(feature = "parallel"))]
-        idxvec.sort_unstable_by(|a, b| Self::cmp_idx(&presum, *a, &presum, *b).then(a.cmp(&b)));
+        idxvec.sort_unstable_by(|a, b| cmp_idx(&presum, *a, &presum, *b).then(a.cmp(&b)));
         Self {
             idx: idxvec,
             presum,
         }
     }
-    /// Compares all elements of the first vector at an index to the ones of the second vector lexicographically (assuming same length).
-    fn cmp_idx(presum_a: &[Vec<Sum>], a: u32, presum_b: &[Vec<Sum>], b: u32) -> Ordering {
-        for (x, y) in presum_a.iter().zip(presum_b.iter()) {
-            let cmp = x[a as usize].cmp(&y[b as usize]);
-            if cmp != Ordering::Equal {
-                return cmp;
-            }
-        }
-        Ordering::Equal
-    }
     /// Finds groups of indices equal elements in the first set and the second set and
     /// returns them for each equal array.
-    fn equal_pairs(&self, other: &Self) -> Vec<(Vec<u32>, Vec<u32>)> {
+    fn equal_pairs(&self, ends: &PresumSet<Option<Sum>>) -> Vec<(Vec<u32>, Vec<u32>)> {
         let mut ret = Vec::new();
         let mut a_idx = 0;
         let mut b_idx = 0;
-        while a_idx < self.idx.len() && b_idx < other.idx.len() {
+        while a_idx < self.idx.len() && b_idx < ends.idx.len() {
             let apos = self.idx[a_idx];
-            let bpos = other.idx[b_idx];
-            match Self::cmp_idx(&self.presum, apos, &other.presum, bpos) {
+            let bpos = ends.idx[b_idx];
+            match cmp_idx_opt(&self.presum, apos, &ends.presum, bpos) {
                 Ordering::Less => {
                     a_idx += 1;
                 }
@@ -489,16 +515,15 @@ impl<Sum: Clone + Eq + Ord + Debug + Send + Sync> PresumSet<Sum> {
                     let mut n_a = 0;
                     // gets all runs of equal elements in a and b array
                     for x in &self.idx[a_idx..] {
-                        if Self::cmp_idx(&self.presum, apos, &self.presum, *x) == Ordering::Equal {
+                        if cmp_idx(&self.presum, apos, &self.presum, *x) == Ordering::Equal {
                             n_a += 1;
                         } else {
                             break;
                         }
                     }
                     let mut n_b = 0;
-                    for x in &other.idx[b_idx..] {
-                        if Self::cmp_idx(&other.presum, bpos, &other.presum, *x) == Ordering::Equal
-                        {
+                    for x in &ends.idx[b_idx..] {
+                        if cmp_idx(&ends.presum, bpos, &ends.presum, *x) == Ordering::Equal {
                             n_b += 1;
                         } else {
                             break;
@@ -507,7 +532,7 @@ impl<Sum: Clone + Eq + Ord + Debug + Send + Sync> PresumSet<Sum> {
                     let mut a_vec = Vec::new();
                     a_vec.extend_from_slice(&self.idx[a_idx..a_idx + n_a]);
                     let mut b_vec = Vec::new();
-                    b_vec.extend_from_slice(&other.idx[b_idx..b_idx + n_b]);
+                    b_vec.extend_from_slice(&ends.idx[b_idx..b_idx + n_b]);
                     ret.push((a_vec, b_vec));
                     // puts indexes beyond equal elements
                     a_idx += n_a;
@@ -537,6 +562,8 @@ pub enum CheckBuilderErr {
     MalformedString(String),
     /// A key given to the from_str function is not known
     UnknownKey(String),
+    /// The given checksum is not in range for the model
+    ChecksumOutOfRange(String),
 }
 
 impl std::fmt::Display for CheckBuilderErr {
@@ -554,11 +581,22 @@ impl std::fmt::Display for CheckBuilderErr {
                 }
             }
             UnknownKey(key) => write!(f, "Unknown key '{}'", key),
+            ChecksumOutOfRange(chk) => write!(f, "Checksum '{}' out of range", chk),
         }
     }
 }
 
 impl std::error::Error for CheckBuilderErr {}
+
+pub(crate) fn filter_opt_err<T, E>(
+    it: impl Iterator<Item = Result<T, Option<E>>>,
+) -> impl Iterator<Item = Result<T, E>> {
+    it.filter_map(|x| match x {
+        Ok(a) => Some(Ok(a)),
+        Err(Some(e)) => Some(Err(e)),
+        Err(None) => None,
+    })
+}
 
 #[derive(Clone, PartialEq, Eq, Debug, Hash)]
 pub enum CheckReverserError {
@@ -589,9 +627,9 @@ impl std::fmt::Display for CheckReverserError {
 impl std::error::Error for CheckReverserError {}
 
 /// Trait for checksums
-pub trait Checksum {
+pub trait Checksum: Sized {
     fn to_width_str(&self, width: usize) -> String;
-    fn from_bytes(bytes: &[u8], endian: Endian) -> Self;
+    fn from_bytes(bytes: &[u8], endian: Endian, width: usize) -> Option<Self>;
 }
 
 // default implementation for normal numbers
@@ -604,8 +642,18 @@ impl<T: crate::bitnum::BitNum> Checksum for T {
         format!("{:0width$x}", self, width = w)
     }
 
-    fn from_bytes(bytes: &[u8], endian: Endian) -> Self {
-        bytes_to_int(bytes, endian)
+    fn from_bytes(bytes: &[u8], endian: Endian, width: usize) -> Option<Self> {
+        let byte_count = width.div_ceil(8);
+        if bytes.len() > byte_count {
+            return None;
+        }
+
+        let sum = bytes_to_int::<T>(bytes, endian);
+        if width % 8 != 0 && T::one() << width <= sum {
+            return None;
+        }
+
+        return Some(sum);
     }
 }
 
@@ -669,7 +717,7 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
         assert_eq!(
             chk.find_segments(
                 &[Vec::from("a123456789X1235H123456789Y")],
-                &[const_sum(sum_1_9.clone())],
+                &[const_sum(Some(sum_1_9.clone()))],
                 Relativity::Start
             ),
             vec![(vec![1], vec![9]), (vec![16], vec![24])]
@@ -680,7 +728,10 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
                     Vec::from("XX98765432123456789XXX"),
                     Vec::from("XX12345678987654321XX")
                 ],
-                &[const_sum(sum_1_9.clone()), const_sum(sum_9_1.clone())],
+                &[
+                    const_sum(Some(sum_1_9.clone())),
+                    const_sum(Some(sum_9_1.clone()))
+                ],
                 Relativity::Start
             ),
             vec![(vec![10], vec![18])]
@@ -692,7 +743,7 @@ nie gefühlten, leichten, dumpfen Schmerz zu fühlen begann.
                     Vec::from("ABC123456789.super."),
                     Vec::from("Za!987654321ergrfrf")
                 ],
-                &[sum_1_9_1, sum_1_9, sum_9_1].map(const_sum),
+                &[Some(sum_1_9_1), Some(sum_1_9), Some(sum_9_1)].map(const_sum),
                 Relativity::End
             ),
             vec![(vec![3], vec![-8])]

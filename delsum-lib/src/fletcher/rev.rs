@@ -14,9 +14,9 @@
 //! It is probable that giving just two files + checksum might already be enough, but there will
 //! probably also be many some false positives.
 use super::{Fletcher, FletcherBuilder};
-use crate::checksum::CheckReverserError;
+use crate::checksum::{CheckReverserError, Checksum, filter_opt_err};
 use crate::divisors::divisors_range;
-use crate::endian::{SignedInt, WordSpec, bytes_to_int, wordspec_combos};
+use crate::endian::{Endian, SignedInt, WordSpec, wordspec_combos};
 use crate::utils::{cart_prod, unresult_iter};
 use num_bigint::BigInt;
 use num_traits::{One, Signed, Zero, one, zero};
@@ -43,9 +43,12 @@ pub fn reverse_fletcher<'a>(
     discrete_combos(spec.clone(), extended_search)
         .into_iter()
         .flat_map(move |x| {
-            unresult_iter(
-                reverse_discrete(spec.clone(), files.clone(), x, verbosity).map(|y| y.iter()),
-            )
+            filter_opt_err(unresult_iter(reverse_discrete(
+                spec.clone(),
+                files.clone(),
+                x,
+                verbosity,
+            )))
         })
 }
 
@@ -66,9 +69,12 @@ pub fn reverse_fletcher_para<'a>(
     discrete_combos(spec.clone(), extended_search)
         .into_par_iter()
         .map(move |x| {
-            unresult_iter(
-                reverse_discrete(spec.clone(), files.clone(), x, verbosity).map(|y| y.iter()),
-            )
+            filter_opt_err(unresult_iter(reverse_discrete(
+                spec.clone(),
+                files.clone(),
+                x,
+                verbosity,
+            )))
             .par_bridge()
         })
         .flatten()
@@ -95,19 +101,14 @@ fn reverse_discrete(
     chk_bytes: Vec<(&[u8], Vec<u8>)>,
     loop_element: (bool, WordSpec),
     verbosity: u64,
-) -> Result<RevResult, CheckReverserError> {
+) -> Result<impl Iterator<Item = Fletcher<u64>>, Option<CheckReverserError>> {
     let width = spec
         .width
         .ok_or(CheckReverserError::MissingParameter("width"))?;
     let wordspec = loop_element.1;
     let chk_words: Vec<_> = chk_bytes
         .iter()
-        .map(|(f, c)| {
-            (
-                wordspec.iter_words(f),
-                bytes_to_int::<u128>(c, wordspec.output_endian),
-            )
-        })
+        .map(|(f, c)| (wordspec.iter_words(f), c.clone()))
         .collect();
     let rev = RevSpec {
         width,
@@ -117,7 +118,7 @@ fn reverse_discrete(
         swap: loop_element.0,
         wordspec: loop_element.1,
     };
-    reverse(rev, chk_words, verbosity)
+    reverse(rev, chk_words, verbosity).map(|x| x.iter())
 }
 
 struct RevSpec {
@@ -207,9 +208,9 @@ impl RevResult {
 // Finding out addout2 is now as easy as subtracting 5*init from (5*init + addout2) mod m.
 fn reverse(
     spec: RevSpec,
-    chk_bytes: Vec<(impl Iterator<Item = SignedInt<u64>>, u128)>,
+    chk_bytes: Vec<(impl Iterator<Item = SignedInt<u64>>, Vec<u8>)>,
     verbosity: u64,
-) -> Result<RevResult, CheckReverserError> {
+) -> Result<RevResult, Option<CheckReverserError>> {
     let log = |s| {
         if verbosity > 0 {
             eprintln!("<fletcher> {}", s);
@@ -218,7 +219,11 @@ fn reverse(
     let width = spec.width;
     let swap = spec.swap;
     let wordspec = spec.wordspec;
-    let (min, max, mut cumusums, regsums) = summarize(chk_bytes, width, swap);
+    let Some((min, max, mut cumusums, regsums)) =
+        summarize(chk_bytes, width, swap, spec.wordspec.output_endian)
+    else {
+        return Err(None);
+    };
     log("finding parameters of lower sum");
     // finding the parameters of the lower sum is pretty much a separate problem already
     // handled in modsum, so we delegate to that
@@ -242,9 +247,9 @@ fn reverse(
     // here we try to find `module` and reduce the sums by module
     let boneless_files = refine_module(&mut module, red_files);
     if module.is_zero() {
-        return Err(CheckReverserError::UnsuitableFiles(
+        return Err(Some(CheckReverserError::UnsuitableFiles(
             "too short or too similar or too few files given",
-        ));
+        )));
     }
     log("attempting to find init");
     // now that we have the module, we can try to find init and reduce `module` some more
@@ -297,14 +302,16 @@ fn glue_sum(mut s1: u64, mut s2: u64, width: usize, swap: bool) -> u128 {
 }
 
 fn summarize(
-    chks: Vec<(impl Iterator<Item = SignedInt<u64>>, u128)>,
+    chks: Vec<(impl Iterator<Item = SignedInt<u64>>, Vec<u8>)>,
     width: usize,
     swap: bool,
-) -> (u128, u128, Vec<(BigInt, usize)>, Vec<i128>) {
+    out_endian: Endian,
+) -> Option<(u128, u128, Vec<(BigInt, usize)>, Vec<i128>)> {
     let mut regsums = Vec::new();
     let mut cumusums = Vec::new();
     let mut min = 2;
     for (words, chk) in chks {
+        let chk = Checksum::from_bytes(&chk, out_endian, width)?;
         let (s1, s2) = split_sum(chk, width, swap);
         min = min.max(s1 as u128 + 1);
         min = min.max(s2 as u128 + 1);
@@ -327,7 +334,7 @@ fn summarize(
         cumusums.push((BigInt::from(check2) - cumusum, size));
     }
     let max = 1 << (width / 2);
-    (min, max, cumusums, regsums)
+    Some((min, max, cumusums, regsums))
 }
 
 fn find_regular_sum(spec: &RevSpec, sums: &[i128], mut module: u128) -> (u128, i128) {
@@ -633,7 +640,7 @@ fn xgcd(a: &BigInt, b: &BigInt) -> (BigInt, (BigInt, BigInt)) {
 mod tests {
     use super::*;
     use crate::checksum::tests::ReverseFileSet;
-    use crate::endian::{Endian, WordSpec};
+    use crate::endian::{Endian, Signedness, WordSpec};
     use quickcheck::{Arbitrary, Gen, TestResult};
     impl Arbitrary for FletcherBuilder<u64> {
         fn arbitrary(g: &mut Gen) -> Self {
@@ -941,5 +948,28 @@ mod tests {
         naive.width(10).module(3);
         let reverser = reverse_fletcher(&naive, &chk_files, 0, false);
         assert!(!f.check_matching(&f16, reverser).is_failure());
+    }
+
+    #[test]
+    fn error9() {
+        let fletch = Fletcher::with_options()
+            .module(2442387192987926634u64)
+            .init(127264857433458109)
+            .addout(1912567329028884011882136235663163392)
+            .swap(true)
+            .inendian(Endian::Little)
+            .outendian(Endian::Little)
+            .signedness(Signedness::Signed)
+            .wordsize(64)
+            .width(124)
+            .build()
+            .unwrap();
+
+        let files = ReverseFileSet(vec![vec![48, 73, 55, 229, 255, 1, 103, 39], vec![], vec![]]);
+        let chk_files = files.with_checksums(&fletch);
+        let mut naive = Fletcher::<u64>::with_options();
+        naive.width(124);
+        let reverser = reverse_fletcher(&naive, &chk_files, 0, false);
+        assert!(!files.check_matching(&fletch, reverser).is_failure());
     }
 }

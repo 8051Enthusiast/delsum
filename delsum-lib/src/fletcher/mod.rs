@@ -39,7 +39,7 @@
 
 mod rev;
 use crate::bitnum::{BitNum, Modnum};
-use crate::checksum::{CheckBuilderErr, Digest, LinearCheck};
+use crate::checksum::{CheckBuilderErr, Checksum, Digest, LinearCheck};
 use crate::endian::{Endian, SignedInt, Signedness, WordSpec};
 use crate::keyval::KeyValIter;
 use num_traits::{One, Zero};
@@ -221,12 +221,13 @@ impl<Sum: Modnum> Display for Fletcher<Sum> {
             None => {
                 write!(
                     f,
-                    "fletcher width={} module={:#x} init={:#x} addout={:#x} swap={}",
+                    "fletcher width={} module={:#x} init={:#x} addout={:#x} swap={} signedness={}",
                     2 * self.hwidth,
                     self.module,
                     self.init,
                     self.addout,
-                    self.swap
+                    self.swap,
+                    self.wordspec.signedness
                 )?;
                 if self.wordspec.word_bytes() != 1 {
                     write!(
@@ -352,6 +353,10 @@ impl<S: Modnum> Digest for Fletcher<S> {
 
     fn to_bytes(&self, s: Self::Sum) -> Vec<u8> {
         self.wordspec.output_to_bytes(s, 2 * self.hwidth)
+    }
+
+    fn from_bytes(&self, bytes: &[u8]) -> Option<Self::Sum> {
+        Checksum::from_bytes(bytes, self.wordspec.output_endian, self.hwidth * 2)
     }
 
     fn wordspec(&self) -> WordSpec {

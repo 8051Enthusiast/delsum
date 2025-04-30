@@ -11,7 +11,7 @@ pub mod modsum;
 pub mod polyhash;
 
 use bitnum::BitNum;
-use checksum::{CheckBuilderErr, CheckReverserError, Checksum, const_sum};
+use checksum::{CheckBuilderErr, CheckReverserError, const_sum};
 use checksum::{Digest, LinearCheck, RangePair};
 use crc::{CRC, CrcBuilder, reverse_crc};
 use fletcher::{Fletcher, FletcherBuilder, reverse_fletcher};
@@ -20,6 +20,7 @@ use num_traits::Zero;
 use polyhash::{PolyHash, PolyHashBuilder, reverse_polyhash};
 use std::cmp::Ordering;
 use std::str::FromStr;
+use std::sync::Arc;
 use utils::SignedInclRange;
 #[cfg(feature = "parallel")]
 use {crc::reverse_crc_para, fletcher::reverse_fletcher_para, rayon::prelude::*};
@@ -92,17 +93,16 @@ where
     L: LinearCheck + FromStr<Err = CheckBuilderErr>,
     L::Sum: BitNum,
 {
-    let spec = L::from_str(spec)?;
+    let spec = Arc::new(L::from_str(spec)?);
     match sum {
         SegmentChecksum::Constant(sum_bytes) => {
             let sum_array: Vec<_> = sum_bytes
                 .iter()
-                .map(|x| const_sum(spec.wordspec().bytes_to_output(x)))
+                .map(|x| const_sum(spec.from_bytes(x)))
                 .collect();
             Ok(spec.find_segments_range(bytes, &sum_array, start_range, end_range))
         }
         SegmentChecksum::FromEnd(n) => {
-            let endian = spec.wordspec().output_endian;
             let width = spec.to_bytes(<L::Sum as Zero>::zero()).len();
             let checksum_length = width + n;
             let Some(end_range) = cutoff_checksum_length(end_range, bytes, checksum_length) else {
@@ -110,11 +110,12 @@ where
             };
             let sum_array: Vec<_> = bytes
                 .iter()
-                .map(move |_| {
+                .map(|_| {
+                    let spec = spec.clone();
                     move |bytes: &[u8], addr: usize| {
                         let start = addr + n;
                         let end = addr + checksum_length;
-                        Checksum::from_bytes(&bytes[start..end], endian)
+                        spec.from_bytes(&bytes[start..end])
                     }
                 })
                 .collect();

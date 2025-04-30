@@ -1,5 +1,5 @@
 use crate::{
-    checksum::CheckReverserError,
+    checksum::{CheckReverserError, Checksum, filter_opt_err},
     endian::{WordSpec, wordspec_combos},
     utils::unresult_iter,
 };
@@ -25,16 +25,9 @@ pub fn reverse_polyhash<'a>(
     let factor = spec.factor;
     let init = spec.init;
     let addout = spec.addout;
-    combos
-        .into_iter()
-        .flat_map(move |wordspec| {
-            unresult_iter(reverse(width, &chk_bytes, factor, init, addout, wordspec))
-        })
-        .filter_map(|x| match x {
-            Ok(a) => Some(Ok(a)),
-            Err(Some(e)) => Some(Err(e)),
-            Err(None) => None,
-        })
+    filter_opt_err(combos.into_iter().flat_map(move |wordspec| {
+        unresult_iter(reverse(width, &chk_bytes, factor, init, addout, wordspec))
+    }))
 }
 
 fn reverse<'a>(
@@ -45,24 +38,19 @@ fn reverse<'a>(
     addout: Option<u64>,
     wordspec: WordSpec,
 ) -> Result<impl Iterator<Item = PolyHash<u64>> + use<'a>, Option<CheckReverserError>> {
-    let mut polys = chk_bytes
+    let Some(mut polys): Option<Vec<_>> = chk_bytes
         .iter()
         .map(|x| poly_from_data(width, &wordspec, x))
-        .collect::<Vec<_>>();
+        .collect()
+    else {
+        return Err(None);
+    };
+
     polys.sort();
     polys.dedup();
 
     if let Some(value) = check_params(chk_bytes, factor, init, addout) {
         return Err(Some(value));
-    }
-
-    let mask = mask_val(width as u8);
-    let checksum_too_big = chk_bytes.iter().any(|x| {
-        let chk = wordspec.bytes_to_output::<u64>(&x.1);
-        (chk & !mask) != 0
-    });
-    if checksum_too_big {
-        return Err(None);
     }
 
     let (filtered, addout_info) = filter_addouts(polys, addout);
@@ -142,8 +130,12 @@ fn check_params(
     None
 }
 
-fn poly_from_data(width: usize, wordspec: &WordSpec, chk_bytes: &(&[u8], Vec<u8>)) -> FilePoly {
-    let chk = wordspec.bytes_to_output::<u64>(&chk_bytes.1);
+fn poly_from_data(
+    width: usize,
+    wordspec: &WordSpec,
+    chk_bytes: &(&[u8], Vec<u8>),
+) -> Option<FilePoly> {
+    let chk = Checksum::from_bytes(&chk_bytes.1, wordspec.output_endian, width)?;
     let mut poly = WordPolynomial {
         coefficients: wordspec
             .iter_words(chk_bytes.0)
@@ -165,11 +157,11 @@ fn poly_from_data(width: usize, wordspec: &WordSpec, chk_bytes: &(&[u8], Vec<u8>
     };
     poly = poly - sum;
 
-    FilePoly {
+    Some(FilePoly {
         poly,
         init: InitPlace::Single(size),
         width,
-    }
+    })
 }
 
 #[derive(Clone)]
@@ -610,7 +602,10 @@ fn mask_val(width: u8) -> u64 {
 mod tests {
     use quickcheck::{Arbitrary, Gen, TestResult};
 
-    use crate::{checksum::tests::ReverseFileSet, endian::{Endian, Signedness}};
+    use crate::{
+        checksum::tests::ReverseFileSet,
+        endian::{Endian, Signedness},
+    };
 
     use super::*;
 

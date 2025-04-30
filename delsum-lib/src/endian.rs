@@ -94,7 +94,7 @@ pub(crate) fn bytes_to_int<N: BitNum>(bytes: &[u8], e: Endian) -> N {
     ret
 }
 
-pub(crate) fn bytes_to_signed_int<N: BitNum>(
+fn bytes_to_signed_int<N: BitNum>(
     bytes: &[u8],
     e: Endian,
     s: Signedness,

@@ -8,9 +8,9 @@
 //!
 //! Of course, giving more files will result in fewer false positives.
 use super::{ModSum, ModSumBuilder};
-use crate::checksum::CheckReverserError;
+use crate::checksum::{CheckReverserError, Checksum, filter_opt_err};
 use crate::divisors::{divisors_range, gcd};
-use crate::endian::{SignedInt, WordSpec, bytes_to_int, wordspec_combos};
+use crate::endian::{SignedInt, WordSpec, wordspec_combos};
 use crate::utils::{cart_prod, unresult_iter};
 use std::iter::Iterator;
 /// Find the parameters of a modsum algorithm.
@@ -32,16 +32,11 @@ pub fn reverse_modsum<'a>(
         .into_iter()
         .flat_map(move |(wordspec, negated)| {
             let rev = match spec.width {
-                None => Err(CheckReverserError::MissingParameter("width")),
+                None => Err(Some(CheckReverserError::MissingParameter("width"))),
                 Some(width) => {
                     let chk_words: Vec<_> = chk_bytes
                         .iter()
-                        .map(|(f, c)| {
-                            (
-                                wordspec.iter_words(f),
-                                bytes_to_int(c, wordspec.output_endian),
-                            )
-                        })
+                        .map(|(f, c)| (wordspec.iter_words(f), c.clone()))
                         .collect();
                     let revspec = RevSpec {
                         width,
@@ -53,7 +48,7 @@ pub fn reverse_modsum<'a>(
                     reverse(revspec, chk_words, verbosity).map(|x| x.iter())
                 }
             };
-            unresult_iter(rev)
+            filter_opt_err(unresult_iter(rev))
         })
 }
 
@@ -128,9 +123,9 @@ impl RevResult {
 // The solutions are then the divisors m in the appropiate range.
 fn reverse(
     spec: RevSpec,
-    chk_bytes: Vec<(impl Iterator<Item = SignedInt<u64>>, u128)>,
+    chk_bytes: Vec<(impl Iterator<Item = SignedInt<u64>>, Vec<u8>)>,
     verbosity: u64,
-) -> Result<RevResult, CheckReverserError> {
+) -> Result<RevResult, Option<CheckReverserError>> {
     let log = |s| {
         if verbosity > 0 {
             eprintln!("<modsum> {}", s);
@@ -142,6 +137,9 @@ fn reverse(
     let mut min_sum = 0;
     log("summing files up");
     for (f, chk) in chk_bytes {
+        let Some(chk) = Checksum::from_bytes(&chk, spec.wordspec.output_endian, width) else {
+            return Err(None);
+        };
         min_sum = min_sum.max(chk);
         // here we calculate (init mod m)
         let mut sum = -(chk as i128);
@@ -166,9 +164,9 @@ fn reverse(
     // here we find module by gcd'ing between the differences (init - init == 0 mod m)
     let init = find_largest_mod(&sums, spec.init.map(i128::from), &mut module);
     if module == 0 {
-        return Err(CheckReverserError::UnsuitableFiles(
+        return Err(Some(CheckReverserError::UnsuitableFiles(
             "too short or too similar",
-        ));
+        )));
     }
     log("finding all possible factors");
     // find all possible divisors

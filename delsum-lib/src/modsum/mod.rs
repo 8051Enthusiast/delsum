@@ -10,7 +10,7 @@
 //! Note that a parameter to add at the end is not needed, since it is equivalent to `init`.
 mod rev;
 use crate::bitnum::Modnum;
-use crate::checksum::{CheckBuilderErr, Digest, LinearCheck};
+use crate::checksum::{CheckBuilderErr, Checksum, Digest, LinearCheck};
 use crate::endian::{Endian, SignedInt, Signedness, WordSpec};
 use crate::keyval::KeyValIter;
 pub(crate) use rev::find_largest_mod;
@@ -275,6 +275,10 @@ impl<S: Modnum> Digest for ModSum<S> {
         self.wordspec.output_to_bytes(s, self.width)
     }
 
+    fn from_bytes(&self, bytes: &[u8]) -> Option<Self::Sum> {
+        Checksum::from_bytes(bytes, self.wordspec.output_endian, self.width)
+    }
+
     fn wordspec(&self) -> WordSpec {
         self.wordspec
     }
@@ -350,7 +354,7 @@ mod tests {
         assert_eq!(
             chk.find_segments(
                 &[x, y],
-                &[merchantibility, ith_absolutely_].map(const_sum),
+                &[Some(merchantibility), Some(ith_absolutely_)].map(const_sum),
                 Relativity::Start
             ),
             vec![(vec![19], vec![34])]
