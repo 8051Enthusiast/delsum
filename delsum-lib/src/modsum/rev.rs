@@ -11,7 +11,7 @@ use super::{ModSum, ModSumBuilder};
 use crate::checksum::CheckReverserError;
 use crate::divisors::{divisors_range, gcd};
 use crate::endian::{SignedInt, WordSpec, bytes_to_int, wordspec_combos};
-use crate::utils::unresult_iter;
+use crate::utils::{cart_prod, unresult_iter};
 use std::iter::Iterator;
 /// Find the parameters of a modsum algorithm.
 ///
@@ -28,39 +28,50 @@ pub fn reverse_modsum<'a>(
 ) -> impl Iterator<Item = Result<ModSum<u64>, CheckReverserError>> + use<'a> {
     let chk_bytes = chk_bytes.to_vec();
     let spec = spec.clone();
-    wordspec_combos(
+    discrete_combos(&spec, extended_search)
+        .into_iter()
+        .flat_map(move |(wordspec, negated)| {
+            let rev = match spec.width {
+                None => Err(CheckReverserError::MissingParameter("width")),
+                Some(width) => {
+                    let chk_words: Vec<_> = chk_bytes
+                        .iter()
+                        .map(|(f, c)| {
+                            (
+                                wordspec.iter_words(f),
+                                bytes_to_int(c, wordspec.output_endian),
+                            )
+                        })
+                        .collect();
+                    let revspec = RevSpec {
+                        width,
+                        init: spec.init,
+                        module: spec.module,
+                        wordspec,
+                        negated,
+                    };
+                    reverse(revspec, chk_words, verbosity).map(|x| x.iter())
+                }
+            };
+            unresult_iter(rev)
+        })
+}
+
+fn discrete_combos(spec: &ModSumBuilder<u64>, extended_search: bool) -> Vec<(WordSpec, bool)> {
+    let wordspec_combos = wordspec_combos(
         spec.wordsize,
         spec.input_endian,
         spec.output_endian,
         spec.signedness,
         spec.width.unwrap(),
         extended_search,
-    )
-    .into_iter()
-    .flat_map(move |wordspec| {
-        let rev = match spec.width {
-            None => Err(CheckReverserError::MissingParameter("width")),
-            Some(width) => {
-                let chk_words: Vec<_> = chk_bytes
-                    .iter()
-                    .map(|(f, c)| {
-                        (
-                            wordspec.iter_words(f),
-                            bytes_to_int(c, wordspec.output_endian),
-                        )
-                    })
-                    .collect();
-                let revspec = RevSpec {
-                    width,
-                    init: spec.init,
-                    module: spec.module,
-                    wordspec,
-                };
-                reverse(revspec, chk_words, verbosity).map(|x| x.iter())
-            }
-        };
-        unresult_iter(rev)
-    })
+    );
+    let negateds = if let Some(negated) = spec.negated {
+        vec![negated]
+    } else {
+        vec![false, true]
+    };
+    cart_prod(&wordspec_combos, &negateds)
 }
 
 struct RevSpec {
@@ -68,6 +79,7 @@ struct RevSpec {
     init: Option<u64>,
     module: Option<u64>,
     wordspec: WordSpec,
+    negated: bool,
 }
 
 struct RevResult {
@@ -75,6 +87,7 @@ struct RevResult {
     init: i128,
     width: usize,
     wordspec: WordSpec,
+    negated: bool,
 }
 
 impl RevResult {
@@ -85,6 +98,7 @@ impl RevResult {
             init,
             width,
             wordspec,
+            negated,
         } = self;
         modlist.into_iter().map(move |module| {
             let init_negative = init < 0;
@@ -100,6 +114,7 @@ impl RevResult {
                 .outendian(wordspec.output_endian)
                 .wordsize(wordspec.wordsize)
                 .signedness(wordspec.signedness)
+                .negated(negated)
                 .build()
                 .unwrap()
         })
@@ -130,6 +145,10 @@ fn reverse(
         min_sum = min_sum.max(chk);
         // here we calculate (init mod m)
         let mut sum = -(chk as i128);
+        if spec.negated {
+            sum = -sum;
+        }
+
         for word in f {
             if word.negative {
                 sum -= word.value as i128;
@@ -168,6 +187,7 @@ fn reverse(
         init,
         width,
         wordspec: spec.wordspec,
+        negated: spec.negated,
     })
 }
 
@@ -219,6 +239,7 @@ mod tests {
             new_modsum.inendian(wordspec.input_endian);
             new_modsum.outendian(wordspec.output_endian);
             new_modsum.signedness(wordspec.signedness);
+            new_modsum.negated(bool::arbitrary(g));
             new_modsum
         }
     }
@@ -226,7 +247,7 @@ mod tests {
     fn run_modsum_rev(
         files: ReverseFileSet,
         modsum_build: ModSumBuilder<u64>,
-        known: (bool, bool),
+        known: (bool, bool, bool),
         wordspec_known: (bool, bool, bool, bool),
     ) -> TestResult {
         let modsum = modsum_build.build().unwrap();
@@ -237,6 +258,9 @@ mod tests {
         }
         if known.1 {
             naive.init(modsum_build.init.unwrap());
+        }
+        if known.2 {
+            naive.negated(modsum_build.negated.unwrap());
         }
         if wordspec_known.0 {
             naive.wordsize(modsum_build.wordsize.unwrap());
@@ -258,7 +282,7 @@ mod tests {
     fn qc_modsum_rev(
         files: ReverseFileSet,
         modsum_build: ModSumBuilder<u64>,
-        known: (bool, bool),
+        known: (bool, bool, bool),
         wordspec_known: (bool, bool, bool, bool),
     ) -> TestResult {
         run_modsum_rev(files, modsum_build, known, wordspec_known)

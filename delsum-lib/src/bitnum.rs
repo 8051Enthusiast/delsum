@@ -138,7 +138,9 @@ pub trait Modnum: BitNum {
     }
     /// negate modulo number (if 0 then modulo is 2^n where n is the number of bits)
     fn neg_mod(self, modulo: &Self) -> Self {
-        if modulo.is_zero() {
+        if self.is_zero() {
+            self
+        } else if modulo.is_zero() {
             Self::zero().wrapping_sub(&self)
         } else {
             *modulo - self

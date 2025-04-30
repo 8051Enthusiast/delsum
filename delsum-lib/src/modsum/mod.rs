@@ -38,6 +38,7 @@ pub struct ModSumBuilder<S: Modnum> {
     input_endian: Option<Endian>,
     output_endian: Option<Endian>,
     signedness: Option<Signedness>,
+    negated: Option<bool>,
     wordsize: Option<usize>,
     check: Option<S>,
     name: Option<String>,
@@ -83,6 +84,11 @@ impl<S: Modnum> ModSumBuilder<S> {
         self.signedness = Some(s);
         self
     }
+    /// Whether the output checksum is negated
+    pub fn negated(&mut self, n: bool) -> &mut Self {
+        self.negated = Some(n);
+        self
+    }
     /// The checksum of "123456789", gets checked on creation.
     pub fn check(&mut self, c: S) -> &mut Self {
         self.check = Some(c);
@@ -110,6 +116,7 @@ impl<S: Modnum> ModSumBuilder<S> {
         if wordsize == 0 || wordsize % 8 != 0 || wordsize > 64 {
             return Err(CheckBuilderErr::ValueOutOfRange("wordsize"));
         }
+        let negated = self.negated.unwrap_or(false);
         let wordspec = WordSpec {
             input_endian: self.input_endian.unwrap_or(Endian::Big),
             wordsize,
@@ -120,6 +127,7 @@ impl<S: Modnum> ModSumBuilder<S> {
             width,
             module,
             init,
+            negated,
             wordspec,
             name: self.name.clone(),
         };
@@ -148,6 +156,7 @@ pub struct ModSum<S: Modnum> {
     width: usize,
     module: S,
     init: S,
+    negated: bool,
     wordspec: WordSpec,
     name: Option<String>,
 }
@@ -162,6 +171,7 @@ impl<S: Modnum> ModSum<S> {
             input_endian: None,
             output_endian: None,
             signedness: None,
+            negated: None,
             wordsize: None,
             check: None,
             name: None,
@@ -176,8 +186,8 @@ impl<Sum: Modnum> Display for ModSum<Sum> {
             None => {
                 write!(
                     f,
-                    "modsum width={} module={:#x} init={:#x} signedness={}",
-                    self.width, self.module, self.init, self.wordspec.signedness,
+                    "modsum width={} module={:#x} init={:#x} negated={} signedness={}",
+                    self.width, self.module, self.init, self.negated, self.wordspec.signedness
                 )?;
                 if self.wordspec.word_bytes() != 1 {
                     write!(
@@ -216,6 +226,7 @@ impl<Sum: Modnum> FromStr for ModSumBuilder<Sum> {
                 "signedness" => Signedness::from_str(&current_val)
                     .ok()
                     .map(|x| sum.signedness(x)),
+                "negated" => bool::from_str(&current_val).ok().map(|x| sum.negated(x)),
                 "name" => Some(sum.name(&current_val)),
                 _ => return Err(CheckBuilderErr::UnknownKey(current_key)),
             };
@@ -244,15 +255,22 @@ impl<Sum: Modnum> FromStr for ModSum<Sum> {
 impl<S: Modnum> Digest for ModSum<S> {
     type Sum = S;
     fn init(&self) -> Self::Sum {
-        self.init
+        if self.negated {
+            self.init.neg_mod(&self.module)
+        } else {
+            self.init
+        }
     }
+
     fn dig_word(&self, sum: Self::Sum, word: SignedInt<u64>) -> Self::Sum {
-        let modword = S::mod_from_signed(word, &self.module);
+        let modword = S::mod_from_signed(word.negate_if(self.negated), &self.module);
         sum.add_mod(&modword, &self.module)
     }
+
     fn finalize(&self, sum: Self::Sum) -> Self::Sum {
         sum
     }
+
     fn to_bytes(&self, s: Self::Sum) -> Vec<u8> {
         self.wordspec.output_to_bytes(s, self.width)
     }
@@ -275,15 +293,7 @@ impl<S: Modnum> LinearCheck for ModSum<S> {
         sum_a.add_mod(sum_b, &self.module)
     }
     fn negate(&self, sum: Self::Sum) -> Self::Sum {
-        if sum == S::zero() {
-            sum
-        } else if self.module == S::zero() {
-            // this is just -sum in the underlying type, but I don't have
-            // wrapping sub, so this should work as a substitute
-            !sum + S::one()
-        } else {
-            self.module - sum
-        }
+        sum.neg_mod(&self.module)
     }
 }
 #[cfg(test)]

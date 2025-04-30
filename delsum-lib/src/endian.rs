@@ -144,6 +144,13 @@ impl<N: BitNum> SignedInt<N> {
             negative: true,
         }
     }
+
+    pub(crate) fn negate_if(self, cond: bool) -> Self {
+        SignedInt {
+            value: self.value,
+            negative: self.negative ^ cond,
+        }
+    }
 }
 
 // get the combinations of things like word width, endian
