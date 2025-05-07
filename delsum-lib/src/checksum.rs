@@ -286,7 +286,7 @@ fn find_segments_aligned<'a, S: LinearCheck + ?Sized>(
         let max_end = *ends.iter().max().unwrap_or(&0);
         let rel_ends: Vec<_> = ends
             .into_iter()
-            .filter(|x| x > &min_start)
+            .filter(|x| x >= &min_start)
             .map(|x| match end_range.into() {
                 Relativity::Start => isize::try_from(x).unwrap(),
                 Relativity::End => -isize::try_from(min_len - x).unwrap(),
@@ -294,7 +294,7 @@ fn find_segments_aligned<'a, S: LinearCheck + ?Sized>(
             .collect();
         let rel_starts = starts
             .into_iter()
-            .filter(|x| x < &max_end)
+            .filter(|x| x <= &max_end)
             .map(|x| match start_range.into() {
                 Relativity::Start => isize::try_from(x).unwrap(),
                 Relativity::End => -isize::try_from(min_len - x).unwrap(),
