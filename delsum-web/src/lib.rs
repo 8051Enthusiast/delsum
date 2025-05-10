@@ -1,18 +1,18 @@
 wit_bindgen::generate!({
-    // the name of the world in the `*.wit` input file
     world: "delsum",
 });
 
 struct Delsum;
 
-impl exports::delsum::web::checksums::Guest for Delsum {
-    fn reverse(
-        files: Vec<exports::delsum::web::checksums::ChecksummedFile>,
-        model: String,
-    ) -> Result<String, String> {
+use delsum_lib::{utils::SignedInclRange, SegmentChecksum};
+use exports::delsum::web::checksums::*;
+
+impl Guest for Delsum {
+    fn reverse(files: Vec<ChecksummedFile>, model: String) -> Result<Vec<String>, String> {
         let bytes = files.iter().map(|x| x.file.as_slice()).collect::<Vec<_>>();
         let sums = files.iter().map(|x| x.checksum.clone()).collect::<Vec<_>>();
-        let result = delsum_lib::find_algorithm(&model, &bytes, &sums, 0, false);
+        let result =
+            delsum_lib::find_algorithm(&model, &bytes, SegmentChecksum::Constant(&sums), 0, false);
         let matches = match result {
             Ok(m) => m,
             Err(err) => return Err(err.to_string()),

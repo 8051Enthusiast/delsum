@@ -61,7 +61,7 @@ fn find_prefix_width(s: &str) -> Result<(&str, usize, &str), CheckBuilderErr> {
 // in all files
 fn cutoff_checksum_length(
     end_range: SignedInclRange,
-    bytes: &[Vec<u8>],
+    bytes: impl Iterator<Item = usize>,
     checksum_size: usize,
 ) -> Option<SignedInclRange> {
     let end = end_range.end();
@@ -69,16 +69,80 @@ fn cutoff_checksum_length(
         let new_end = (-1 - checksum_size as isize).min(end);
         end_range.set_end(new_end)
     } else {
-        let min_len = bytes.iter().map(|x| x.len()).min()? as isize;
+        let min_len = bytes.min()? as isize;
         let new_end = (min_len - checksum_size as isize - 1).min(end);
         end_range.set_end(new_end)
     }
+}
+
+fn byte_width<L: Digest>(spec: &L) -> usize
+where
+    L::Sum: BitNum,
+{
+    spec.to_bytes(<L::Sum as Zero>::zero()).len()
 }
 
 #[derive(Clone, Copy)]
 pub enum SegmentChecksum<'a> {
     FromEnd(usize),
     Constant(&'a [Vec<u8>]),
+}
+
+impl<'a> SegmentChecksum<'a> {
+    // takes a bunch of files with SegmentChecksum and resolves the checksums
+    fn resolve<'b>(
+        &self,
+        width: usize,
+        bytes: &[&'b [u8]],
+    ) -> Result<Vec<(&'b [u8], Vec<u8>)>, Option<CheckBuilderErr>> {
+        match self {
+            SegmentChecksum::FromEnd(gap) => {
+                let width = width.div_ceil(8);
+                let Some(len) = cutoff_checksum_length(
+                    SignedInclRange::new(0, -1).unwrap(),
+                    bytes.iter().map(|x| x.len()),
+                    width + gap,
+                ) else {
+                    return Err(None);
+                };
+
+                let checksum_part = SignedInclRange::new(-(width as isize), -1).unwrap();
+                let Some(t) = bytes
+                    .iter()
+                    .map(|x| {
+                        let file_part = len.slice(x)?;
+                        let checksum_part = checksum_part.slice(x)?;
+                        Some((file_part, checksum_part.to_vec()))
+                    })
+                    .collect()
+                else {
+                    return Err(None);
+                };
+                Ok(t)
+            }
+            SegmentChecksum::Constant(checksums) => {
+                match checksums.len().cmp(&bytes.len()) {
+                    Ordering::Greater => {
+                        return Err(Some(CheckBuilderErr::MissingParameter(
+                            "not enough files for checksums given",
+                        )));
+                    }
+                    Ordering::Less => {
+                        return Err(Some(CheckBuilderErr::MissingParameter(
+                            "not enough checksums for files given",
+                        )));
+                    }
+                    Ordering::Equal => (),
+                };
+
+                Ok(bytes
+                    .iter()
+                    .copied()
+                    .zip(checksums.iter().cloned())
+                    .collect())
+            }
+        }
+    }
 }
 
 /// A helper function for calling the find_segments function with strings arguments
@@ -98,14 +162,16 @@ where
         SegmentChecksum::Constant(sum_bytes) => {
             let sum_array: Vec<_> = sum_bytes
                 .iter()
-                .map(|x| const_sum(spec.from_bytes(x)))
+                .map(|x| const_sum(spec.checksum_from_bytes(x)))
                 .collect();
             Ok(spec.find_segments_range(bytes, &sum_array, start_range, end_range))
         }
         SegmentChecksum::FromEnd(n) => {
-            let width = spec.to_bytes(<L::Sum as Zero>::zero()).len();
+            let width = byte_width(&*spec);
             let checksum_length = width + n;
-            let Some(end_range) = cutoff_checksum_length(end_range, bytes, checksum_length) else {
+            let Some(end_range) =
+                cutoff_checksum_length(end_range, bytes.iter().map(|x| x.len()), checksum_length)
+            else {
                 return Ok(Vec::new());
             };
             let sum_array: Vec<_> = bytes
@@ -115,7 +181,7 @@ where
                     move |bytes: &[u8], addr: usize| {
                         let start = addr + n;
                         let end = addr + checksum_length;
-                        spec.from_bytes(&bytes[start..end])
+                        spec.checksum_from_bytes(&bytes[start..end])
                     }
                 })
                 .collect();
@@ -320,11 +386,11 @@ impl<'a> AlgorithmFinder<'a> {
 pub fn find_algorithm<'a>(
     strspec: &str,
     bytes: &[&'a [u8]],
-    sums: &[Vec<u8>],
+    sums: SegmentChecksum,
     verbosity: u64,
     extended_search: bool,
 ) -> Result<AlgorithmFinder<'a>, CheckBuilderErr> {
-    let (prefix, _, rest) = find_prefix_width(strspec)?;
+    let (prefix, width, rest) = find_prefix_width(strspec)?;
     let prefix = prefix.to_ascii_lowercase();
     let spec = match prefix.as_str() {
         "crc" => BuilderEnum::Crc(CrcBuilder::<u128>::from_str(rest)?),
@@ -333,20 +399,13 @@ pub fn find_algorithm<'a>(
         "polyhash" => BuilderEnum::PolyHash(PolyHashBuilder::<u64>::from_str(rest)?),
         _ => unimplemented!(),
     };
-    match sums.len().cmp(&bytes.len()) {
-        Ordering::Greater => {
-            return Err(CheckBuilderErr::MissingParameter(
-                "not enough files for checksums given",
-            ));
+    let pairs = match sums.resolve(width, bytes) {
+        Ok(p) => p,
+        Err(None) => todo!(),
+        Err(Some(e)) => {
+            return Err(e);
         }
-        Ordering::Less => {
-            return Err(CheckBuilderErr::MissingParameter(
-                "not enough checksums for files given",
-            ));
-        }
-        Ordering::Equal => (),
     };
-    let pairs: Vec<_> = bytes.iter().cloned().zip(sums.iter().cloned()).collect();
     Ok(AlgorithmFinder {
         pairs,
         spec,

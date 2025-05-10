@@ -70,7 +70,7 @@ impl SignedInclRange {
     pub fn to_unsigned(self, len: usize) -> Option<UnsignedInclRange> {
         let unsigned_index = |idx: isize| {
             if idx < 0 {
-                len.checked_sub((-idx) as usize)
+                len.checked_sub(idx.wrapping_neg() as usize)
             } else {
                 Some(idx as usize)
             }
@@ -78,6 +78,7 @@ impl SignedInclRange {
         };
         UnsignedInclRange::new(unsigned_index(self.start)?, unsigned_index(self.end)?)
     }
+
     pub fn limit(mut self, len: usize) -> Option<Self> {
         let signed_max = match isize::try_from(len - 1) {
             // if the len does not fit in an isize, limiting will do nothing anyway
@@ -87,6 +88,11 @@ impl SignedInclRange {
         self.start = self.start.max(-signed_max - 1);
         self.end = self.end.min(signed_max);
         self.valid()
+    }
+
+    pub fn slice<T>(self, slice: &[T]) -> Option<&[T]> {
+        let unsigned = self.to_unsigned(slice.len())?;
+        Some(&slice[unsigned.start..=unsigned.end])
     }
 }
 

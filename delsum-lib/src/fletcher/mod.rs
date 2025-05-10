@@ -355,7 +355,7 @@ impl<S: Modnum> Digest for Fletcher<S> {
         self.wordspec.output_to_bytes(s, 2 * self.hwidth)
     }
 
-    fn from_bytes(&self, bytes: &[u8]) -> Option<Self::Sum> {
+    fn checksum_from_bytes(&self, bytes: &[u8]) -> Option<Self::Sum> {
         Checksum::from_bytes(bytes, self.wordspec.output_endian, self.hwidth * 2)
     }
 

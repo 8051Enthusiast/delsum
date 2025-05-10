@@ -45,7 +45,7 @@ pub trait Digest {
     /// Takes the sum and turns it into an array of bytes (may depend on configured endian)
     fn to_bytes(&self, s: Self::Sum) -> Vec<u8>;
     /// Takes a slice of bytes and turns it into a sum, if it fits (may depend on configured endian).
-    fn from_bytes(&self, bytes: &[u8]) -> Option<Self::Sum>;
+    fn checksum_from_bytes(&self, bytes: &[u8]) -> Option<Self::Sum>;
     /// Iterate over the words of a file so that digest calculates the checksum
     fn wordspec(&self) -> WordSpec;
     /// Takes a reader and calculates the checksums of all words therein.
@@ -564,6 +564,8 @@ pub enum CheckBuilderErr {
     UnknownKey(String),
     /// The given checksum is not in range for the model
     ChecksumOutOfRange(String),
+    /// The number of files does not agree with the number of checksums
+    ChecksumCountMismatch(&'static str),
 }
 
 impl std::fmt::Display for CheckBuilderErr {
@@ -582,6 +584,10 @@ impl std::fmt::Display for CheckBuilderErr {
             }
             UnknownKey(key) => write!(f, "Unknown key '{}'", key),
             ChecksumOutOfRange(chk) => write!(f, "Checksum '{}' out of range", chk),
+            ChecksumCountMismatch(msg) => write!(
+                f,
+                "Count of checksums does not agree with file count: {msg}"
+            ),
         }
     }
 }
@@ -653,7 +659,7 @@ impl<T: crate::bitnum::BitNum> Checksum for T {
             return None;
         }
 
-        return Some(sum);
+        Some(sum)
     }
 }
 

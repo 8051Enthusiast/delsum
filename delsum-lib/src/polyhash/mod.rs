@@ -257,7 +257,7 @@ impl<S: Modnum> Digest for PolyHash<S> {
         self.wordspec.output_to_bytes(s, self.width)
     }
 
-    fn from_bytes(&self, bytes: &[u8]) -> Option<Self::Sum> {
+    fn checksum_from_bytes(&self, bytes: &[u8]) -> Option<Self::Sum> {
         Checksum::from_bytes(bytes, self.wordspec.output_endian, self.width)
     }
 

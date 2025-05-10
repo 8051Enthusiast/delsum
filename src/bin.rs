@@ -29,18 +29,14 @@ fn reverse(opts: &Reverse) {
     let end = opts.end.unwrap_or(-1);
     let ranged_files: Vec<_> = apply_range_to_file(&files, start, end);
     let models = read_models(&opts.model, &opts.model_file);
-    let checksums = match read_checksums(&opts.checksums) {
-        Ok(x) => x,
-        Err(e) => {
-            eprintln!("Could not read checksums: {}", e);
-            exit(1);
-        }
-    };
+    let checksums = split_checksums(&opts.checksums);
+    let segment_checksum =
+        segment_checksum(checksums.as_ref().map(|x| x.as_slice()), opts.trailing);
     let algorithms = |model: &str| {
         find_algorithm(
             model,
             &ranged_files,
-            &checksums,
+            segment_checksum,
             opts.verbose as u64,
             opts.extended_search,
         )
@@ -128,29 +124,9 @@ fn part(opts: &Part) {
         .start_range
         .map(Some)
         .unwrap_or_else(|| SignedInclRange::new(0, min_len as isize - 1));
-    let checksums = if let Some(checksums) = &opts.checksums {
-        match read_checksums(checksums) {
-            Ok(x) => Some(x),
-            Err(e) => {
-                eprintln!("Could not read checksums: {}", e);
-                exit(1);
-            }
-        }
-    } else {
-        None
-    };
-    if checksums.is_some() && opts.trailing.is_some() {
-        eprintln!("Error: need exactly one of either -c or -t");
-        exit(1);
-    }
-    let Some(checksums) = checksums
-        .as_ref()
-        .map(|x| SegmentChecksum::Constant(x))
-        .or_else(|| Some(SegmentChecksum::FromEnd(opts.trailing?)))
-    else {
-        eprintln!("Error: need either -c or -t");
-        exit(1);
-    };
+    let checksums = split_checksums(&opts.checksums);
+    let segment_checksum =
+        segment_checksum(checksums.as_ref().map(|x| x.as_slice()), opts.trailing);
     if min_len < 1 {
         eprintln!("Warning: file of zero size, no ranges fonud");
         return;
@@ -162,7 +138,7 @@ fn part(opts: &Part) {
     #[cfg(not(feature = "parallel"))]
     let parallel = false;
     let subsum_print = |model| {
-        let segs = find_checksum_segments(model, &files, checksums, start_range, end_range)
+        let segs = find_checksum_segments(model, &files, segment_checksum, start_range, end_range)
             .unwrap_or_else(|err| {
                 eprintln!("Could not process model '{}': {}", model, err);
                 exit(1);
@@ -170,7 +146,7 @@ fn part(opts: &Part) {
         print_parts(segs, model);
     };
     let json_format = |model: &String| {
-        let segs = find_checksum_segments(model, &files, checksums, start_range, end_range)
+        let segs = find_checksum_segments(model, &files, segment_checksum, start_range, end_range)
             .unwrap_or_else(|err| {
                 eprintln!("Could not process model '{}': {}", model, err);
                 exit(1);
@@ -203,6 +179,36 @@ fn part(opts: &Part) {
             }
         };
     }
+}
+
+fn split_checksums(checksums: &Option<String>) -> Option<Vec<Vec<u8>>> {
+    if let Some(checksums) = checksums {
+        match read_checksums(checksums) {
+            Ok(x) => Some(x),
+            Err(e) => {
+                eprintln!("Could not read checksums: {}", e);
+                exit(1);
+            }
+        }
+    } else {
+        None
+    }
+}
+
+fn segment_checksum(checksums: Option<&[Vec<u8>]>, trailing: Option<usize>) -> SegmentChecksum {
+    if checksums.is_some() && trailing.is_some() {
+        eprintln!("Error: need exactly one of either -c or -t");
+        exit(1);
+    }
+    let Some(checksums) = checksums
+        .as_ref()
+        .map(|x| SegmentChecksum::Constant(x))
+        .or_else(|| Some(SegmentChecksum::FromEnd(trailing?)))
+    else {
+        eprintln!("Error: need either -c or -t");
+        exit(1);
+    };
+    checksums
 }
 
 fn print_parts(segs: Vec<(Vec<isize>, Vec<isize>)>, model: &str) {
@@ -377,7 +383,7 @@ struct Part {
     /// A comma separated list of checksums, each corresponding to a file
     #[arg(short, long)]
     checksums: Option<String>,
-    /// Instead of a constant list of checksums, use the bytes right after
+    /// Instead of a constant list of checksums, use the last bytes of
     /// each checksummed region as the checksums, with n bytes of padding
     /// between the end of the checksummed region and the location of the
     /// checksum
@@ -416,7 +422,13 @@ struct Reverse {
     model_file: Option<OsString>,
     /// A comma separated list of checksums, each corresponding to a file
     #[arg(short, long)]
-    checksums: String,
+    checksums: Option<String>,
+    /// Instead of a list of checksums, use the last bytes of
+    /// the checksummed region as the checksums, with n bytes of padding
+    /// between the end of the checksummed region and the location of the
+    /// checksum
+    #[arg(short, long)]
+    trailing: Option<usize>,
     /// The files of which to find checksummed parts
     files: Vec<OsString>,
 }
