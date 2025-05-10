@@ -4,7 +4,14 @@ interface checksums {
     file: list<u8>,
     checksum: list<u8>,
   }
-  reverse: func(files: list<checksummed-file>, model: string) -> result<string, string>;
+  record checksum-ranges {
+    start: list<s32>,
+    end: list<s32>,
+  }
+
+  reverse: func(files: list<checksummed-file>, model: string) -> result<list<string>, string>;
+
+  part: func(files: list<checksummed-file>, model: string) -> result<list<checksum-ranges>, string>;
 }
 world delsum {
   export checksums;
