@@ -195,15 +195,15 @@ fn split_checksums(checksums: &Option<String>) -> Option<Vec<Vec<u8>>> {
     }
 }
 
-fn segment_checksum(checksums: Option<&[Vec<u8>]>, trailing: Option<usize>) -> SegmentChecksum {
-    if checksums.is_some() && trailing.is_some() {
+fn segment_checksum(checksums: Option<&[Vec<u8>]>, trailing: bool) -> SegmentChecksum {
+    if checksums.is_some() && trailing {
         eprintln!("Error: need exactly one of either -c or -t");
         exit(1);
     }
     let Some(checksums) = checksums
         .as_ref()
         .map(|x| SegmentChecksum::Constant(x))
-        .or_else(|| Some(SegmentChecksum::FromEnd(trailing?)))
+        .or_else(|| trailing.then_some(SegmentChecksum::FromEnd(0)))
     else {
         eprintln!("Error: need either -c or -t");
         exit(1);
@@ -384,11 +384,9 @@ struct Part {
     #[arg(short, long)]
     checksums: Option<String>,
     /// Instead of a constant list of checksums, use the last bytes of
-    /// each checksummed region as the checksums, with n bytes of padding
-    /// between the end of the checksummed region and the location of the
-    /// checksum
+    /// each checksummed region as the checksums
     #[arg(short, long)]
-    trailing: Option<usize>,
+    trailing: bool,
     /// The files of which to find checksummed parts
     files: Vec<OsString>,
 }
@@ -424,11 +422,9 @@ struct Reverse {
     #[arg(short, long)]
     checksums: Option<String>,
     /// Instead of a list of checksums, use the last bytes of
-    /// the checksummed region as the checksums, with n bytes of padding
-    /// between the end of the checksummed region and the location of the
-    /// checksum
+    /// the checksummed region as the checksums
     #[arg(short, long)]
-    trailing: Option<usize>,
+    trailing: bool,
     /// The files of which to find checksummed parts
     files: Vec<OsString>,
 }

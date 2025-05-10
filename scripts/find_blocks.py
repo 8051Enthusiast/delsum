@@ -25,7 +25,7 @@ except KeyError:
 # Takes a file and a model and returns the delsum output as a dictionary
 # with models as keys and returning a list of start/end pairs of lists
 def delsum(file, model):
-    args = [delsum_path, 'part', '-j', '-s', '-p', '-t0']
+    args = [delsum_path, 'part', '-j', '-s', '-p', '-t']
     if isinstance(model, pathlib.Path):
         args.extend(['-M', model])
     else:
