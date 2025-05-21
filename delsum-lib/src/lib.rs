@@ -19,6 +19,8 @@ use modsum::{ModSum, ModSumBuilder, reverse_modsum};
 use num_traits::Zero;
 use polyhash::{PolyHash, PolyHashBuilder, reverse_polyhash};
 use std::cmp::Ordering;
+use std::error::Error;
+use std::fmt::Display;
 use std::str::FromStr;
 use std::sync::Arc;
 use utils::SignedInclRange;
@@ -27,6 +29,37 @@ use {crc::reverse_crc_para, fletcher::reverse_fletcher_para, rayon::prelude::*};
 #[cfg(test)]
 #[macro_use(quickcheck)]
 extern crate quickcheck_macros;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DelsumError {
+    ModelError(CheckBuilderErr),
+    /// The number of files does not agree with the number of checksums
+    ChecksumCountMismatch(&'static str),
+}
+
+impl From<CheckBuilderErr> for DelsumError {
+    fn from(e: CheckBuilderErr) -> Self {
+        DelsumError::ModelError(e)
+    }
+}
+
+impl Display for DelsumError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DelsumError::ModelError(e) => write!(f, "{}", e),
+            DelsumError::ChecksumCountMismatch(s) => write!(f, "{}", s),
+        }
+    }
+}
+
+impl Error for DelsumError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            DelsumError::ModelError(e) => Some(e),
+            DelsumError::ChecksumCountMismatch(_) => None,
+        }
+    }
+}
 
 /// For figuring out what type of integer to use, we need to parse the width from the
 /// model string, but to parse the model string, we need to know the integer type,
@@ -94,7 +127,7 @@ impl<'a> SegmentChecksum<'a> {
         &self,
         width: usize,
         bytes: &[&'b [u8]],
-    ) -> Result<Vec<(&'b [u8], Vec<u8>)>, Option<CheckBuilderErr>> {
+    ) -> Result<Vec<(&'b [u8], Vec<u8>)>, Option<DelsumError>> {
         match self {
             SegmentChecksum::FromEnd(gap) => {
                 let width = width.div_ceil(8);
@@ -121,19 +154,9 @@ impl<'a> SegmentChecksum<'a> {
                 Ok(t)
             }
             SegmentChecksum::Constant(checksums) => {
-                match checksums.len().cmp(&bytes.len()) {
-                    Ordering::Greater => {
-                        return Err(Some(CheckBuilderErr::MissingParameter(
-                            "not enough files for checksums given",
-                        )));
-                    }
-                    Ordering::Less => {
-                        return Err(Some(CheckBuilderErr::MissingParameter(
-                            "not enough checksums for files given",
-                        )));
-                    }
-                    Ordering::Equal => (),
-                };
+                if let Some(err) = check_count_mismatch(bytes.len(), checksums.len()) {
+                    return Err(err.into());
+                }
 
                 Ok(bytes
                     .iter()
@@ -145,6 +168,22 @@ impl<'a> SegmentChecksum<'a> {
     }
 }
 
+fn check_count_mismatch(bytes_len: usize, checksums_len: usize) -> Option<DelsumError> {
+    match checksums_len.cmp(&bytes_len) {
+        Ordering::Greater => {
+            return Some(DelsumError::ChecksumCountMismatch(
+                "not enough files for checksums given",
+            ));
+        }
+        Ordering::Less => {
+            return Some(DelsumError::ChecksumCountMismatch(
+                "not enough checksums for files given",
+            ));
+        }
+        Ordering::Equal => None,
+    }
+}
+
 /// A helper function for calling the find_segments function with strings arguments
 fn find_segment_str<L>(
     spec: &str,
@@ -152,7 +191,7 @@ fn find_segment_str<L>(
     sum: SegmentChecksum,
     start_range: SignedInclRange,
     end_range: SignedInclRange,
-) -> Result<Vec<RangePair>, CheckBuilderErr>
+) -> Result<Vec<RangePair>, DelsumError>
 where
     L: LinearCheck + FromStr<Err = CheckBuilderErr>,
     L::Sum: BitNum,
@@ -160,6 +199,9 @@ where
     let spec = Arc::new(L::from_str(spec)?);
     match sum {
         SegmentChecksum::Constant(sum_bytes) => {
+            if let Some(err) = check_count_mismatch(bytes.len(), sum_bytes.len()) {
+                return Err(err.into());
+            }
             let sum_array: Vec<_> = sum_bytes
                 .iter()
                 .map(|x| const_sum(spec.checksum_from_bytes(x)))
@@ -215,7 +257,7 @@ pub fn find_checksum_segments(
     sum: SegmentChecksum,
     start_range: SignedInclRange,
     end_range: SignedInclRange,
-) -> Result<Vec<RangePair>, CheckBuilderErr> {
+) -> Result<Vec<RangePair>, DelsumError> {
     let (prefix, width, rest) = find_prefix_width(strspec)?;
     match (width, prefix) {
         (1..=32, "crc") => find_segment_str::<CRC<u32>>(rest, bytes, sum, start_range, end_range),
@@ -244,7 +286,7 @@ pub fn find_checksum_segments(
         (33..=64, "polyhash") => {
             find_segment_str::<PolyHash<u64>>(rest, bytes, sum, start_range, end_range)
         }
-        _ => Err(CheckBuilderErr::ValueOutOfRange("width")),
+        _ => Err(CheckBuilderErr::ValueOutOfRange("width").into()),
     }
 }
 
@@ -389,7 +431,7 @@ pub fn find_algorithm<'a>(
     sums: SegmentChecksum,
     verbosity: u64,
     extended_search: bool,
-) -> Result<AlgorithmFinder<'a>, CheckBuilderErr> {
+) -> Result<AlgorithmFinder<'a>, DelsumError> {
     let (prefix, width, rest) = find_prefix_width(strspec)?;
     let prefix = prefix.to_ascii_lowercase();
     let spec = match prefix.as_str() {

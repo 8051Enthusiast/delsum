@@ -562,10 +562,6 @@ pub enum CheckBuilderErr {
     MalformedString(String),
     /// A key given to the from_str function is not known
     UnknownKey(String),
-    /// The given checksum is not in range for the model
-    ChecksumOutOfRange(String),
-    /// The number of files does not agree with the number of checksums
-    ChecksumCountMismatch(&'static str),
 }
 
 impl std::fmt::Display for CheckBuilderErr {
@@ -579,15 +575,10 @@ impl std::fmt::Display for CheckBuilderErr {
                 if key.is_empty() {
                     write!(f, "Malformed input string")
                 } else {
-                    write!(f, "Malformed input string at {}", key)
+                    write!(f, "Malformed input string in parameter '{}'", key)
                 }
             }
             UnknownKey(key) => write!(f, "Unknown key '{}'", key),
-            ChecksumOutOfRange(chk) => write!(f, "Checksum '{}' out of range", chk),
-            ChecksumCountMismatch(msg) => write!(
-                f,
-                "Count of checksums does not agree with file count: {msg}"
-            ),
         }
     }
 }

@@ -4,26 +4,61 @@ wit_bindgen::generate!({
 
 struct Delsum;
 
-use delsum_lib::{utils::SignedInclRange, SegmentChecksum};
+use std::fmt::Write;
+
+use delsum_lib::{
+    checksum::{CheckBuilderErr, CheckReverserError},
+    utils::SignedInclRange,
+    DelsumError, SegmentChecksum,
+};
 use exports::delsum::web::checksums::*;
 
+impl From<DelsumError> for ChecksumError {
+    fn from(err: DelsumError) -> Self {
+        match err {
+            DelsumError::ModelError(check_builder_err) => {
+                ChecksumError::Model(check_builder_err.to_string())
+            }
+            DelsumError::ChecksumCountMismatch(msg) => ChecksumError::Other(msg.to_string()),
+        }
+    }
+}
+
+impl From<CheckReverserError> for ChecksumError {
+    fn from(value: CheckReverserError) -> Self {
+        match value {
+            CheckReverserError::MissingParameter(err) => ChecksumError::Model(err.to_string()),
+            _ => ChecksumError::Other(value.to_string()),
+        }
+    }
+}
+
+impl From<CheckBuilderErr> for ChecksumError {
+    fn from(value: CheckBuilderErr) -> Self {
+        ChecksumError::Model(value.to_string())
+    }
+}
+
 impl Guest for Delsum {
-    fn reverse(files: Vec<ChecksummedFile>, model: String) -> Result<Vec<String>, String> {
+    fn reverse(files: Vec<ChecksummedFile>, model: String) -> Result<Vec<String>, ChecksumError> {
         let bytes = files.iter().map(|x| x.file.as_slice()).collect::<Vec<_>>();
         let sums = files.iter().map(|x| x.checksum.clone()).collect::<Vec<_>>();
         let result =
             delsum_lib::find_algorithm(&model, &bytes, SegmentChecksum::Constant(&sums), 0, false);
         let matches = match result {
             Ok(m) => m,
-            Err(err) => return Err(err.to_string()),
+            Err(err) => return Err(err.into()),
         };
         matches
             .find_all()
-            .map(|x| x.map_err(|e| e.to_string()))
+            .map(|x| x.map_err(|e| e.into()))
             .collect()
     }
 
-    fn part(files: Vec<ChecksummedFile>, model: String) -> Result<Vec<ChecksumRanges>, String> {
+    fn part(
+        files: Vec<ChecksummedFile>,
+        model: String,
+    ) -> Result<Vec<ChecksumRanges>, ChecksumError> {
         if files.is_empty() {
             return Ok(vec![]);
         }
@@ -48,8 +83,17 @@ impl Guest for Delsum {
                     end: end.into_iter().map(|x| x as i32).collect(),
                 })
                 .collect()),
-            Err(err) => Err(err.to_string()),
+            Err(err) => Err(err.into()),
         }
+    }
+
+    fn check(file: Vec<u8>, model: String) -> Result<String, ChecksumError> {
+        let checksum = &delsum_lib::find_checksum(&model, &[file.as_slice()])?[0];
+        let mut res = String::with_capacity(checksum.len() * 2);
+        for byte in checksum {
+            write!(&mut res, "{:02x}", byte).unwrap();
+        }
+        Ok(res)
     }
 }
 

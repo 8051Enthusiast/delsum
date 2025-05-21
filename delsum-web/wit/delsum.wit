@@ -8,10 +8,16 @@ interface checksums {
     start: list<s32>,
     end: list<s32>,
   }
+  variant checksum-error {
+    model(string),
+    other(string),
+  }
 
-  reverse: func(files: list<checksummed-file>, model: string) -> result<list<string>, string>;
+  reverse: func(files: list<checksummed-file>, model: string) -> result<list<string>, checksum-error>;
 
-  part: func(files: list<checksummed-file>, model: string) -> result<list<checksum-ranges>, string>;
+  part: func(files: list<checksummed-file>, model: string) -> result<list<checksum-ranges>, checksum-error>;
+
+  check: func(files: list<u8>, model: string) -> result<string, checksum-error>;
 }
 world delsum {
   export checksums;
