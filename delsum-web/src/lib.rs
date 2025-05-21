@@ -40,11 +40,20 @@ impl From<CheckBuilderErr> for ChecksumError {
 }
 
 impl Guest for Delsum {
-    fn reverse(files: Vec<ChecksummedFile>, model: String) -> Result<Vec<String>, ChecksumError> {
+    fn reverse(
+        files: Vec<ChecksummedFile>,
+        model: String,
+        trailing_check: bool,
+    ) -> Result<Vec<String>, ChecksumError> {
         let bytes = files.iter().map(|x| x.file.as_slice()).collect::<Vec<_>>();
-        let sums = files.iter().map(|x| x.checksum.clone()).collect::<Vec<_>>();
-        let result =
-            delsum_lib::find_algorithm(&model, &bytes, SegmentChecksum::Constant(&sums), 0, false);
+        let sums: Vec<Vec<u8>>;
+        let segment_checksums = if trailing_check {
+            SegmentChecksum::FromEnd(0)
+        } else {
+            sums = files.iter().map(|x| x.checksum.clone()).collect::<Vec<_>>();
+            SegmentChecksum::Constant(&sums)
+        };
+        let result = delsum_lib::find_algorithm(&model, &bytes, segment_checksums, 0, false);
         let matches = match result {
             Ok(m) => m,
             Err(err) => return Err(err.into()),
@@ -58,23 +67,38 @@ impl Guest for Delsum {
     fn part(
         files: Vec<ChecksummedFile>,
         model: String,
+        trailing_check: bool,
+        end_relative: bool,
     ) -> Result<Vec<ChecksumRanges>, ChecksumError> {
         if files.is_empty() {
             return Ok(vec![]);
         }
-        let sums = files.iter().map(|x| x.checksum.clone()).collect::<Vec<_>>();
+        let sums: Vec<Vec<u8>>;
+        let segment_checksums = if trailing_check {
+            SegmentChecksum::FromEnd(0)
+        } else {
+            sums = files.iter().map(|x| x.checksum.clone()).collect::<Vec<_>>();
+            SegmentChecksum::Constant(&sums)
+        };
         let bytes = files.into_iter().map(|x| x.file).collect::<Vec<_>>();
         let min_len = bytes.iter().map(|x| x.len()).min().unwrap() as isize;
         if min_len == 0 {
             return Ok(vec![]);
         }
 
+        let start_range = SignedInclRange::new(0isize, min_len - 1).unwrap();
+        let end_range = if end_relative {
+            SignedInclRange::new(-min_len, -1).unwrap()
+        } else {
+            start_range
+        };
+
         match delsum_lib::find_checksum_segments(
             &model,
             &bytes,
-            SegmentChecksum::Constant(&sums),
-            SignedInclRange::new(0isize, min_len - 1).unwrap(),
-            SignedInclRange::new(0isize, min_len - 1).unwrap(),
+            segment_checksums,
+            start_range,
+            end_range,
         ) {
             Ok(res) => Ok(res
                 .into_iter()
