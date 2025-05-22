@@ -13,7 +13,7 @@ interface checksums {
     other(string),
   }
 
-  reverse: func(files: list<checksummed-file>, model: string, trailing-check: bool) -> result<list<string>, checksum-error>;
+  reverse: func(files: list<checksummed-file>, model: string, trailing-check: bool, extended-search: bool) -> result<list<string>, checksum-error>;
 
   part: func(files: list<checksummed-file>, model: string, trailing-check: bool, end-relative: bool) -> result<list<checksum-ranges>, checksum-error>;
 

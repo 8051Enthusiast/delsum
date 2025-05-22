@@ -44,6 +44,7 @@ impl Guest for Delsum {
         files: Vec<ChecksummedFile>,
         model: String,
         trailing_check: bool,
+        extended_search: bool,
     ) -> Result<Vec<String>, ChecksumError> {
         let bytes = files.iter().map(|x| x.file.as_slice()).collect::<Vec<_>>();
         let sums: Vec<Vec<u8>>;
@@ -53,7 +54,7 @@ impl Guest for Delsum {
             sums = files.iter().map(|x| x.checksum.clone()).collect::<Vec<_>>();
             SegmentChecksum::Constant(&sums)
         };
-        let result = delsum_lib::find_algorithm(&model, &bytes, segment_checksums, 0, false);
+        let result = delsum_lib::find_algorithm(&model, &bytes, segment_checksums, 0, extended_search);
         let matches = match result {
             Ok(m) => m,
             Err(err) => return Err(err.into()),

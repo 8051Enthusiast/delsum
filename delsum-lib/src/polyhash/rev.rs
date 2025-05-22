@@ -1,4 +1,4 @@
-use rayon::iter::ParallelIterator;
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use crate::{
@@ -33,6 +33,7 @@ pub fn reverse_polyhash<'a>(
     }))
 }
 
+#[cfg(feature = "parallel")]
 pub fn reverse_polyhash_para<'a>(
     spec: &PolyHashBuilder<u64>,
     chk_bytes: &[(&'a [u8], Vec<u8>)],
