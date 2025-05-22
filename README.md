@@ -80,7 +80,7 @@ It is also possible to specify some parameters of the algorithm (using for examp
 
 If you have only files of a given length, but also only care about checksums of that length, for an algorithm not `modsum` you can simply set `init=0`.
 
-It is normally quite fast; for example the runtime for the CRC reversing algorithm is in most cases around `O(n*log^2(n)*log(log(n)))` where `n` is the filesize, which is thanks to the fast gcd algorithm implemented within the NTL and gf2x libraries.
+It is normally quite fast; for example the runtime for the CRC reversing algorithm is in most cases around `O(n*log^2(n)*log(log(n)))` where `n` is the filesize, which is thanks to the fast multiplication algorithm implemented within the gf2x library.
 
 For some parameters, only likely combinations are searched:
 * `wordsize` is searched for powers of 2 multiples of 8 that are smaller or equal to `width`
@@ -97,27 +97,30 @@ Note that all numerical parameters except `width` and `wordsize` are in hexadeci
 Common Values
 =============
 Currently, these are shared accross all sum types:
-* `width`: width of the checksum in bits
-* `out_endian`: endian of the checksum, can be either `little` or `big`
-* `wordsize`: number of bits of a word in the input text.
+* `width`: Width of the checksum in bits, decimal.
+* `out_endian`: Endian of the checksum, can be either `little` or `big`.
+* `wordsize`: Number of bits of a word in the input text, decimal.
               Must be a multiple of 8 and between 8 and 64.
               For example, in a simple checksum, using `wordsize=16` would chop the file in into 16-bit integers and add them up modulo `modulus`.
 * `in_endian`: the endian of the input words, can be either `little` or `big`.
+* `signedness`: the signedness of the input words, can be either `signed` (using 2's complement) or `unsigned`. Not valid for `crc`.
 
 `modsum`
 ========
-A simple modular sum with parameters `width`, `init` and `modulus`.
+A simple modular sum with parameters `width`, `init`, `modulus` and `negated`.
 
 Corresponds to
 ```
 sum = init
 for byte in file:
     sum = (sum + byte) % modulus
-return sum
+return -sum if negated else sum
 ```
-Note that for a `modulus` of 0, it is equivalent to `2^width`.
-
-The default values for `modulus` and `init` are both 0.
+The parameters are:
+* `width`: The width of the checksum. Mandatory.
+* `modulus`: The value by which to reduce, hexadecimal. `modulus=0x00` means `2^width` and is the default value.
+* `init`: The value to initialize the regular checksum with, hexadecimal. Defaults to 0.
+* `negated`: The boolean flag which indicates that the checksum should be negated, `true`/`false`. Defaults to `false`.
 
 `fletcher`
 ==========
@@ -141,10 +144,10 @@ else:
 It is output in a "packed" form where the sum1 is stored in the lower width/2 bits and sum2 in the higher width/2 (or the opposite if `swap` is enabled).
 The parameters are:
 * `width`: The width of the whole packed checksum. Mandatory.
-* `modulus`: The value by which to reduce. `modulus = 0` means `2^(width/2)` and is the default value.
-* `init`: The value to initialize the regular checksum with. Defaults to 0.
-* `addout`: The packed value which is added at the end of the sum. The high part is always added to the high part of the checksum at the end, regardless of `swap`. Defaults to 0.
-* `swap`: The boolean flag which indicates that the regular sum should be in the higher half of the packed checksum. Defaults to `false`.
+* `modulus`: The value by which to reduce, hexadecimal. `modulus=0x00` means `2^(width/2)` and is the default value.
+* `init`: The value to initialize the regular checksum with, hexadecimal. Defaults to 0.
+* `addout`: The packed value which is added at the end of the sum, hexadecimal. The high part is always added to the high part of the checksum at the end, regardless of `swap`. Defaults to 0.
+* `swap`: The boolean flag which indicates that the regular sum should be in the higher half of the packed checksum, `true`/`false`. Defaults to `false`.
 
 `crc`
 =====
@@ -152,13 +155,31 @@ A CRC algorithm with parameters in accordance to the Rocksoft^TM model, as docum
 
 It has the following parameters:
 * `width`: The width in bits of the checksum (and degree of poly). Mandatory.
-* `poly`: The generator polynomial, in normal notation. Mandatory (except for `reverse`).
-* `init`: The initial value of the crc state. Defaults to 0.
-* `xorout`: The final value to xor to the sum. Defaults to 0.
-* `refin`: The boolean flag indicating whether to reflect the bits of the input bytes. Defaults to `false`.
-* `refout`: The boolean flag indicating whether to reflect the bits of the final checksum, before adding `xorout`. Defaults to `false`.
+* `poly`: The generator polynomial, in normal notation, hexadecimal. Mandatory (except for `reverse`).
+* `init`: The initial value of the crc state, hexadecimal. Defaults to 0.
+* `xorout`: The final value to xor to the sum, hexadecimal. Defaults to 0.
+* `refin`: The boolean flag indicating whether to reflect the bits of the input bytes, `true`/`false`. Defaults to `false`.
+* `refout`: The boolean flag indicating whether to reflect the bits of the final checksum, before adding `xorout`, `true`/`false`. Defaults to `false`.
 
 Note that other values for `wordsize` with `in_endian=little` (the standard) is the same as swapping the bytes in each group of `wordsize` bits before calculating the `wordsize=8` checksum.
+
+`polyhash`
+==========
+A polynomial hash function with parameters `width`, `factor`, `init` and `addout`.
+
+Corresponds to
+```
+sum = init
+for byte in file:
+    sum = (sum * factor + byte) % 2**width
+return (sum + addout) % 2**width
+```
+
+The parameters are:
+* `width`: The width of the checksum. Mandatory.
+* `factor`: The factor to multiply with. Mandatory (except for `reverse`).
+* `init`: The value to initialize the regular checksum with. Defaults to 0.
+* `addout`: The value to add at the end. Defaults to 0.
 
 How this works
 --------------
@@ -166,17 +187,17 @@ Some (incomplete) explanation of the algorithms used is found [here](algorithms.
 
 Installing
 ----------
-There is a linux build which has the NTL library compiled in [here](https://github.com/8051Enthusiast/delsum/releases), but keep in mind that it is compiled without most modern x86 extensions and therefore can't take advantage of some optimized routines in `gf2x` which makes CRC reversing a lot faster.
+There is a linux build which has the gf2x library compiled in [here](https://github.com/8051Enthusiast/delsum/releases), but keep in mind that it is compiled without most modern x86 extensions and therefore can't take advantage of some optimized routines in `gf2x` which makes CRC reversing a lot faster.
 I'm also too dumb for doing a Windows build, so sorry for that.
 
-This program links against the [`NTL`](https://shoup.net/ntl/), [`gf2x`](https://gitlab.inria.fr/gf2x/gf2x) and [`gmp`](https://gmplib.org/).
+This program links against the [`gf2x`](https://gitlab.inria.fr/gf2x/gf2x) library.
 
-If you're on a Debian-based system, you can install them with
+If you're on a Debian-based system, you can install it with
 ```
-apt-get install libgmp-dev libgf2x-dev libntl-dev
+apt-get install libgf2x-dev
 ```
 
-You can also compile them yourselves, see [here](https://shoup.net/ntl/doc/tour-gf2x.html). This will generally make the fastest binary,
+You can also compile them yourselves, see [here](https://gitlab.inria.fr/gf2x/gf2x). This will generally make the fastest binary,
 as instruction set extensions can be used and there is also the possible of tuning the algorithm parameters.
 
 If you have `cargo` installed, it should then be possible to compile this in the project directory root with
@@ -188,7 +209,14 @@ or, without downloading the repository, with
 cargo install delsum
 ```
 
-If you want to link the NTL library statically, you can set the environment variable `DELSUM_STATIC_LIBS=1` when running `cargo`.
+If you want to link the gf2x library statically, you can set the environment variable `GF2POLY_STATIC_LIB=1` when running `cargo`.
+
+Acknowledgements
+----------------
+The fast crc reversing algorithm would not be fast without the work of the authors of the `gf2x` library.
+This project also previously used the `NTL` library for fast gcd and factorization, before the author wrote their own library for it.
+
+A big thanks also to the authors of [`CRC RevEng`](https://reveng.sourceforge.io/) for cataloging the CRC algorithms and their parameters, and prior work on the CRC reversing algorithm.
 
 License
 -------
