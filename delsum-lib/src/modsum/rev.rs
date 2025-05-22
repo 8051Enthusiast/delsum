@@ -1,8 +1,8 @@
-//! This module contains the function(s) for reversing the parameters for a modular sum.
+//! This modulus contains the function(s) for reversing the parameters for a modular sum.
 //!
 //! Generally, to find out the parameters, the checksums and their width are needed, and 2 of the following (with at least one file):
 //! * value of `init`
-//! * value of `module`
+//! * value of `modulus`
 //! * a file with checksum
 //! * a different file with checksum
 //!
@@ -41,7 +41,7 @@ pub fn reverse_modsum<'a>(
                     let revspec = RevSpec {
                         width,
                         init: spec.init,
-                        module: spec.module,
+                        modulus: spec.modulus,
                         wordspec,
                         negated,
                     };
@@ -72,7 +72,7 @@ fn discrete_combos(spec: &ModSumBuilder<u64>, extended_search: bool) -> Vec<(Wor
 struct RevSpec {
     width: usize,
     init: Option<u64>,
-    module: Option<u64>,
+    modulus: Option<u64>,
     wordspec: WordSpec,
     negated: bool,
 }
@@ -86,7 +86,7 @@ struct RevResult {
 }
 
 impl RevResult {
-    // iterate over all possible modules and calculate the corresponding init values
+    // iterate over all possible moduli and calculate the corresponding init values
     fn iter(self) -> impl Iterator<Item = ModSum<u64>> {
         let Self {
             modlist,
@@ -95,15 +95,15 @@ impl RevResult {
             wordspec,
             negated,
         } = self;
-        modlist.into_iter().map(move |module| {
+        modlist.into_iter().map(move |modulus| {
             let init_negative = init < 0;
-            let mut init = init.unsigned_abs() % module;
+            let mut init = init.unsigned_abs() % modulus;
             if init_negative {
-                init = module - init;
+                init = modulus - init;
             }
             ModSum::with_options()
                 .width(width)
-                .module(module as u64)
+                .modulus(modulus as u64)
                 .init(init as u64)
                 .inendian(wordspec.input_endian)
                 .outendian(wordspec.output_endian)
@@ -157,13 +157,13 @@ fn reverse(
         sums.push(sum);
     }
     let original_mod = spec
-        .module
+        .modulus
         .map(|x| if x == 0 { 1u128 << width } else { x as u128 });
-    let mut module = original_mod.unwrap_or(0);
+    let mut modulus = original_mod.unwrap_or(0);
     log("removing inits");
-    // here we find module by gcd'ing between the differences (init - init == 0 mod m)
-    let init = find_largest_mod(&sums, spec.init.map(i128::from), &mut module);
-    if module == 0 {
+    // here we find modulus by gcd'ing between the differences (init - init == 0 mod m)
+    let init = find_largest_mod(&sums, spec.init.map(i128::from), &mut modulus);
+    if modulus == 0 {
         return Err(Some(CheckReverserError::UnsuitableFiles(
             "too short or too similar",
         )));
@@ -172,13 +172,13 @@ fn reverse(
     // find all possible divisors
     let modlist = match original_mod {
         Some(x) => {
-            if x == module && x > min_sum && x <= max_sum {
-                vec![module]
+            if x == modulus && x > min_sum && x <= max_sum {
+                vec![modulus]
             } else {
                 Vec::new()
             }
         }
-        None => divisors_range(module, min_sum + 1, max_sum),
+        None => divisors_range(modulus, min_sum + 1, max_sum),
     };
     Ok(RevResult {
         modlist,
@@ -189,19 +189,19 @@ fn reverse(
     })
 }
 
-pub(crate) fn find_largest_mod(sums: &[i128], maybe_init: Option<i128>, module: &mut u128) -> i128 {
+pub(crate) fn find_largest_mod(sums: &[i128], maybe_init: Option<i128>, modulus: &mut u128) -> i128 {
     match maybe_init {
         Some(i) => {
             // if we already have init, we can just subtract that from the sum and get a multiple of m
             for s in sums {
-                *module = gcd(*module, (s + i).unsigned_abs());
+                *modulus = gcd(*modulus, (s + i).unsigned_abs());
             }
             i
         }
         None => {
             // otherwise their difference will do, but we do get one gcd less
             for (s1, s2) in sums.iter().zip(sums.iter().skip(1)) {
-                *module = gcd(*module, (s1 - s2).unsigned_abs());
+                *modulus = gcd(*modulus, (s1 - s2).unsigned_abs());
             }
             -sums[0]
         }
@@ -219,14 +219,14 @@ mod tests {
             let mut new_modsum = ModSum::with_options();
             let width = u8::arbitrary(g) % 64 + 1;
             new_modsum.width(width as usize);
-            let module = if width < 64 {
+            let modulus = if width < 64 {
                 u64::arbitrary(g) % (1 << width)
             } else {
                 u64::arbitrary(g)
             };
-            new_modsum.module(module);
-            let init = if module != 0 {
-                u64::arbitrary(g) % module
+            new_modsum.modulus(modulus);
+            let init = if modulus != 0 {
+                u64::arbitrary(g) % modulus
             } else {
                 u64::arbitrary(g)
             };
@@ -252,7 +252,7 @@ mod tests {
         let mut naive = ModSum::<u64>::with_options();
         naive.width(modsum_build.width.unwrap());
         if known.0 {
-            naive.module(modsum_build.module.unwrap());
+            naive.modulus(modsum_build.modulus.unwrap());
         }
         if known.1 {
             naive.init(modsum_build.init.unwrap());
@@ -289,7 +289,7 @@ mod tests {
     fn error1() {
         let modsum = ModSum::with_options()
             .width(38)
-            .module(10)
+            .modulus(10)
             .init(1)
             .build()
             .unwrap();
@@ -310,7 +310,7 @@ mod tests {
     fn error2() {
         let modsum = ModSum::with_options()
             .width(38)
-            .module(40)
+            .modulus(40)
             .init(2)
             .build()
             .unwrap();
@@ -328,10 +328,10 @@ mod tests {
         }
     }
     #[test]
-    fn error_preset_module() {
+    fn error_preset_modulus() {
         let modsum = ModSum::with_options()
             .width(45)
-            .module(75u64)
+            .modulus(75u64)
             .init(38)
             .inendian(Endian::Big)
             .outendian(Endian::Big)
@@ -348,7 +348,7 @@ mod tests {
         ]);
         let chk_files: Vec<_> = f.with_checksums(&modsum);
         let mut naive = ModSum::<u64>::with_options();
-        naive.width(45).module(75);
+        naive.width(45).modulus(75);
         let m = reverse_modsum(&naive, &chk_files, 0, false);
         assert!(!f.check_matching(&modsum, m).is_failure())
     }
@@ -357,7 +357,7 @@ mod tests {
         // caused by bug in factoring algorithm
         let modsum = ModSum::with_options()
             .width(34)
-            .module(0x15758e195u64)
+            .modulus(0x15758e195u64)
             .init(0xd31ee539)
             .inendian(Endian::Big)
             .outendian(Endian::Little)

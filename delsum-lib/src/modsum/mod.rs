@@ -1,8 +1,8 @@
-//! A simple modular sum over bytes (i.e. `bytes.sum() % module`)
+//! A simple modular sum over bytes (i.e. `bytes.sum() % modulus`)
 //!
 //! There are a number of parameters:
 //! * width: The number of bits in the sum type, at most 64
-//! * module: The sum is taken modulo this number
+//! * modulus: The sum is taken modulo this number
 //! * init: The initial number
 //! * check: The checksum of "123456789" (optional, gets checked at construction)
 //! * name: An optional name that gets used for display purposes
@@ -29,11 +29,11 @@ use std::str::FromStr;
 ///     .build()
 ///     .is_ok();
 /// ```
-/// Note that module = 0 is assumed to be 2^width
+/// Note that modulus = 0 is assumed to be 2^width
 #[derive(Debug, Clone)]
 pub struct ModSumBuilder<S: Modnum> {
     width: Option<usize>,
-    module: Option<S>,
+    modulus: Option<S>,
     init: Option<S>,
     input_endian: Option<Endian>,
     output_endian: Option<Endian>,
@@ -47,7 +47,7 @@ pub struct ModSumBuilder<S: Modnum> {
 impl<S: Modnum> ModSumBuilder<S> {
     /// The total width, in bits, of the sum. Mandatory.
     ///
-    /// Can actually be wider than the sum itself, important is that `2^width >= module`.
+    /// Can actually be wider than the sum itself, important is that `2^width >= modulus`.
     pub fn width(&mut self, w: usize) -> &mut Self {
         self.width = Some(w);
         self
@@ -55,8 +55,8 @@ impl<S: Modnum> ModSumBuilder<S> {
     /// The number by which the remainder is taken. Mandatory.
     ///
     /// If this is 0, it is equivalent to be `2^width`.
-    pub fn module(&mut self, m: S) -> &mut Self {
-        self.module = Some(m);
+    pub fn modulus(&mut self, m: S) -> &mut Self {
+        self.modulus = Some(m);
         self
     }
     /// The initial value, optional, defaults to 0.
@@ -104,13 +104,13 @@ impl<S: Modnum> ModSumBuilder<S> {
         let width = self
             .width
             .ok_or(CheckBuilderErr::MissingParameter("width"))?;
-        let mut module = self.module.unwrap_or_else(S::zero);
-        if module == S::zero() && width < module.bits() {
-            module = S::one() << width
+        let mut modulus = self.modulus.unwrap_or_else(S::zero);
+        if modulus == S::zero() && width < modulus.bits() {
+            modulus = S::one() << width
         };
         let mut init = self.init.unwrap_or_else(S::zero);
-        if module != S::zero() {
-            init = init % module
+        if modulus != S::zero() {
+            init = init % modulus
         };
         let wordsize = self.wordsize.unwrap_or(8);
         if wordsize == 0 || wordsize % 8 != 0 || wordsize > 64 {
@@ -125,7 +125,7 @@ impl<S: Modnum> ModSumBuilder<S> {
         };
         let s = ModSum {
             width,
-            module,
+            modulus,
             init,
             negated,
             wordspec,
@@ -154,7 +154,7 @@ impl<S: Modnum> ModSumBuilder<S> {
 #[derive(Debug, PartialEq, Eq)]
 pub struct ModSum<S: Modnum> {
     width: usize,
-    module: S,
+    modulus: S,
     init: S,
     negated: bool,
     wordspec: WordSpec,
@@ -166,7 +166,7 @@ impl<S: Modnum> ModSum<S> {
     pub fn with_options() -> ModSumBuilder<S> {
         ModSumBuilder {
             width: None,
-            module: None,
+            modulus: None,
             init: None,
             input_endian: None,
             output_endian: None,
@@ -186,8 +186,8 @@ impl<Sum: Modnum> Display for ModSum<Sum> {
             None => {
                 write!(
                     f,
-                    "modsum width={} module={:#x} init={:#x} negated={} signedness={}",
-                    self.width, self.module, self.init, self.negated, self.wordspec.signedness
+                    "modsum width={} modulus={:#x} init={:#x} negated={} signedness={}",
+                    self.width, self.modulus, self.init, self.negated, self.wordspec.signedness
                 )?;
                 if self.wordspec.word_bytes() != 1 {
                     write!(
@@ -216,7 +216,7 @@ impl<Sum: Modnum> FromStr for ModSumBuilder<Sum> {
             };
             let crc_op = match current_key.as_str() {
                 "width" => usize::from_str(&current_val).ok().map(|x| sum.width(x)),
-                "module" => Some(sum.module(parse_hex::<Sum>(&current_val, "module")?)),
+                "modulus" => Some(sum.modulus(parse_hex::<Sum>(&current_val, "modulus")?)),
                 "init" => Some(sum.init(parse_hex::<Sum>(&current_val, "init")?)),
                 "in_endian" => Endian::from_str(&current_val).ok().map(|x| sum.inendian(x)),
                 "wordsize" => usize::from_str(&current_val).ok().map(|x| sum.wordsize(x)),
@@ -245,7 +245,7 @@ impl<Sum: Modnum> FromStr for ModSum<Sum> {
     ///
     /// Example:
     ///
-    /// width=16 module=65535 init=0
+    /// width=16 modulus=0xffff init=0
     fn from_str(s: &str) -> Result<ModSum<Sum>, CheckBuilderErr> {
         ModSumBuilder::from_str(s)?.build()
     }
@@ -256,15 +256,15 @@ impl<S: Modnum> Digest for ModSum<S> {
     type Sum = S;
     fn init(&self) -> Self::Sum {
         if self.negated {
-            self.init.neg_mod(&self.module)
+            self.init.neg_mod(&self.modulus)
         } else {
             self.init
         }
     }
 
     fn dig_word(&self, sum: Self::Sum, word: SignedInt<u64>) -> Self::Sum {
-        let modword = S::mod_from_signed(word.negate_if(self.negated), &self.module);
-        sum.add_mod(&modword, &self.module)
+        let modword = S::mod_from_signed(word.negate_if(self.negated), &self.modulus);
+        sum.add_mod(&modword, &self.modulus)
     }
 
     fn finalize(&self, sum: Self::Sum) -> Self::Sum {
@@ -294,10 +294,10 @@ impl<S: Modnum> LinearCheck for ModSum<S> {
     }
     fn shift_n(&self, _: usize) -> Self::Shift {}
     fn add(&self, sum_a: Self::Sum, sum_b: &Self::Sum) -> Self::Sum {
-        sum_a.add_mod(sum_b, &self.module)
+        sum_a.add_mod(sum_b, &self.modulus)
     }
     fn negate(&self, sum: Self::Sum) -> Self::Sum {
-        sum.neg_mod(&self.module)
+        sum.neg_mod(&self.modulus)
     }
 }
 #[cfg(test)]
@@ -326,7 +326,7 @@ mod tests {
     fn mod_17() {
         let s = ModSum::<u8>::with_options()
             .width(5)
-            .module(17)
+            .modulus(17)
             .check(1)
             .build()
             .unwrap();
@@ -338,7 +338,7 @@ mod tests {
         let chk = ModSum::<u16>::with_options()
             .width(16)
             .init(0xff00)
-            .module(0xffff)
+            .modulus(0xffff)
             .check(0xde)
             .build()
             .unwrap();

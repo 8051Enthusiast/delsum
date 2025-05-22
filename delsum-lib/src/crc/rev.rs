@@ -3,7 +3,7 @@
 //! Generally, to find out the parameters, the checksums and their width are needed, and 3 of the following (with at least one file):
 //! * value of `init`
 //! * value of `xorout`
-//! * value of `module`
+//! * value of `modulus`
 //! * a file with checksum
 //! * a different file with checksum
 //! * yet another different file checksum

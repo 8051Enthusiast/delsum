@@ -9,17 +9,17 @@
 //! It works roughly like this:
 //! ```
 //! # fn check(file: &[u8]) -> u32 {
-//! # let module = 0xfff1u32;
+//! # let modulus = 0xfff1u32;
 //! # let init = 1;
 //! # let (addout1, addout2) = (0, 0);
 //! # let hwidth = 16;
 //! let mut sum1 = init;
 //! let mut sum2 = 0;
 //! for byte in file {
-//!     sum1 = (sum1 + *byte as u32) % module;
-//!     sum2 = (sum2 + sum1) % module;
+//!     sum1 = (sum1 + *byte as u32) % modulus;
+//!     sum2 = (sum2 + sum1) % modulus;
 //! }
-//! return (sum2 + addout2) % module << hwidth | (sum1 + addout1) % module;
+//! return (sum2 + addout2) % modulus << hwidth | (sum1 + addout1) % modulus;
 //! # }
 //! ```
 //! Normally, the sum is represented as the cumulative sum bitshifted to be above the regular sum.
@@ -27,7 +27,7 @@
 //!
 //! These are the parameters:
 //! * width: Total number of bits of the checksum (twice the amount of bits of the individual sums)
-//! * module: The number by which both sums get reduced
+//! * modulus: The number by which both sums get reduced
 //! * init: The initial value of the regular sum
 //! * addout: The value that gets added at the end, compact
 //! * swap: Whether to swap the values in the compact representation, i.e. put the regular sum above the cumulative sum
@@ -59,7 +59,7 @@ use std::str::FromStr;
 /// let adler32 = Fletcher::<u32>::with_options()
 ///     .width(32)
 ///     .init(1)
-///     .module(65521)
+///     .modulus(65521)
 ///     .check(0x091e01de)
 ///     .name("adler32")
 ///     .build()
@@ -68,7 +68,7 @@ use std::str::FromStr;
 #[derive(Clone, Debug)]
 pub struct FletcherBuilder<Sum: Modnum> {
     width: Option<usize>,
-    module: Option<Sum>,
+    modulus: Option<Sum>,
     init: Option<Sum>,
     addout: Option<Sum::Double>,
     swap: Option<bool>,
@@ -86,9 +86,9 @@ impl<S: Modnum> FletcherBuilder<S> {
         self.width = Some(w);
         self
     }
-    /// Sets the module of both sums (mandatory)
-    pub fn module(&mut self, m: S) -> &mut Self {
-        self.module = Some(m);
+    /// Sets the modulus of both sums (mandatory)
+    pub fn modulus(&mut self, m: S) -> &mut Self {
+        self.modulus = Some(m);
         self
     }
     /// Sets the initial value
@@ -158,7 +158,7 @@ impl<S: Modnum> FletcherBuilder<S> {
         };
 
         let mask = (S::Double::one() << hwidth) - S::Double::one();
-        let module = self.module.unwrap_or_else(S::zero);
+        let modulus = self.modulus.unwrap_or_else(S::zero);
         let wordsize = self.wordsize.unwrap_or(8);
         if wordsize == 0 || wordsize % 8 != 0 || wordsize > 64 {
             return Err(CheckBuilderErr::ValueOutOfRange("wordsize"));
@@ -171,7 +171,7 @@ impl<S: Modnum> FletcherBuilder<S> {
         };
         let mut fletch = Fletcher {
             hwidth,
-            module,
+            modulus,
             init,
             addout,
             swap: self.swap.unwrap_or(false),
@@ -180,10 +180,10 @@ impl<S: Modnum> FletcherBuilder<S> {
             name: self.name.clone(),
         };
         let (mut s, mut c) = fletch.convert_from_compact(addout);
-        if !module.is_zero() {
-            s = s % module;
-            c = c % module;
-            fletch.init = init % module;
+        if !modulus.is_zero() {
+            s = s % modulus;
+            c = c % modulus;
+            fletch.init = init % modulus;
         } else {
             fletch.init = init;
         };
@@ -205,7 +205,7 @@ impl<S: Modnum> FletcherBuilder<S> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Fletcher<Sum: Modnum> {
     hwidth: usize,
-    module: Sum,
+    modulus: Sum,
     init: Sum,
     addout: Sum::Double,
     swap: bool,
@@ -221,9 +221,9 @@ impl<Sum: Modnum> Display for Fletcher<Sum> {
             None => {
                 write!(
                     f,
-                    "fletcher width={} module={:#x} init={:#x} addout={:#x} swap={} signedness={}",
+                    "fletcher width={} modulus={:#x} init={:#x} addout={:#x} swap={} signedness={}",
                     2 * self.hwidth,
-                    self.module,
+                    self.modulus,
                     self.init,
                     self.addout,
                     self.swap,
@@ -250,7 +250,7 @@ impl<Sum: Modnum> Fletcher<Sum> {
     pub fn with_options() -> FletcherBuilder<Sum> {
         FletcherBuilder {
             width: None,
-            module: None,
+            modulus: None,
             init: None,
             addout: None,
             swap: None,
@@ -284,7 +284,7 @@ impl<Sum: Modnum> FromStr for FletcherBuilder<Sum> {
             };
             let fletch_op = match current_key.as_str() {
                 "width" => usize::from_str(&current_val).ok().map(|x| fletch.width(x)),
-                "module" => Some(fletch.module(parse_hex::<Sum>(&current_val, "module")?)),
+                "modulus" => Some(fletch.modulus(parse_hex::<Sum>(&current_val, "modulus")?)),
                 "init" => Some(fletch.init(parse_hex::<Sum>(&current_val, "init")?)),
                 "addout" => Some(fletch.addout(parse_hex::<Sum::Double>(&current_val, "addout")?)),
                 "swap" => bool::from_str(&current_val).ok().map(|x| fletch.swap(x)),
@@ -323,7 +323,7 @@ impl<Sum: Modnum> FromStr for Fletcher<Sum> {
     /// ```
     /// # use delsum_lib::fletcher::Fletcher;
     /// # use std::str::FromStr;
-    /// Fletcher::<u32>::from_str("width=32 init=1 module=0xfff1 name=\"adler-32\"").is_ok();
+    /// Fletcher::<u32>::from_str("width=32 init=1 modulus=0xfff1 name=\"adler-32\"").is_ok();
     /// ```
     fn from_str(s: &str) -> Result<Fletcher<Sum>, CheckBuilderErr> {
         FletcherBuilder::<Sum>::from_str(s)?.build()
@@ -338,9 +338,9 @@ impl<S: Modnum> Digest for Fletcher<S> {
     }
     fn dig_word(&self, sum: Self::Sum, word: SignedInt<u64>) -> Self::Sum {
         let (mut s, mut c) = self.convert_from_compact(sum);
-        let modword = S::mod_from_signed(word, &self.module);
-        s = S::add_mod(s, &modword, &self.module);
-        c = S::add_mod(c, &s, &self.module);
+        let modword = S::mod_from_signed(word, &self.modulus);
+        s = S::add_mod(s, &modword, &self.modulus);
+        c = S::add_mod(c, &s, &self.modulus);
         self.to_compact((s, c))
     }
     fn finalize(&self, sum: Self::Sum) -> Self::Sum {
@@ -366,24 +366,24 @@ impl<S: Modnum> LinearCheck for Fletcher<S> {
         S::zero()
     }
     fn inc_shift(&self, shift: Self::Shift) -> Self::Shift {
-        S::add_mod(shift, &S::one(), &self.module)
+        S::add_mod(shift, &S::one(), &self.modulus)
     }
     fn shift(&self, sum: Self::Sum, shift: &Self::Shift) -> Self::Sum {
         let (s, mut c) = self.convert_from_compact(sum);
-        let shift_diff = S::mul_mod(s, shift, &self.module);
-        c = S::add_mod(c, &shift_diff, &self.module);
+        let shift_diff = S::mul_mod(s, shift, &self.modulus);
+        c = S::add_mod(c, &shift_diff, &self.modulus);
         self.to_compact((s, c))
     }
     fn add(&self, sum_a: Self::Sum, sum_b: &Self::Sum) -> Self::Sum {
         let (sa, ca) = self.convert_from_compact(sum_a);
         let (sb, cb) = self.convert_from_compact(*sum_b);
-        let sum_s = sa.add_mod(&sb, &self.module);
-        let sum_c = ca.add_mod(&cb, &self.module);
+        let sum_s = sa.add_mod(&sb, &self.modulus);
+        let sum_c = ca.add_mod(&cb, &self.modulus);
         self.to_compact((sum_s, sum_c))
     }
     fn negate(&self, sum: Self::Sum) -> Self::Sum {
         let (s, c) = self.convert_from_compact(sum);
-        self.to_compact((s.neg_mod(&self.module), c.neg_mod(&self.module)))
+        self.to_compact((s.neg_mod(&self.modulus), c.neg_mod(&self.modulus)))
     }
 }
 #[cfg(test)]
@@ -396,7 +396,7 @@ mod tests {
         let adel = Fletcher::<u16>::with_options()
             .width(32)
             .init(1)
-            .module(65521)
+            .modulus(65521)
             .check(0x091e01de)
             .build()
             .unwrap();
@@ -407,7 +407,7 @@ mod tests {
         let nobel = Fletcher::with_options()
             .width(32)
             .init(1u32)
-            .module(65521)
+            .modulus(65521)
             .check(0x091e01de)
             .build()
             .unwrap();
@@ -420,7 +420,7 @@ mod tests {
     fn fletcher16() {
         let f16 = Fletcher::with_options()
             .width(16)
-            .module(0xffu8)
+            .modulus(0xffu8)
             .check(0x1ede)
             .build()
             .unwrap();
@@ -431,7 +431,7 @@ mod tests {
     }
     #[test]
     fn fletcher8() {
-        let f8 = Fletcher::<u8>::from_str("width=8 module=0xf init=0x0 addout=0x0 swap=false check=0xc")
+        let f8 = Fletcher::<u8>::from_str("width=8 modulus=0xf init=0x0 addout=0x0 swap=false check=0xc")
             .unwrap();
         test_shifts(&f8);
         test_prop(&f8);

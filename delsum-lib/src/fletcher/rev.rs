@@ -3,7 +3,7 @@
 //! Generally, to find out the parameters, the checksums and their width are needed, and 3 of the following (with at least one file):
 //! * value of `init`
 //! * value of `addout`
-//! * value of `module`
+//! * value of `modulus`
 //! * a file with checksum
 //! * a different file with checksum
 //! * yet another different file checksum
@@ -114,7 +114,7 @@ fn reverse_discrete(
         width,
         addout: spec.addout,
         init: spec.init,
-        module: spec.module,
+        modulus: spec.modulus,
         swap: loop_element.0,
         wordspec: loop_element.1,
     };
@@ -125,7 +125,7 @@ struct RevSpec {
     width: usize,
     addout: Option<u128>,
     init: Option<u64>,
-    module: Option<u64>,
+    modulus: Option<u64>,
     swap: bool,
     wordspec: WordSpec,
 }
@@ -138,7 +138,7 @@ struct RevResult {
     inits: PrefactorMod,
     addout1: BigInt,
     addout2: (BigInt, usize),
-    modules: Vec<BigInt>,
+    moduli: Vec<BigInt>,
     width: usize,
     swap: bool,
     wordspec: WordSpec,
@@ -150,13 +150,13 @@ impl RevResult {
             inits,
             addout1,
             addout2,
-            modules,
+            moduli,
             width,
             swap,
             wordspec,
         } = self;
-        modules.into_iter().flat_map(move |m| {
-            let module = if m.is_zero() {
+        moduli.into_iter().flat_map(move |m| {
+            let modulus = if m.is_zero() {
                 0u64
             } else {
                 (&m).try_into().unwrap()
@@ -166,7 +166,7 @@ impl RevResult {
                 Fletcher::with_options()
                     .addout(addout)
                     .init(i)
-                    .module(module)
+                    .modulus(modulus)
                     .width(width)
                     .swap(swap)
                     .inendian(wordspec.input_endian)
@@ -227,9 +227,9 @@ fn reverse(
     log("finding parameters of lower sum");
     // finding the parameters of the lower sum is pretty much a separate problem already
     // handled in modsum, so we delegate to that
-    let module = spec.module.unwrap_or(0) as u128;
-    let (module, addout1) = find_regular_sum(&spec, &regsums, module);
-    let mut module = BigInt::from(module);
+    let modulus = spec.modulus.unwrap_or(0) as u128;
+    let (modulus, addout1) = find_regular_sum(&spec, &regsums, modulus);
+    let mut modulus = BigInt::from(modulus);
     let mut addout1 = BigInt::from(addout1);
     // here, we take the the checksums and remove the cumulative sum sums from them
     // the second value of each value is supposed to be the multiplicity of init in the sum
@@ -242,33 +242,33 @@ fn reverse(
     log("removing upper sum addout");
     // take the difference between neighboring files if addout2 is not given, to remove the constant addout from the sums
     // if we already have addout2 given, we don't take the difference between two files, but between each file and given addout2
-    let (red_files, mut addout2) = remove_addout2(&spec, cumusums, &module);
-    log("refining the module");
-    // here we try to find `module` and reduce the sums by module
-    let boneless_files = refine_module(&mut module, red_files);
-    if module.is_zero() {
+    let (red_files, mut addout2) = remove_addout2(&spec, cumusums, &modulus);
+    log("refining the modulus");
+    // here we try to find `modulus` and reduce the sums by modulus
+    let boneless_files = refine_modulus(&mut modulus, red_files);
+    if modulus.is_zero() {
         return Err(Some(CheckReverserError::UnsuitableFiles(
             "too short or too similar or too few files given",
         )));
     }
     log("attempting to find init");
-    // now that we have the module, we can try to find init and reduce `module` some more
-    let inits = find_init(&spec.init.map(BigInt::from), &mut module, boneless_files);
-    let module = inits.module.clone();
-    addout1 = mod_red(&addout1, &module);
-    addout2.0 = mod_red(&addout2.0, &module);
-    // if we have checksums of width 7 with values 0x24, 0x51 and 0x64 we know that `module` has to be between 2^7 = 0x80 and 0x64
-    log("try to find all possible module values");
-    // therefore we try to find all divisors of module in that range
+    // now that we have the modulus, we can try to find init and reduce `modulus` some more
+    let inits = find_init(&spec.init.map(BigInt::from), &mut modulus, boneless_files);
+    let modulus = inits.modulus.clone();
+    addout1 = mod_red(&addout1, &modulus);
+    addout2.0 = mod_red(&addout2.0, &modulus);
+    // if we have checksums of width 7 with values 0x24, 0x51 and 0x64 we know that `modulus` has to be between 2^7 = 0x80 and 0x64
+    log("try to find all possible modulus values");
+    // therefore we try to find all divisors of modulus in that range
 
-    let modules = match spec.module {
-        None => divisors_range(module.try_into().unwrap(), min, max)
+    let moduli = match spec.modulus {
+        None => divisors_range(modulus.try_into().unwrap(), min, max)
             .into_iter()
             .map(BigInt::from)
             .collect(),
         Some(m) => {
-            if BigInt::from(m) == module && m as u128 >= min && m as u128 <= max {
-                vec![module]
+            if BigInt::from(m) == modulus && m as u128 >= min && m as u128 <= max {
+                vec![modulus]
             } else {
                 Vec::new()
             }
@@ -278,7 +278,7 @@ fn reverse(
         inits,
         addout1,
         addout2,
-        modules,
+        moduli,
         width,
         swap,
         wordspec,
@@ -337,7 +337,7 @@ fn summarize(
     Some((min, max, cumusums, regsums))
 }
 
-fn find_regular_sum(spec: &RevSpec, sums: &[i128], mut module: u128) -> (u128, i128) {
+fn find_regular_sum(spec: &RevSpec, sums: &[i128], mut modulus: u128) -> (u128, i128) {
     let width = spec.width;
     // init is here actually addout1 + init, which we can only know if we have both values
     let maybe_init = spec.addout.and_then(|x| {
@@ -345,8 +345,8 @@ fn find_regular_sum(spec: &RevSpec, sums: &[i128], mut module: u128) -> (u128, i
             .map(|y| y as i128 + split_sum(x, width, spec.swap).0 as i128)
     });
     // delegate to the corresponding modsum function
-    let sum1_addout = super::super::modsum::find_largest_mod(sums, maybe_init, &mut module);
-    (module, sum1_addout)
+    let sum1_addout = super::super::modsum::find_largest_mod(sums, maybe_init, &mut modulus);
+    (modulus, sum1_addout)
 }
 
 fn remove_init(sums: &mut [(BigInt, usize)], init: &BigInt) {
@@ -359,7 +359,7 @@ fn remove_init(sums: &mut [(BigInt, usize)], init: &BigInt) {
 fn remove_addout2(
     spec: &RevSpec,
     mut sums: Vec<(BigInt, usize)>,
-    module: &BigInt,
+    modulus: &BigInt,
 ) -> (Vec<(BigInt, usize)>, (BigInt, usize)) {
     let width = spec.width;
     let swap = spec.swap;
@@ -375,8 +375,8 @@ fn remove_addout2(
     let addout2 = match &maybe_addout {
         Some(addout) => {
             // if we already know addout, we can use the first file for determining
-            // the module or init better
-            ret_vec.push((mod_red(&(&prev.0 - addout), module), prev.1));
+            // the modulus or init better
+            ret_vec.push((mod_red(&(&prev.0 - addout), modulus), prev.1));
             (addout.clone(), 0)
         }
         None => prev.clone(),
@@ -386,10 +386,10 @@ fn remove_addout2(
         let appendix = match (&maybe_addout, l != 0 && l == prev.1) {
             // if we know addout, but the two files have the same length, we still
             // want to calculate the difference between the two files, as it will
-            // make it easier to determine the module
-            (None, _) | (_, true) => (mod_red(&(&p - prev.0), module), l - prev.1),
+            // make it easier to determine the modulus
+            (None, _) | (_, true) => (mod_red(&(&p - prev.0), modulus), l - prev.1),
             // but if they're not the same size, we just subtract addout
-            (Some(addout), false) => (mod_red(&(&p - addout), module), l),
+            (Some(addout), false) => (mod_red(&(&p - addout), modulus), l),
         };
         ret_vec.push(appendix);
         prev = (p, l);
@@ -397,7 +397,7 @@ fn remove_addout2(
     (ret_vec, addout2)
 }
 
-fn refine_module(module: &mut BigInt, sums: Vec<(BigInt, usize)>) -> Vec<(BigInt, usize)> {
+fn refine_modulus(modulus: &mut BigInt, sums: Vec<(BigInt, usize)>) -> Vec<(BigInt, usize)> {
     let mut non_zero = Vec::new();
     for (s, l) in sums {
         if l != 0 {
@@ -405,8 +405,8 @@ fn refine_module(module: &mut BigInt, sums: Vec<(BigInt, usize)>) -> Vec<(BigInt
             continue;
         }
         // if we have l == 0, they don't contain init, and because they also don't contain
-        // addout, they have to be divisible by module
-        *module = gcd(module, &s);
+        // addout, they have to be divisible by modulus
+        *modulus = gcd(modulus, &s);
     }
     for ((sa, la), (sb, lb)) in non_zero.iter().zip(non_zero.iter().skip(1)) {
         // for x = a*init mod m, y = b*init mod m we can get 0 mod m by calculating
@@ -416,36 +416,36 @@ fn refine_module(module: &mut BigInt, sums: Vec<(BigInt, usize)>) -> Vec<(BigInt
         let common = gcd(&bla, &blb);
         let mul_sa = sa * blb;
         let mul_sb = sb * bla;
-        *module = gcd(module, &((mul_sa - mul_sb) / common));
+        *modulus = gcd(modulus, &((mul_sa - mul_sb) / common));
     }
     non_zero
         .iter()
-        .map(|(s, l)| (mod_red(s, module), *l))
+        .map(|(s, l)| (mod_red(s, modulus), *l))
         .collect()
 }
 
 // modular reduction, because % is just wrong
-fn mod_red(n: &BigInt, module: &BigInt) -> BigInt {
-    if module.is_zero() {
+fn mod_red(n: &BigInt, modulus: &BigInt) -> BigInt {
+    if modulus.is_zero() {
         // yes, n modulo 0 is n and i will die on this hill
         n.clone()
     } else {
-        let k = n % module;
-        if k < zero() { module + k } else { k }
+        let k = n % modulus;
+        if k < zero() { modulus + k } else { k }
     }
 }
 fn find_init(
     maybe_init: &Option<BigInt>,
-    module: &mut BigInt,
+    modulus: &mut BigInt,
     sums: Vec<(BigInt, usize)>,
 ) -> PrefactorMod {
-    if module.is_one() {
+    if modulus.is_one() {
         return PrefactorMod::empty();
     };
-    let mut ret = PrefactorMod::new_init(maybe_init, module);
+    let mut ret = PrefactorMod::new_init(maybe_init, modulus);
     for (p, l) in sums {
-        // get the set of inits that solve l*init ≡ p mod module
-        let file_solutions = PrefactorMod::from_sum(&p, l, module);
+        // get the set of inits that solve l*init ≡ p mod modulus
+        let file_solutions = PrefactorMod::from_sum(&p, l, modulus);
         // merge the solutions with the other solutions
         ret = match file_solutions.map(|f| ret.merge(f)) {
             Some(valid) => valid,
@@ -454,57 +454,57 @@ fn find_init(
     }
     ret
 }
-// describes a set of solutions for unknown*possible % module
-// the `unknown` parameter divides module and captures the fact that there
-// can be multiple solutions for unknown*possible mod `module` because we only
-// know possible modulo (module / unknown)
+// describes a set of solutions for unknown*possible % modulus
+// the `unknown` parameter divides modulus and captures the fact that there
+// can be multiple solutions for unknown*possible mod `modulus` because we only
+// know possible modulo (modulus / unknown)
 #[derive(Clone, Debug)]
 struct PrefactorMod {
     unknown: BigInt,
     possible: BigInt,
-    module: BigInt,
+    modulus: BigInt,
 }
 
 impl PrefactorMod {
     fn empty() -> PrefactorMod {
         PrefactorMod {
-            module: one(),
+            modulus: one(),
             unknown: one(),
             possible: zero(),
         }
     }
-    fn from_sum(sum: &BigInt, power: usize, module: &mut BigInt) -> Option<PrefactorMod> {
+    fn from_sum(sum: &BigInt, power: usize, modulus: &mut BigInt) -> Option<PrefactorMod> {
         let bpower = BigInt::from(power);
-        // this basically calculates sum*power^-1, but adjusting module if there are no solutions
+        // this basically calculates sum*power^-1, but adjusting modulus if there are no solutions
         // and keeping in mind that there can be multiple solutions (which the unknown var keeps track of)
-        let (possible, unknown) = partial_mod_div(sum, &bpower, module);
-        if module.is_one() {
+        let (possible, unknown) = partial_mod_div(sum, &bpower, modulus);
+        if modulus.is_one() {
             return None;
         }
         Some(PrefactorMod {
             unknown,
             possible,
-            module: module.clone(),
+            modulus: modulus.clone(),
         })
     }
-    fn new_init(maybe_init: &Option<BigInt>, module: &BigInt) -> Self {
+    fn new_init(maybe_init: &Option<BigInt>, modulus: &BigInt) -> Self {
         let (unknown, possible) = match maybe_init {
-            None => (module.clone(), zero()),
+            None => (modulus.clone(), zero()),
             Some(init) => (one(), init.clone()),
         };
         PrefactorMod {
             unknown,
             possible,
-            module: module.clone(),
+            modulus: modulus.clone(),
         }
     }
     fn merge(mut self, mut a: PrefactorMod) -> PrefactorMod {
-        if self.module != a.module {
-            let module = gcd(&self.module, &a.module);
-            self.update_module(&module);
-            a.update_module(&module);
+        if self.modulus != a.modulus {
+            let modulus = gcd(&self.modulus, &a.modulus);
+            self.update_modulus(&modulus);
+            a.update_modulus(&modulus);
         }
-        // remove the set of incompatible solutions by adjusting module
+        // remove the set of incompatible solutions by adjusting modulus
         self.adjust_compability(&mut a);
         let self_valid = self.valid();
         let other_valid = a.valid();
@@ -520,51 +520,51 @@ impl PrefactorMod {
         self.unknown = gcd(&self.unknown, &a.unknown);
         self
     }
-    fn update_module(&mut self, module: &BigInt) -> bool {
-        if &self.module == module {
+    fn update_modulus(&mut self, modulus: &BigInt) -> bool {
+        if &self.modulus == modulus {
             return false;
         }
-        self.module.clone_from(module);
-        self.possible %= module;
-        self.unknown = gcd(module, &self.unknown);
+        self.modulus.clone_from(modulus);
+        self.possible %= modulus;
+        self.unknown = gcd(modulus, &self.unknown);
         true
     }
     fn valid(&self) -> BigInt {
-        self.module.clone() / self.unknown.clone()
+        self.modulus.clone() / self.unknown.clone()
     }
     // in order to chinese remainder with a common factor, both polynomials modulo
     // the common factor need to be the same
-    // if this is not the case, the module is adjusted
+    // if this is not the case, the modulus is adjusted
     fn adjust_compability(&mut self, other: &mut Self) {
         let common_valid = gcd(&self.valid(), &other.valid());
         let actual_valid = gcd(&(&self.possible - &other.possible), &common_valid);
-        let module = &self.module / &common_valid * &actual_valid;
-        self.update_module(&module);
-        other.update_module(&module);
+        let modulus = &self.modulus / &common_valid * &actual_valid;
+        self.update_modulus(&modulus);
+        other.update_modulus(&modulus);
     }
-    // iterate over all solutions in `module`, also calculating addout1, addout2
+    // iterate over all solutions in `modulus`, also calculating addout1, addout2
     fn iter(
         &self,
         addout1: &BigInt,
         addout2: &(BigInt, usize),
-        module: &BigInt,
+        modulus: &BigInt,
     ) -> impl Iterator<Item = (u64, u64, u64)> + use<> {
         let mut red = self.clone();
-        red.update_module(module);
-        let mod_addout1 = mod_red(addout1, module);
-        let mod_addout2 = mod_red(&addout2.0, module);
-        let mod_addfac = mod_red(&BigInt::from(addout2.1), module);
-        let module = module.clone();
+        red.update_modulus(modulus);
+        let mod_addout1 = mod_red(addout1, modulus);
+        let mod_addout2 = mod_red(&addout2.0, modulus);
+        let mod_addfac = mod_red(&BigInt::from(addout2.1), modulus);
+        let modulus = modulus.clone();
         (0u64..(&red.unknown).try_into().unwrap())
             .map(BigInt::from)
             .map(move |i| {
-                let real_init: u64 = mod_red(&(i * red.valid() + &red.possible), &module)
+                let real_init: u64 = mod_red(&(i * red.valid() + &red.possible), &modulus)
                     .try_into()
                     .unwrap();
-                let real_addout1: u64 = mod_red(&(&mod_addout1 - real_init), &module)
+                let real_addout1: u64 = mod_red(&(&mod_addout1 - real_init), &modulus)
                     .try_into()
                     .unwrap();
-                let real_addout2: u64 = mod_red(&(&mod_addout2 - &mod_addfac * real_init), &module)
+                let real_addout2: u64 = mod_red(&(&mod_addout2 - &mod_addfac * real_init), &modulus)
                     .try_into()
                     .unwrap();
                 (real_init, real_addout1, real_addout2)
@@ -573,13 +573,13 @@ impl PrefactorMod {
 }
 
 // from b*x ≡ a mod m, try to calculate x mod m/y where y is the second return value
-fn partial_mod_div(a: &BigInt, b: &BigInt, module: &mut BigInt) -> (BigInt, BigInt) {
-    let common = gcd(b, module);
+fn partial_mod_div(a: &BigInt, b: &BigInt, modulus: &mut BigInt) -> (BigInt, BigInt) {
+    let common = gcd(b, modulus);
     // if we want b*x ≡ a mod m, and c divides both b and m,
     // then a must be divisible by c as well
-    // if that is not the case, we determine the maximal module where this is true
+    // if that is not the case, we determine the maximal modulus where this is true
     if !(a % &common).is_zero() {
-        // assume for simplicity that module is a prime power p^k
+        // assume for simplicity that modulus is a prime power p^k
         // then we have b = d*p^n, a = e*p^m with d, e not divisible by p
         // then gcd(b, p^k) = p^n (because n has to be smaller than k)
         // if m < n, then b doesn't divide a and we try to adjust k so that it does
@@ -589,19 +589,19 @@ fn partial_mod_div(a: &BigInt, b: &BigInt, module: &mut BigInt) -> (BigInt, BigI
         //    if m < n { k = m }
         // without having to factor the number to obtain the prime powers
         // this works by first determining p^m by squaring and gcd'ing the product of all p's where
-        // m < n, so that we have the maximum powers that divide module
+        // m < n, so that we have the maximum powers that divide modulus
         loop {
-            let new_x = gcd(&(&x * &x), module);
+            let new_x = gcd(&(&x * &x), modulus);
             if new_x == x {
                 break;
             }
             x = new_x;
         }
-        *module = module.clone() / &x * gcd(&x, a);
+        *modulus = modulus.clone() / &x * gcd(&x, a);
     }
-    let (common, (b_inv_unmod, _)) = xgcd(b, module);
-    let b_inv = mod_red(&b_inv_unmod, module);
-    let inv = (a / &common * b_inv) % &*module;
+    let (common, (b_inv_unmod, _)) = xgcd(b, modulus);
+    let b_inv = mod_red(&b_inv_unmod, modulus);
+    let inv = (a / &common * b_inv) % &*modulus;
     (inv, common)
 }
 
@@ -647,20 +647,20 @@ mod tests {
             let mut new_fletcher = Fletcher::with_options();
             let width = ((u8::arbitrary(g) % 63 + 2) * 2) as usize;
             new_fletcher.width(width);
-            let mut module = 0;
-            while module <= 1 {
-                module = u64::arbitrary(g);
+            let mut modulus = 0;
+            while modulus <= 1 {
+                modulus = u64::arbitrary(g);
                 if width < 128 {
-                    module %= 1 << (width / 2);
+                    modulus %= 1 << (width / 2);
                 }
             }
-            new_fletcher.module(module);
-            let init = u64::arbitrary(g) % module;
+            new_fletcher.modulus(modulus);
+            let init = u64::arbitrary(g) % modulus;
             new_fletcher.init(init);
             let swap = bool::arbitrary(g);
             new_fletcher.swap(swap);
-            let addout1 = u64::arbitrary(g) % module;
-            let addout2 = u64::arbitrary(g) % module;
+            let addout1 = u64::arbitrary(g) % modulus;
+            let addout2 = u64::arbitrary(g) % modulus;
             let addout = glue_sum(addout1, addout2, width, swap);
             new_fletcher.addout(addout);
             let wordspec = WordSpec::arbitrary(g);
@@ -676,7 +676,7 @@ mod tests {
     fn fletcher16() {
         let f16 = Fletcher::with_options()
             .width(16)
-            .module(0xffu64)
+            .modulus(0xffu64)
             .addout(0x2233)
             .init(0x44)
             .build()
@@ -703,7 +703,7 @@ mod tests {
         let mut naive = Fletcher::<u64>::with_options();
         naive.width(fletch_build.width.unwrap());
         if known.0 {
-            naive.module(fletch_build.module.unwrap());
+            naive.modulus(fletch_build.modulus.unwrap());
         }
         if known.1 {
             naive.init(fletch_build.init.unwrap());
@@ -734,7 +734,7 @@ mod tests {
     fn error1() {
         let f16 = Fletcher::with_options()
             .width(32)
-            .module(0x4d)
+            .modulus(0x4d)
             .addout(0x110011)
             .init(0x35)
             .swap(true)
@@ -760,7 +760,7 @@ mod tests {
     fn error2() {
         let f16 = Fletcher::with_options()
             .width(102)
-            .module(0x4d)
+            .modulus(0x4d)
             .addout(0x170000000000042)
             .init(0x35)
             .build()
@@ -783,7 +783,7 @@ mod tests {
     fn error3() {
         let f16 = Fletcher::with_options()
             .width(42)
-            .module(0x3)
+            .modulus(0x3)
             .addout(0x200001)
             .init(0)
             .build()
@@ -804,7 +804,7 @@ mod tests {
     fn error4() {
         let f16 = Fletcher::with_options()
             .width(126)
-            .module(0x5d)
+            .modulus(0x5d)
             .addout(0x15000000000000001d)
             .init(0x31)
             .build()
@@ -828,7 +828,7 @@ mod tests {
     fn error5() {
         let f16 = Fletcher::with_options()
             .width(42)
-            .module(6u64)
+            .modulus(6u64)
             .addout(0x000000)
             .init(0)
             .swap(false)
@@ -858,7 +858,7 @@ mod tests {
         // init + addout for the regular sum overflowed, changed to i128
         let f128 = Fletcher::with_options()
             .width(128)
-            .module(0xcb80a6f9a8cd46f4u64)
+            .modulus(0xcb80a6f9a8cd46f4u64)
             .init(0xb3ecf9878dbc2c93)
             .addout(0x9b8e3e2905a19ea31cb7d9ba3c8891fe)
             .swap(true)
@@ -888,7 +888,7 @@ mod tests {
     fn error7() {
         let f16 = Fletcher::with_options()
             .width(10)
-            .module(5u64)
+            .modulus(5u64)
             .addout(0x81)
             .init(0)
             .swap(false)
@@ -925,7 +925,7 @@ mod tests {
     fn error8() {
         let f16 = Fletcher::with_options()
             .width(10)
-            .module(3u64)
+            .modulus(3u64)
             .init(1)
             .addout(1)
             .swap(false)
@@ -945,7 +945,7 @@ mod tests {
         ]);
         let chk_files = f.with_checksums(&f16);
         let mut naive = Fletcher::<u64>::with_options();
-        naive.width(10).module(3);
+        naive.width(10).modulus(3);
         let reverser = reverse_fletcher(&naive, &chk_files, 0, false);
         assert!(!f.check_matching(&f16, reverser).is_failure());
     }
@@ -953,7 +953,7 @@ mod tests {
     #[test]
     fn error9() {
         let fletch = Fletcher::with_options()
-            .module(2442387192987926634u64)
+            .modulus(2442387192987926634u64)
             .init(127264857433458109)
             .addout(1912567329028884011882136235663163392)
             .swap(true)

@@ -31,8 +31,8 @@ The parts of the file that match has to be the same accross the files.
 
 Example:
 ```
-$ delsum part -m 'modsum width=16 module=0xffff' -c 1234,5678,abcd file_a file_b file_c
-modsum width=16 module=0xffff:
+$ delsum part -m 'modsum width=16 modulus=0xffff' -c 1234,5678,abcd file_a file_b file_c
+modsum width=16 modulus=0xffff:
     0x8:-0x3
 ```
 
@@ -101,37 +101,37 @@ Currently, these are shared accross all sum types:
 * `out_endian`: endian of the checksum, can be either `little` or `big`
 * `wordsize`: number of bits of a word in the input text.
               Must be a multiple of 8 and between 8 and 64.
-              For example, in a simple checksum, using `wordsize=16` would chop the file in into 16-bit integers and add them up modulo `module`.
+              For example, in a simple checksum, using `wordsize=16` would chop the file in into 16-bit integers and add them up modulo `modulus`.
 * `in_endian`: the endian of the input words, can be either `little` or `big`.
 
 `modsum`
 ========
-A simple modular sum with parameters `width`, `init` and `module`.
+A simple modular sum with parameters `width`, `init` and `modulus`.
 
 Corresponds to
 ```
 sum = init
 for byte in file:
-    sum = (sum + byte) % module
+    sum = (sum + byte) % modulus
 return sum
 ```
-Note that for a `module` of 0, it is equivalent to `2^width`.
+Note that for a `modulus` of 0, it is equivalent to `2^width`.
 
-The default values for `module` and `init` are both 0.
+The default values for `modulus` and `init` are both 0.
 
 `fletcher`
 ==========
-A fletcher-like sum with parameters `width`, `init`, `addout`, `module` and `swap`.
+A fletcher-like sum with parameters `width`, `init`, `addout`, `modulus` and `swap`.
 
 Corresponds to
 ```
 sum1 = init
 sum2 = 0
 for byte in file:
-    sum1 = (sum1 + byte) % module
-    sum2 = (sum2 + sum1) % module
-sum1 = (sum1 + addout.sum1) % module
-sum2 = (sum2 + addout.sum2) % module
+    sum1 = (sum1 + byte) % modulus
+    sum2 = (sum2 + sum1) % modulus
+sum1 = (sum1 + addout.sum1) % modulus
+sum2 = (sum2 + addout.sum2) % modulus
 if not swap:
     returm (sum2 << (width/2)) | sum1
 else:
@@ -141,7 +141,7 @@ else:
 It is output in a "packed" form where the sum1 is stored in the lower width/2 bits and sum2 in the higher width/2 (or the opposite if `swap` is enabled).
 The parameters are:
 * `width`: The width of the whole packed checksum. Mandatory.
-* `module`: The value by which to reduce. `module = 0` means `2^(width/2)` and is the default value.
+* `modulus`: The value by which to reduce. `modulus = 0` means `2^(width/2)` and is the default value.
 * `init`: The value to initialize the regular checksum with. Defaults to 0.
 * `addout`: The packed value which is added at the end of the sum. The high part is always added to the high part of the checksum at the end, regardless of `swap`. Defaults to 0.
 * `swap`: The boolean flag which indicates that the regular sum should be in the higher half of the packed checksum. Defaults to `false`.
