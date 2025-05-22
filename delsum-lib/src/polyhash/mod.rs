@@ -4,7 +4,7 @@ pub use rev::reverse_polyhash;
 
 use crate::{
     bitnum::Modnum,
-    checksum::{CheckBuilderErr, Checksum, Digest, LinearCheck},
+    checksum::{parse_hex, CheckBuilderErr, Checksum, Digest, LinearCheck},
     endian::{Endian, SignedInt, Signedness, WordSpec},
     keyval::KeyValIter,
 };
@@ -33,9 +33,9 @@ impl<S: Modnum> FromStr for PolyHashBuilder<S> {
             };
             let sum_op = match current_key.as_str() {
                 "width" => usize::from_str(&current_val).ok().map(|x| sum.width(x)),
-                "factor" => S::from_hex(&current_val).ok().map(|x| sum.factor(x)),
-                "init" => S::from_hex(&current_val).ok().map(|x| sum.init(x)),
-                "addout" => S::from_hex(&current_val).ok().map(|x| sum.addout(x)),
+                "factor" => Some(sum.factor(parse_hex::<S>(&current_val, "factor")?)),
+                "init" => Some(sum.init(parse_hex::<S>(&current_val, "init")?)),
+                "addout" => Some(sum.addout(parse_hex::<S>(&current_val, "addout")?)),
                 "in_endian" => Endian::from_str(&current_val).ok().map(|x| sum.inendian(x)),
                 "wordsize" => usize::from_str(&current_val).ok().map(|x| sum.wordsize(x)),
                 "out_endian" => Endian::from_str(&current_val)

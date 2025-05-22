@@ -10,7 +10,7 @@
 //! Note that a parameter to add at the end is not needed, since it is equivalent to `init`.
 mod rev;
 use crate::bitnum::Modnum;
-use crate::checksum::{CheckBuilderErr, Checksum, Digest, LinearCheck};
+use crate::checksum::{parse_hex, CheckBuilderErr, Checksum, Digest, LinearCheck};
 use crate::endian::{Endian, SignedInt, Signedness, WordSpec};
 use crate::keyval::KeyValIter;
 pub(crate) use rev::find_largest_mod;
@@ -216,8 +216,8 @@ impl<Sum: Modnum> FromStr for ModSumBuilder<Sum> {
             };
             let crc_op = match current_key.as_str() {
                 "width" => usize::from_str(&current_val).ok().map(|x| sum.width(x)),
-                "module" => Sum::from_hex(&current_val).ok().map(|x| sum.module(x)),
-                "init" => Sum::from_hex(&current_val).ok().map(|x| sum.init(x)),
+                "module" => Some(sum.module(parse_hex::<Sum>(&current_val, "module")?)),
+                "init" => Some(sum.init(parse_hex::<Sum>(&current_val, "init")?)),
                 "in_endian" => Endian::from_str(&current_val).ok().map(|x| sum.inendian(x)),
                 "wordsize" => usize::from_str(&current_val).ok().map(|x| sum.wordsize(x)),
                 "out_endian" => Endian::from_str(&current_val)

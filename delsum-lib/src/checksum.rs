@@ -1,3 +1,4 @@
+use crate::bitnum::BitNum;
 use crate::endian::Endian;
 use crate::endian::SignedInt;
 use crate::endian::WordSpec;
@@ -555,6 +556,8 @@ pub enum CheckBuilderErr {
     MissingParameter(&'static str),
     /// A value of a parameter is out of range
     ValueOutOfRange(&'static str),
+    /// A value of a parameter is not a hex value
+    ValueNotHex(&'static str),
     /// The given string given to the from_str function
     /// could not be interpreted correctly,
     ///
@@ -571,6 +574,7 @@ impl std::fmt::Display for CheckBuilderErr {
             CheckFail => write!(f, "Failed checksum test"),
             MissingParameter(para) => write!(f, "Missing parameter '{}'", para),
             ValueOutOfRange(key) => write!(f, "Value for parameter '{}' invalid", key),
+            ValueNotHex(key) => write!(f, "Value for parameter '{}' misses a '0x' prefix", key),
             MalformedString(key) => {
                 if key.is_empty() {
                     write!(f, "Malformed input string")
@@ -593,6 +597,14 @@ pub(crate) fn filter_opt_err<T, E>(
         Err(Some(e)) => Some(Err(e)),
         Err(None) => None,
     })
+}
+
+pub(crate) fn parse_hex<Sum: BitNum>(s: &str, param_name: &'static str) -> Result<Sum, CheckBuilderErr> {
+    let Some(s) = s.strip_prefix("0x") else {
+        return Err(CheckBuilderErr::ValueNotHex(param_name));
+    };
+
+    Sum::from_hex(s).map_err(|_| CheckBuilderErr::MalformedString(param_name.to_string()))
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Hash)]
@@ -621,6 +633,7 @@ impl std::fmt::Display for CheckReverserError {
         }
     }
 }
+
 impl std::error::Error for CheckReverserError {}
 
 /// Trait for checksums

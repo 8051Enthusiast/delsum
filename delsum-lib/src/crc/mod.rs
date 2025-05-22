@@ -3,7 +3,7 @@ use super::{
     CheckBuilderErr, Digest, LinearCheck,
     endian::{Endian, WordSpec},
 };
-use crate::{bitnum::BitNum, endian::Signedness};
+use crate::{bitnum::BitNum, checksum::parse_hex, endian::Signedness};
 use crate::{checksum::Checksum, endian::SignedInt, keyval::KeyValIter};
 pub use rev::reverse_crc;
 #[cfg(feature = "parallel")]
@@ -279,9 +279,9 @@ impl<Sum: BitNum> FromStr for CrcBuilder<Sum> {
                 // I would love to return a ValueOutOfRange error here, but I don't know how
                 // I would go about it
                 "width" => usize::from_str(&current_val).ok().map(|x| crc.width(x)),
-                "poly" => Sum::from_hex(&current_val).ok().map(|x| crc.poly(x)),
-                "init" => Sum::from_hex(&current_val).ok().map(|x| crc.init(x)),
-                "xorout" => Sum::from_hex(&current_val).ok().map(|x| crc.xorout(x)),
+                "poly" => Some(crc.poly(parse_hex::<Sum>(&current_val, "poly")?)),
+                "init" => Some(crc.init(parse_hex::<Sum>(&current_val, "init")?)),
+                "xorout" => Some(crc.xorout(parse_hex::<Sum>(&current_val, "xorout")?)),
                 "refin" => bool::from_str(&current_val).ok().map(|x| crc.refin(x)),
                 "refout" => bool::from_str(&current_val).ok().map(|x| crc.refout(x)),
                 "in_endian" => Endian::from_str(&current_val).ok().map(|x| crc.inendian(x)),
@@ -290,7 +290,7 @@ impl<Sum: BitNum> FromStr for CrcBuilder<Sum> {
                     .ok()
                     .map(|x| crc.outendian(x)),
                 "residue" => Some(&mut crc),
-                "check" => Sum::from_hex(&current_val).ok().map(|x| crc.check(x)),
+                "check" => Some(crc.check(parse_hex::<Sum>(&current_val, "check")?)),
                 "name" => Some(crc.name(&current_val)),
                 _ => return Err(CheckBuilderErr::UnknownKey(current_key)),
             };
@@ -711,6 +711,6 @@ mod tests {
         test_prop(&crc);
         check_example(&crc, 0x2cfa);
         assert!(CRC::<u16>::from_str("init=0x5ff\npoly=0x4465     width=\"15").is_err());
-        CRC::<u16>::from_str("  init=0533\n\t\npoly=0x4465     width=\"15\"   ").unwrap();
+        CRC::<u16>::from_str("  init=0x533\n\t\npoly=0x4465     width=\"15\"   ").unwrap();
     }
 }

@@ -39,7 +39,7 @@
 
 mod rev;
 use crate::bitnum::{BitNum, Modnum};
-use crate::checksum::{CheckBuilderErr, Checksum, Digest, LinearCheck};
+use crate::checksum::{CheckBuilderErr, Checksum, Digest, LinearCheck, parse_hex};
 use crate::endian::{Endian, SignedInt, Signedness, WordSpec};
 use crate::keyval::KeyValIter;
 use num_traits::{One, Zero};
@@ -284,11 +284,9 @@ impl<Sum: Modnum> FromStr for FletcherBuilder<Sum> {
             };
             let fletch_op = match current_key.as_str() {
                 "width" => usize::from_str(&current_val).ok().map(|x| fletch.width(x)),
-                "module" => Sum::from_hex(&current_val).ok().map(|x| fletch.module(x)),
-                "init" => Sum::from_hex(&current_val).ok().map(|x| fletch.init(x)),
-                "addout" => Sum::Double::from_hex(&current_val)
-                    .ok()
-                    .map(|x| fletch.addout(x)),
+                "module" => Some(fletch.module(parse_hex::<Sum>(&current_val, "module")?)),
+                "init" => Some(fletch.init(parse_hex::<Sum>(&current_val, "init")?)),
+                "addout" => Some(fletch.addout(parse_hex::<Sum::Double>(&current_val, "addout")?)),
                 "swap" => bool::from_str(&current_val).ok().map(|x| fletch.swap(x)),
                 "in_endian" => Endian::from_str(&current_val)
                     .ok()
@@ -302,9 +300,7 @@ impl<Sum: Modnum> FromStr for FletcherBuilder<Sum> {
                 "signedness" => Signedness::from_str(&current_val)
                     .ok()
                     .map(|x| fletch.signedness(x)),
-                "check" => Sum::Double::from_hex(&current_val)
-                    .ok()
-                    .map(|x| fletch.check(x)),
+                "check" => Some(fletch.check(parse_hex::<Sum::Double>(&current_val, "check")?)),
                 "name" => Some(fletch.name(&current_val)),
                 _ => return Err(CheckBuilderErr::UnknownKey(current_key)),
             };
@@ -435,7 +431,7 @@ mod tests {
     }
     #[test]
     fn fletcher8() {
-        let f8 = Fletcher::<u8>::from_str("width=8 module=f init=0 addout=0 swap=false check=0xc")
+        let f8 = Fletcher::<u8>::from_str("width=8 module=0xf init=0x0 addout=0x0 swap=false check=0xc")
             .unwrap();
         test_shifts(&f8);
         test_prop(&f8);

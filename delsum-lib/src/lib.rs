@@ -464,7 +464,7 @@ mod tests {
     fn multibyte_part_range() {
         assert_eq!(
             find_checksum_segments(
-                "modsum width=16 wordsize=24 module=0",
+                "modsum width=16 wordsize=24 module=0x0",
                 &[vec![0u8; 15]],
                 SegmentChecksum::Constant(&[vec![0, 0]]),
                 SignedInclRange::new(0, 5).unwrap(),
@@ -478,7 +478,7 @@ mod tests {
         );
         assert_eq!(
             find_checksum_segments(
-                "modsum width=16 wordsize=16 module=0 wordsize=16",
+                "modsum width=16 wordsize=16 module=0x0 wordsize=16",
                 &[vec![0u8; 15], vec![0u8; 12], vec![0u8; 9]],
                 SegmentChecksum::Constant(&[vec![0, 0], vec![0, 0], vec![0, 0]]),
                 SignedInclRange::new(0, 8).unwrap(),
@@ -488,7 +488,7 @@ mod tests {
         );
         assert_eq!(
             find_checksum_segments(
-                "modsum width=16 wordsize=16 module=0 wordsize=24",
+                "modsum width=16 wordsize=16 module=0x0 wordsize=24",
                 &[vec![0u8; 15], vec![0u8; 12], vec![0u8; 9]],
                 SegmentChecksum::Constant(&[vec![0, 0], vec![0, 0], vec![0, 0]]),
                 SignedInclRange::new(0, 8).unwrap(),
@@ -502,7 +502,7 @@ mod tests {
         );
         assert_eq!(
             find_checksum_segments(
-                "crc width=16 poly=1 wordsize=16 out_endian=little",
+                "crc width=16 poly=0x1 wordsize=16 out_endian=little",
                 &[
                     vec![0x6d, 0x79, 0x72, 0x3f, 0x00, 0x5d],
                     vec![0x75, 0x2d, 0xf4, 0xd4, 0xf5, 0xcf, 0xd8, 0x35]

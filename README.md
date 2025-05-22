@@ -31,8 +31,8 @@ The parts of the file that match has to be the same accross the files.
 
 Example:
 ```
-$ delsum part -m 'modsum width=16 module=ffff' -c 1234,5678,abcd file_a file_b file_c
-modsum width=16 module=ffff:
+$ delsum part -m 'modsum width=16 module=0xffff' -c 1234,5678,abcd file_a file_b file_c
+modsum width=16 module=0xffff:
     0x8:-0x3
 ```
 

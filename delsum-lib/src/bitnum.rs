@@ -36,10 +36,7 @@ pub trait BitNum:
     fn bits(&self) -> usize;
     fn trail_zeros(&self) -> u32;
     fn from_hex(s: &str) -> Result<Self, Self::FromStrRadixErr> {
-        match s.strip_prefix("0x") {
-            Some(remain) => Self::from_str_radix(remain, 16),
-            None => Self::from_str_radix(s, 16),
-        }
+        Self::from_str_radix(s, 16)
     }
 }
 
