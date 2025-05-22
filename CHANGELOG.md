@@ -1,3 +1,8 @@
+0.2.1 (2024-01-28)
+==================
+* Remove gmp from dependencies
+* Update dependencies
+
 0.2.0 (2021-06-06)
 ==================
 * introduce wordsize, out_endian and in_endian parameters to allow for checksums with words bigger than 8 bits
