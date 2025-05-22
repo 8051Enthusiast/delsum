@@ -30,6 +30,14 @@ pub fn reverse_polyhash<'a>(
     }))
 }
 
+// The way the init/addout parameters are cancelled out in the case of polyhash
+// is similar to how they are cancelled out in the other modules.
+// However, here we simply lift the solution to higher moduli 2^i iteratively
+// since we do not have to find the modulus itself (it is already given as 2^width).
+//
+// This also allows us to calculate our polynomials modulo so-called zero-polynomials
+// that are zero on every point. This makes our polynomials radically shorter (think degree
+// 32 or 64), without changing the result.
 fn reverse<'a>(
     width: usize,
     chk_bytes: &[(&'a [u8], Vec<u8>)],
@@ -469,6 +477,8 @@ impl WordPolynomial {
         Self::constant(1)
     }
 
+    // the zero polynomial of width `width` is just the
+    // rising factorial of the width.
     fn zero_poly(width: usize) -> Self {
         let mut cur = Self::one();
         let mut i = 1;
@@ -502,6 +512,7 @@ impl WordPolynomial {
         )
     }
 
+    // naive polynomial remainder
     fn reduce(&mut self, other: &Self) {
         let Some(selfdeg) = self.deg() else {
             return;
@@ -530,6 +541,8 @@ impl WordPolynomial {
         self.coefficients.truncate(otherdeg);
     }
 
+    // calculates self %= zero_poly to make it shorter
+    // without changing self as a mapping
     fn shorten(&mut self, width: usize) {
         let zero = Self::zero_poly(width);
         self.reduce(&zero);
