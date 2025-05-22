@@ -25,7 +25,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use utils::SignedInclRange;
 #[cfg(feature = "parallel")]
-use {crc::reverse_crc_para, fletcher::reverse_fletcher_para, rayon::prelude::*};
+use {crc::reverse_crc_para, fletcher::reverse_fletcher_para, polyhash::reverse_polyhash_para, rayon::prelude::*};
 #[cfg(test)]
 #[macro_use(quickcheck)]
 extern crate quickcheck_macros;
@@ -411,7 +411,7 @@ impl<'a> AlgorithmFinder<'a> {
             None
         };
         let maybe_polyhash = if let BuilderEnum::PolyHash(polyhash) = &self.spec {
-            Some(self.iter_solutions(polyhash, reverse_polyhash).par_bridge())
+            Some(self.par_iter_solutions(polyhash, reverse_polyhash_para))
         } else {
             None
         };

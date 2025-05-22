@@ -1,3 +1,6 @@
+use rayon::iter::ParallelIterator;
+use rayon::prelude::*;
+
 use crate::{
     checksum::{CheckReverserError, Checksum, filter_opt_err},
     endian::{WordSpec, wordspec_combos},
@@ -28,6 +31,33 @@ pub fn reverse_polyhash<'a>(
     filter_opt_err(combos.into_iter().flat_map(move |wordspec| {
         unresult_iter(reverse(width, &chk_bytes, factor, init, addout, wordspec))
     }))
+}
+
+pub fn reverse_polyhash_para<'a>(
+    spec: &PolyHashBuilder<u64>,
+    chk_bytes: &[(&'a [u8], Vec<u8>)],
+    _verbosity: u64,
+    extended_search: bool,
+) -> impl ParallelIterator<Item = Result<PolyHash<u64>, CheckReverserError>> + use<'a> {
+    let width = spec.width.unwrap();
+    let chk_bytes = chk_bytes.to_vec();
+    let combos = wordspec_combos(
+        spec.wordsize,
+        spec.input_endian,
+        spec.output_endian,
+        spec.signedness,
+        width,
+        extended_search,
+    );
+    let factor = spec.factor;
+    let init = spec.init;
+    let addout = spec.addout;
+    combos.into_par_iter().flat_map(move |wordspec| {
+        filter_opt_err(unresult_iter(reverse(
+            width, &chk_bytes, factor, init, addout, wordspec,
+        )))
+        .par_bridge()
+    })
 }
 
 // The way the init/addout parameters are cancelled out in the case of polyhash

@@ -1,6 +1,8 @@
 use std::{fmt::Display, str::FromStr};
 mod rev;
 pub use rev::reverse_polyhash;
+#[cfg(feature = "parallel")]
+pub use rev::reverse_polyhash_para;
 
 use crate::{
     bitnum::Modnum,
