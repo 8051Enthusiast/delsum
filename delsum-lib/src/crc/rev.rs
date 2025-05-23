@@ -110,18 +110,10 @@ fn discrete_combos(
                 vec![refin]
             }
         });
-        let input_endian = spec.input_endian.or({
-            Some(match refin {
-                // big if true since for little, it is equivalent to wordsize=8 which is the same as big
-                true => Endian::Big,
-                // same for the reverse
-                false => Endian::Little,
-            })
-        });
         let refs = cart_prod(&[refin], &refouts);
         let wordspecs = wordspec_combos(
             spec.wordsize,
-            input_endian,
+            spec.input_endian,
             spec.output_endian,
             Some(Signedness::Unsigned),
             width,

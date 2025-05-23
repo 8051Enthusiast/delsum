@@ -98,11 +98,11 @@ Common Values
 =============
 Currently, these are shared accross all sum types:
 * `width`: Width of the checksum in bits, decimal.
-* `out_endian`: Endian of the checksum, can be either `little` or `big`.
+* `out_endian`: Endian of the checksum, can be either `little` or `big`, defaults to `big`.
 * `wordsize`: Number of bits of a word in the input text, decimal.
               Must be a multiple of 8 and between 8 and 64.
               For example, in a simple checksum, using `wordsize=16` would chop the file in into 16-bit integers and add them up modulo `modulus`.
-* `in_endian`: the endian of the input words, can be either `little` or `big`.
+* `in_endian`: the endian of the input words, can be either `little` or `big`, defaults to `big`.
 * `signedness`: the signedness of the input words, can be either `signed` (using 2's complement) or `unsigned`. Not valid for `crc`.
 
 `modsum`

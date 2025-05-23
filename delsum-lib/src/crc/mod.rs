@@ -135,13 +135,8 @@ impl<Sum: BitNum> CrcBuilder<Sum> {
         if wordsize == 0 || wordsize % 8 != 0 || wordsize > 64 {
             return Err(CheckBuilderErr::ValueOutOfRange("wordsize"));
         }
-        let (input_endian, refin) = match (self.input_endian, self.refin) {
-            (Some(e), Some(r)) => (e, r),
-            (Some(Endian::Little), None) | (None, Some(false)) | (None, None) => {
-                (Endian::Little, false)
-            }
-            (Some(Endian::Big), None) | (None, Some(true)) => (Endian::Big, true),
-        };
+        let refin = self.refin.unwrap_or(false);
+        let input_endian = self.input_endian.unwrap_or(Endian::Big);
         let wordspec = WordSpec {
             input_endian,
             wordsize,
@@ -199,8 +194,12 @@ impl<Sum: BitNum> Display for CRC<Sum> {
                     "crc width={} poly={:#x} init={:#x} xorout={:#x} refin={} refout={}",
                     self.width, self.poly, self.init, self.xorout, self.refin, self.refout
                 )?;
-                if self.wordspec.word_bytes() != 1 {
-                    write!(f, " wordsize={}", self.wordspec.wordsize)?;
+                if self.wordspec.word_bytes() != 1 || self.wordspec.input_endian != Endian::Big {
+                    write!(
+                        f,
+                        " wordsize={} in_endian={}",
+                        self.wordspec.wordsize, self.wordspec.input_endian
+                    )?;
                 };
                 if self.width > 8 {
                     write!(f, " out_endian={}", self.wordspec.output_endian)?;

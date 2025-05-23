@@ -212,12 +212,12 @@ impl<S: Modnum> Display for PolyHash<S> {
                     "polyhash width={} factor={:#x} init={:#x} addout={:#x} signedness={}",
                     self.width, self.factor, self.init, self.addout, self.wordspec.signedness
                 )?;
-                if self.wordspec.word_bytes() != 1 {
+                if self.wordspec.word_bytes() != 1 || self.wordspec.input_endian != Endian::Big {
                     write!(
                         f,
                         " in_endian={} wordsize={}",
                         self.wordspec.input_endian, self.wordspec.wordsize,
-                    )?
+                    )?;
                 };
                 if self.width > 8 {
                     write!(f, " out_endian={}", self.wordspec.output_endian)?;

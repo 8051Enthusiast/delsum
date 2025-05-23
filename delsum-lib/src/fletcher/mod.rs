@@ -229,7 +229,7 @@ impl<Sum: Modnum> Display for Fletcher<Sum> {
                     self.swap,
                     self.wordspec.signedness
                 )?;
-                if self.wordspec.word_bytes() != 1 {
+                if self.wordspec.word_bytes() != 1 || self.wordspec.input_endian != Endian::Little {
                     write!(
                         f,
                         " in_endian={} wordsize={}",
@@ -431,8 +431,10 @@ mod tests {
     }
     #[test]
     fn fletcher8() {
-        let f8 = Fletcher::<u8>::from_str("width=8 modulus=0xf init=0x0 addout=0x0 swap=false check=0xc")
-            .unwrap();
+        let f8 = Fletcher::<u8>::from_str(
+            "width=8 modulus=0xf init=0x0 addout=0x0 swap=false check=0xc",
+        )
+        .unwrap();
         test_shifts(&f8);
         test_prop(&f8);
         check_example(&f8, 0x6);

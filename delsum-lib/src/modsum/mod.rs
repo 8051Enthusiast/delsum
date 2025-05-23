@@ -189,7 +189,7 @@ impl<Sum: Modnum> Display for ModSum<Sum> {
                     "modsum width={} modulus={:#x} init={:#x} negated={} signedness={}",
                     self.width, self.modulus, self.init, self.negated, self.wordspec.signedness
                 )?;
-                if self.wordspec.word_bytes() != 1 {
+                if self.wordspec.word_bytes() != 1 || self.wordspec.input_endian != Endian::Little {
                     write!(
                         f,
                         " in_endian={} wordsize={}",

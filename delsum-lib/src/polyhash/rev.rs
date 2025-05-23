@@ -685,8 +685,13 @@ mod tests {
             new_polyhash.addout(addout);
             let wordspec = WordSpec::arbitrary(g);
             let max_word_width = ((width as usize).div_ceil(8)).next_power_of_two() * 8;
-            new_polyhash.wordsize(max_word_width.min(wordspec.wordsize));
-            new_polyhash.inendian(wordspec.input_endian);
+            let actual_wordsize = max_word_width.min(wordspec.wordsize);
+            new_polyhash.wordsize(actual_wordsize);
+            new_polyhash.inendian(if actual_wordsize == 8 {
+                Endian::Big
+            } else {
+                wordspec.input_endian
+            });
             new_polyhash.outendian(wordspec.output_endian);
             new_polyhash.signedness(wordspec.signedness);
             new_polyhash
@@ -746,7 +751,7 @@ mod tests {
             .width(7)
             .factor(47)
             .addout(0)
-            .inendian(Endian::Little)
+            .inendian(Endian::Big)
             .outendian(Endian::Big)
             .signedness(Signedness::Unsigned)
             .wordsize(8);

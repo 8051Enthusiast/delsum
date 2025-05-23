@@ -515,7 +515,7 @@ mod tests {
         );
         assert_eq!(
             find_checksum_segments(
-                "crc width=16 poly=0x1 wordsize=16 out_endian=little",
+                "crc width=16 poly=0x1 wordsize=16 in_endian=little out_endian=little",
                 &[
                     vec![0x6d, 0x79, 0x72, 0x3f, 0x00, 0x5d],
                     vec![0x75, 0x2d, 0xf4, 0xd4, 0xf5, 0xcf, 0xd8, 0x35]

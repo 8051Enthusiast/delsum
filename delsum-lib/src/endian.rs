@@ -94,11 +94,7 @@ pub(crate) fn bytes_to_int<N: BitNum>(bytes: &[u8], e: Endian) -> N {
     ret
 }
 
-fn bytes_to_signed_int<N: BitNum>(
-    bytes: &[u8],
-    e: Endian,
-    s: Signedness,
-) -> SignedInt<N> {
+fn bytes_to_signed_int<N: BitNum>(bytes: &[u8], e: Endian, s: Signedness) -> SignedInt<N> {
     let int = bytes_to_int(bytes, e);
     match s {
         Signedness::Unsigned => SignedInt::from_unsigned(int),
@@ -190,6 +186,9 @@ pub(crate) fn wordspec_combos(
             output_endian: o,
             wordsize: w,
             signedness: s,
+        })
+        .filter(|ws| {
+            input_endian.is_some() || ws.word_bytes() != 1 || ws.input_endian == Endian::Big
         })
         .collect()
 }

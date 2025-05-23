@@ -671,8 +671,13 @@ mod tests {
             new_fletcher.addout(addout);
             let wordspec = WordSpec::arbitrary(g);
             let max_word_width = ((width + 15) / 16).next_power_of_two() * 8;
-            new_fletcher.wordsize(max_word_width.min(wordspec.wordsize));
-            new_fletcher.inendian(wordspec.input_endian);
+            let actual_wordsize = max_word_width.min(wordspec.wordsize);
+            new_fletcher.wordsize(actual_wordsize);
+            new_fletcher.inendian(if actual_wordsize == 8 {
+                Endian::Big
+            } else {
+                wordspec.input_endian
+            });
             new_fletcher.outendian(wordspec.output_endian);
             new_fletcher.signedness(wordspec.signedness);
             new_fletcher
@@ -935,7 +940,7 @@ mod tests {
             .init(1)
             .addout(1)
             .swap(false)
-            .inendian(Endian::Little)
+            .inendian(Endian::Big)
             .outendian(Endian::Big)
             .wordsize(8)
             .build()

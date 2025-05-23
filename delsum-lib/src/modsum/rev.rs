@@ -244,8 +244,13 @@ mod tests {
             new_modsum.init(init);
             let wordspec = WordSpec::arbitrary(g);
             let max_word_width = ((width as usize + 7) / 8).next_power_of_two() * 8;
-            new_modsum.wordsize(max_word_width.min(wordspec.wordsize));
-            new_modsum.inendian(wordspec.input_endian);
+            let actual_wordsize = max_word_width.min(wordspec.wordsize);
+            new_modsum.wordsize(actual_wordsize);
+            new_modsum.inendian(if actual_wordsize == 8 {
+                Endian::Big
+            } else {
+                wordspec.input_endian
+            });
             new_modsum.outendian(wordspec.output_endian);
             new_modsum.signedness(wordspec.signedness);
             new_modsum.negated(bool::arbitrary(g));
