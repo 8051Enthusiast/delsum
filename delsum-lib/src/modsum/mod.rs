@@ -10,7 +10,7 @@
 //! Note that a parameter to add at the end is not needed, since it is equivalent to `init`.
 mod rev;
 use crate::bitnum::Modnum;
-use crate::checksum::{parse_hex, CheckBuilderErr, Checksum, Digest, LinearCheck};
+use crate::checksum::{CheckBuilderErr, Checksum, Digest, LinearCheck, parse_hex};
 use crate::endian::{Endian, SignedInt, Signedness, WordSpec};
 use crate::keyval::KeyValIter;
 pub(crate) use rev::find_largest_mod;
@@ -359,5 +359,17 @@ mod tests {
             ),
             vec![(vec![19], vec![34])]
         );
+    }
+
+    #[test]
+    fn signed_sum() {
+        let s = ModSum::<u16>::with_options()
+            .width(16)
+            .modulus(0)
+            .signedness(Signedness::Signed)
+            .build()
+            .unwrap();
+        let x = vec![0x80, 0x80];
+        assert_eq!(s.digest(x.as_slice()).unwrap(), 0xff00);
     }
 }

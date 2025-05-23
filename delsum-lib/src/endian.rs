@@ -98,7 +98,7 @@ fn bytes_to_signed_int<N: BitNum>(bytes: &[u8], e: Endian, s: Signedness) -> Sig
     let int = bytes_to_int(bytes, e);
     match s {
         Signedness::Unsigned => SignedInt::from_unsigned(int),
-        Signedness::Signed => SignedInt::from_signed(int),
+        Signedness::Signed => SignedInt::from_signed(int, bytes.len() * 8),
     }
 }
 
@@ -116,10 +116,14 @@ impl<N: BitNum> SignedInt<N> {
         }
     }
 
-    pub fn from_signed(value: N) -> Self {
-        if N::one() << (value.bits() - 1) & value != N::zero() {
+    pub fn from_signed(value: N, in_bits: usize) -> Self {
+        if value.bits() == in_bits {
+            return SignedInt::from_unsigned(value);
+        }
+        if (N::one() << (in_bits - 1)) & value != N::zero() {
+            let mask = (N::one() << in_bits) - N::one();
             SignedInt {
-                value: value.wrapping_neg(),
+                value: value.wrapping_neg() & mask,
                 negative: true,
             }
         } else {
