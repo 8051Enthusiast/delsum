@@ -104,6 +104,9 @@ impl<Sum: BitNum> CrcBuilder<Sum> {
             None => return Err(CheckBuilderErr::MissingParameter("width")),
             Some(w) => w,
         };
+        if width > 128 {
+            return Err(CheckBuilderErr::ValueOutOfRange("width"));
+        }
         let mask = Sum::one() << (width - 1);
         let mask = mask ^ (mask - Sum::one());
         let poly = match self.poly {

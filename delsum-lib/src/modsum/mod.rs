@@ -104,6 +104,9 @@ impl<S: Modnum> ModSumBuilder<S> {
         let width = self
             .width
             .ok_or(CheckBuilderErr::MissingParameter("width"))?;
+        if width > 64 {
+            return Err(CheckBuilderErr::ValueOutOfRange("width"));
+        }
         let mut modulus = self.modulus.unwrap_or_else(S::zero);
         if modulus == S::zero() && width < modulus.bits() {
             modulus = S::one() << width

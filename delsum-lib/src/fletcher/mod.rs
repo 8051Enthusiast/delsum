@@ -156,6 +156,9 @@ impl<S: Modnum> FletcherBuilder<S> {
                 }
             }
         };
+        if hwidth > 64 {
+            return Err(CheckBuilderErr::ValueOutOfRange("width"));
+        }
 
         let mask = (S::Double::one() << hwidth) - S::Double::one();
         let modulus = self.modulus.unwrap_or_else(S::zero);
