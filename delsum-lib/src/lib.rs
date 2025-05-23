@@ -25,7 +25,10 @@ use std::str::FromStr;
 use std::sync::Arc;
 use utils::SignedInclRange;
 #[cfg(feature = "parallel")]
-use {crc::reverse_crc_para, fletcher::reverse_fletcher_para, polyhash::reverse_polyhash_para, rayon::prelude::*};
+use {
+    crc::reverse_crc_para, fletcher::reverse_fletcher_para, polyhash::reverse_polyhash_para,
+    rayon::prelude::*,
+};
 #[cfg(test)]
 #[macro_use(quickcheck)]
 extern crate quickcheck_macros;
@@ -35,6 +38,7 @@ pub enum DelsumError {
     ModelError(CheckBuilderErr),
     /// The number of files does not agree with the number of checksums
     ChecksumCountMismatch(&'static str),
+    WordsizeMisalignment,
 }
 
 impl From<CheckBuilderErr> for DelsumError {
@@ -48,6 +52,12 @@ impl Display for DelsumError {
         match self {
             DelsumError::ModelError(e) => write!(f, "{}", e),
             DelsumError::ChecksumCountMismatch(s) => write!(f, "{}", s),
+            DelsumError::WordsizeMisalignment => {
+                write!(
+                    f,
+                    "The checksummed region is not a multiple of the wordsize"
+                )
+            }
         }
     }
 }
@@ -56,7 +66,7 @@ impl Error for DelsumError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             DelsumError::ModelError(e) => Some(e),
-            DelsumError::ChecksumCountMismatch(_) => None,
+            DelsumError::ChecksumCountMismatch(_) | DelsumError::WordsizeMisalignment => None,
         }
     }
 }
@@ -294,7 +304,7 @@ fn get_checksums<A>(
     strspec: &str,
     files: &[&[u8]],
     width: usize,
-) -> Result<Vec<Vec<u8>>, CheckBuilderErr>
+) -> Result<Vec<Vec<u8>>, DelsumError>
 where
     A: Digest + FromStr<Err = CheckBuilderErr>,
     A::Sum: crate::bitnum::BitNum,
@@ -302,6 +312,9 @@ where
     let algo = A::from_str(strspec)?;
     let mut sums = Vec::new();
     for file in files {
+        if file.len() % algo.wordspec().word_bytes() != 0 {
+            return Err(DelsumError::WordsizeMisalignment);
+        }
         sums.push(
             algo.wordspec()
                 .output_to_bytes(algo.digest(file).unwrap(), width),
@@ -310,7 +323,7 @@ where
     Ok(sums)
 }
 
-pub fn find_checksum(strspec: &str, bytes: &[&[u8]]) -> Result<Vec<Vec<u8>>, CheckBuilderErr> {
+pub fn find_checksum(strspec: &str, bytes: &[&[u8]]) -> Result<Vec<Vec<u8>>, DelsumError> {
     let (prefix, width, rest) = find_prefix_width(strspec)?;
     match (width, prefix) {
         (1..=64, "crc") => get_checksums::<CRC<u64>>(rest, bytes, width),
@@ -318,7 +331,7 @@ pub fn find_checksum(strspec: &str, bytes: &[&[u8]]) -> Result<Vec<Vec<u8>>, Che
         (1..=64, "modsum") => get_checksums::<ModSum<u64>>(rest, bytes, width),
         (2..=64, "polyhash") => get_checksums::<PolyHash<u64>>(rest, bytes, width),
         (1..=128, "fletcher") => get_checksums::<Fletcher<u64>>(rest, bytes, width),
-        _ => Err(CheckBuilderErr::ValueOutOfRange("width")),
+        _ => Err(CheckBuilderErr::ValueOutOfRange("width").into()),
     }
 }
 

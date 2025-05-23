@@ -106,10 +106,15 @@ fn reverse_discrete(
         .width
         .ok_or(CheckReverserError::MissingParameter("width"))?;
     let wordspec = loop_element.1;
-    let chk_words: Vec<_> = chk_bytes
+    let Some(chk_words) = chk_bytes
         .iter()
-        .map(|(f, c)| (wordspec.iter_words(f), c.clone()))
-        .collect();
+        .map(|(f, c)| {
+            (f.len() % wordspec.word_bytes() == 0).then_some((wordspec.iter_words(f), c.clone()))
+        })
+        .collect()
+    else {
+        return Err(None);
+    };
     let rev = RevSpec {
         width,
         addout: spec.addout,
@@ -564,9 +569,10 @@ impl PrefactorMod {
                 let real_addout1: u64 = mod_red(&(&mod_addout1 - real_init), &modulus)
                     .try_into()
                     .unwrap();
-                let real_addout2: u64 = mod_red(&(&mod_addout2 - &mod_addfac * real_init), &modulus)
-                    .try_into()
-                    .unwrap();
+                let real_addout2: u64 =
+                    mod_red(&(&mod_addout2 - &mod_addfac * real_init), &modulus)
+                        .try_into()
+                        .unwrap();
                 (real_init, real_addout1, real_addout2)
             })
     }

@@ -174,6 +174,9 @@ fn poly_from_data(
     wordspec: &WordSpec,
     chk_bytes: &(&[u8], Vec<u8>),
 ) -> Option<FilePoly> {
+    if chk_bytes.0.len() % wordspec.word_bytes() != 0 {
+        return None;
+    }
     let chk = Checksum::from_bytes(&chk_bytes.1, wordspec.output_endian, width)?;
     let mut poly = WordPolynomial {
         coefficients: wordspec

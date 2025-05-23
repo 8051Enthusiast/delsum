@@ -34,18 +34,25 @@ pub fn reverse_modsum<'a>(
             let rev = match spec.width {
                 None => Err(Some(CheckReverserError::MissingParameter("width"))),
                 Some(width) => {
-                    let chk_words: Vec<_> = chk_bytes
+                    if let Some(chk_words) = chk_bytes
                         .iter()
-                        .map(|(f, c)| (wordspec.iter_words(f), c.clone()))
-                        .collect();
-                    let revspec = RevSpec {
-                        width,
-                        init: spec.init,
-                        modulus: spec.modulus,
-                        wordspec,
-                        negated,
-                    };
-                    reverse(revspec, chk_words, verbosity).map(|x| x.iter())
+                        .map(|(f, c)| {
+                            (f.len() % wordspec.word_bytes() == 0)
+                                .then_some((wordspec.iter_words(f), c.clone()))
+                        })
+                        .collect::<Option<Vec<_>>>()
+                    {
+                        let revspec = RevSpec {
+                            width,
+                            init: spec.init,
+                            modulus: spec.modulus,
+                            wordspec,
+                            negated,
+                        };
+                        reverse(revspec, chk_words, verbosity).map(|x| x.iter())
+                    } else {
+                        Err(None)
+                    }
                 }
             };
             filter_opt_err(unresult_iter(rev))
@@ -189,7 +196,11 @@ fn reverse(
     })
 }
 
-pub(crate) fn find_largest_mod(sums: &[i128], maybe_init: Option<i128>, modulus: &mut u128) -> i128 {
+pub(crate) fn find_largest_mod(
+    sums: &[i128],
+    maybe_init: Option<i128>,
+    modulus: &mut u128,
+) -> i128 {
     match maybe_init {
         Some(i) => {
             // if we already have init, we can just subtract that from the sum and get a multiple of m

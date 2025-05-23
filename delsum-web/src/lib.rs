@@ -20,6 +20,7 @@ impl From<DelsumError> for ChecksumError {
                 ChecksumError::Model(check_builder_err.to_string())
             }
             DelsumError::ChecksumCountMismatch(msg) => ChecksumError::Other(msg.to_string()),
+            DelsumError::WordsizeMisalignment => ChecksumError::Model(err.to_string()),
         }
     }
 }
@@ -54,7 +55,8 @@ impl Guest for Delsum {
             sums = files.iter().map(|x| x.checksum.clone()).collect::<Vec<_>>();
             SegmentChecksum::Constant(&sums)
         };
-        let result = delsum_lib::find_algorithm(&model, &bytes, segment_checksums, 0, extended_search);
+        let result =
+            delsum_lib::find_algorithm(&model, &bytes, segment_checksums, 0, extended_search);
         let matches = match result {
             Ok(m) => m,
             Err(err) => return Err(err.into()),
