@@ -1,0 +1,40 @@
+#app {
+    .model-string {
+        /*display: block;*/
+        font-size: medium;
+        word-wrap: normal;
+        white-space: pre-wrap;
+        font-family: monospace;
+        overflow-y: auto;
+        padding: 5px;
+    }
+
+    ul {
+        display: flex;
+        flex-direction: column;
+        list-style: none;
+        padding: 0;
+        margin: 0;
+    }
+
+    li:nth-child(even) {
+        background-color: var(--background-sec);
+    }
+
+    li:nth-child(odd) {
+        background-color: var(--background);
+    }
+
+    input {
+        font-family: monospace;
+    }
+
+    .edgy {
+        border-radius: 0;
+    }
+
+    .error {
+        color: #a32c2c;
+        margin: 4px;
+    }
+}
