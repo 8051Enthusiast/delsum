@@ -31,10 +31,11 @@ impl FromStr for Endian {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Signedness {
-    Unsigned,
-    Signed,
+    #[default]
+    Unsigned = 0,
+    Signed = 1,
 }
 
 impl Display for Signedness {
