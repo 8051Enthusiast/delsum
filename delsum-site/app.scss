@@ -12,6 +12,7 @@
 	--shadow: gray;
 	--input: var(--background);
 	--input-font: var(--foreground);
+	--error: #a32c2c;
 
 	@media (prefers-color-scheme: dark) {
 		--background: #212428;
@@ -26,6 +27,7 @@
 		--shadow: #000;
 		--input: var(--button);
 		--input-font: var(--button-font);
+		--error: #d04c48;
 	}
 }
 

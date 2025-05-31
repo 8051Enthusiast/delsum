@@ -5,9 +5,13 @@ import type { FileRowContent } from "./types";
 import { checksums, $init } from "./wasm/delsum_web";
 import type { ChecksumError } from "./wasm/interfaces/delsum-web-checksums";
 type FileRow = FileRowContent<string | File>;
-function hexToBytes(hex: string): Uint8Array | null {
-    if (hex.length % 2 != 0) {
-        return null;
+function hexToBytes(hex: string): Uint8Array {
+    if (hex.length === 0) {
+        throw new Error("cannot be empty");
+    }
+
+    if (hex.length % 2 !== 0) {
+        throw new Error("must have an even number of digits");
     }
 
     const bytes = new Uint8Array(hex.length / 2);
@@ -24,17 +28,21 @@ async function createChecksummedFile(
     let checksum: Uint8Array | null;
 
     if (typeof file.file === "string") {
-        fileContent = hexToBytes(file.file);
-        if (fileContent === null) {
-            throw new Error("File hex must have an even number of digits");
+        try {
+            fileContent = hexToBytes(file.file);
+        } catch (error) {
+            const err = error as Error;
+            throw new Error(`file hex ${err.message}`);
         }
     } else {
         fileContent = new Uint8Array(await file.file.arrayBuffer());
     }
 
-    checksum = hexToBytes(file.checksum);
-    if (checksum === null) {
-        throw new Error("Checksum must have an even number of digits");
+    try {
+        checksum = hexToBytes(file.checksum);
+    } catch (error) {
+        const err = error as Error;
+        throw new Error(`checksum ${err.message}`);
     }
 
     return {

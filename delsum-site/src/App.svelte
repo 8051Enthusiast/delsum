@@ -198,14 +198,6 @@
 </script>
 
 <main class="content">
-  <h1>Delsum</h1>
-  <p>
-    Delsum is a reverse engineering tool for checksums.
-  </p>
-  <p>
-    Here you can find out which checksum algorithm generate a given checksum, which regions of a file have a given checksum and more.
-    Just input your files, and which checksum models you would like to consider.
-  </p>
   <div class="inputs">
     <div class="box input-box">
       <h2>Files</h2>

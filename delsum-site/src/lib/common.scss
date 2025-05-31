@@ -34,7 +34,7 @@
     }
 
     .error {
-        color: #a32c2c;
+        color: var(--error);
         margin: 4px;
     }
 }
