@@ -1,5 +1,9 @@
 name: Build Binary
 on: [push, pull_request]
+permissions:
+  id-token: write
+  contents: read
+  attestations: write
 jobs:
   #  build_windows:
   #    name: Build Windows Binary
@@ -78,6 +82,10 @@ jobs:
           cargo test
           cd ..
           cargo build --profile=dist
+      - name: Generate artifact attestation
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: target/dist/delsum
       - uses: actions/upload-artifact@v4
         with:
           name: delsum-linux
@@ -98,7 +106,6 @@ jobs:
             -o wasi-sdk.tar.gz
           tar -xzf wasi-sdk.tar.gz
           echo "WASI_SDK_PATH=$(pwd)/wasi-sdk-${WASI_VERSION}.0-x86_64-linux" >> $GITHUB_ENV
-          ls -l
 
       - name: Cache deps directory (output/)
         id: cache-deps-wasi
@@ -127,11 +134,15 @@ jobs:
           GF2POLY_STATIC_LIB: "1"
           GF2POLY_LIBRARY_PATH: "${{ github.workspace }}/output/lib"
         run: |
-          cd delsum-lib
           cargo build --target wasm32-wasip1 --profile=dist
+
+      - name: Generate artifact attestation
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: target/wasm32-wasip1/dist/delsum.wasm
 
       - name: Upload WASI artifact
         uses: actions/upload-artifact@v4
         with:
           name: delsum-wasi
-          path: delsum-lib/target/wasm32-wasip1/release/*.wasm
+          path: target/wasm32-wasip1/dist/delsum.wasm
