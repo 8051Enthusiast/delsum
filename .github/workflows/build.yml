@@ -128,10 +128,10 @@ jobs:
           GF2POLY_LIBRARY_PATH: "${{ github.workspace }}/output/lib"
         run: |
           cd delsum-lib
-          cargo build --target wasm32-wasi --profile=dist
+          cargo build --target wasm32-wasip1 --profile=dist
 
       - name: Upload WASI artifact
         uses: actions/upload-artifact@v4
         with:
           name: delsum-wasi
-          path: delsum-lib/target/wasm32-wasi/release/*.wasm
+          path: delsum-lib/target/wasm32-wasip1/release/*.wasm
