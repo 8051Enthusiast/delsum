@@ -1,6 +1,6 @@
 [package]
 name = "delsum-web"
-version = "0.2.1"
+version = "1.0.0"
 authors = ["8051Enthusiast <8051enthusiast@protonmail.com>"]
 edition = "2024"
 license = "MIT"
@@ -12,4 +12,4 @@ crate-type = ["cdylib"]
 
 [dependencies]
 wit-bindgen = "0.41.0"
-delsum-lib = {version = "0.2.1", path = "../delsum-lib", default-features=false}
+delsum-lib = {version = "1.0.0", path = "../delsum-lib", default-features=false}

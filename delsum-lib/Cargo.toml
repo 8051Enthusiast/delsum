@@ -1,6 +1,6 @@
 [package]
 name = "delsum-lib"
-version = "0.2.1"
+version = "1.0.0"
 authors = ["8051Enthusiast <8051enthusiast@protonmail.com>"]
 edition = "2024"
 license = "MIT"

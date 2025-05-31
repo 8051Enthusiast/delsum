@@ -1,3 +1,20 @@
+1.0.0 (2025-05-31)
+==================
+* Change the `module` parameter to be named `modulus`
+* Change all hexadecimal parameters to now need a `0x` prefix
+* Add new `polyhash` algorithm kind
+* Add JSON output
+* Add `-t` option for trailing checksum bytes that directly follow the content
+* Add some scripts using delsum (inside `/scripts`)
+* Add `signedness` parameter to `modsum`/`fletcher`/`polyhash`
+* Add `negate` parameter to `modsum`
+* Add website
+* Improve error messages somewhat
+* Fix various behaviours when the checksum given by the user is bigger
+  than the range the algorithm can output
+* Fix `part` not outputting ranges with a length of 1 byte in most cases
+* Remove NTL from dependencies
+
 0.2.1 (2024-01-28)
 ==================
 * Remove gmp from dependencies

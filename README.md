@@ -181,6 +181,8 @@ The parameters are:
 * `init`: The value to initialize the regular checksum with. Defaults to 0.
 * `addout`: The value to add at the end. Defaults to 0.
 
+For example, the djb2 hash would be `polyhash width=32 factor=0x21 init=0x1505`.
+
 How this works
 --------------
 Some (incomplete) explanation of the algorithms used is found [here](algorithms.md).
