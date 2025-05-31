@@ -8,6 +8,8 @@ There are currently three subcommands:
 * `part`: given a specification of the checksum algorithm and a list of files with corresponding checksums, this finds parts of the files that have the given checksum
 * `reverse`: given a list of files with corresponding checksums, this finds the checksum parameters used
 
+There is also a WASM-based online version at [https://8051enthusiast.github.io/delsum](https://8051enthusiast.github.io/delsum).
+
 `check`
 -------
 This subcommand calculates a checksum with a given algorithm.
