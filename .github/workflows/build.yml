@@ -51,11 +51,10 @@ jobs:
     name: Build Linux Binary
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2    
-      - run: sudo apt install m4 lzip
+      - uses: actions/checkout@v4
       - name: Cache dependencies
         id: cache-deps
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: output
           key: "${{ runner.os }}-deps"
@@ -64,7 +63,7 @@ jobs:
         run: |
           cd "$GITHUB_WORKSPACE"
           bash build.sh
-      - uses: actions/cache@v2
+      - uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
@@ -72,18 +71,13 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - run: |
-          export DELSUM_STATIC_LIBS=1
-          export DELSUM_NTL_LIB_PATH="$GITHUB_WORKSPACE/output/lib"
-          export DELSUM_NTL_INCLUDE="$GITHUB_WORKSPACE/output/include"
-          export DELSUM_NO_GMP=1
+          export GF2POLY_STATIC_LIB=1
+          export GF2POLY_LIBRARY_PATH="$GITHUB_WORKSPACE/output/lib"
           cd delsum-lib
           cargo test
           cd ..
-          cargo build --release
-      - run: |
-          cargo install cargo-strip
-          cargo strip
-      - uses: actions/upload-artifact@v2
+          cargo build --profile=dist
+      - uses: actions/upload-artifact@v4
         with:
           name: delsum-linux
-          path: target/release/delsum
+          path: target/dist/delsum
