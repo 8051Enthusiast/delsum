@@ -10,13 +10,16 @@ GF2X_LINK="https://gitlab.inria.fr/gf2x/gf2x/uploads/c46b1047ba841c20d1225ae73ad
 TMP_DIR="$(mktemp -d)"
 PREFIX="$PWD/output"
 echo Using PREFIX="$PREFIX"
-pushd "$TMP_DIR"
+cd "$TMP_DIR"
 mkdir -p "$PREFIX"
 wget "$GF2X_LINK"
 tar xf gf2x-$GF2X_VERSION.tar.gz
 cd gf2x-$GF2X_VERSION
+HOST_ARG=""
+if [ -n "${HOST-}" ]; then
+  HOST_ARG="--host=$HOST"
+fi
 # westmere is the first one with clmul
-./configure CFLAGS=-march=westmere --disable-shared --enable-static --prefix="$PREFIX"
+./configure $HOST_ARG --disable-shared --enable-static --prefix="$PREFIX"
 make -j "$(nproc)"
 make install
-cd ..

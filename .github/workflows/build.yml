@@ -73,6 +73,7 @@ jobs:
       - run: |
           export GF2POLY_STATIC_LIB=1
           export GF2POLY_LIBRARY_PATH="$GITHUB_WORKSPACE/output/lib"
+          export CFLAGS="-march=westmere -flto"
           cd delsum-lib
           cargo test
           cd ..
@@ -81,3 +82,56 @@ jobs:
         with:
           name: delsum-linux
           path: target/dist/delsum
+
+  build_wasi:
+    name: Build WASI Binary
+    runs-on: ubuntu-latest
+    needs: build_linux
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install WASI SDK
+        run: |
+          WASI_VERSION=25
+          curl -sL \
+            https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_VERSION}/wasi-sdk-${WASI_VERSION}.0-x86_64-linux.tar.gz \
+            -o wasi-sdk.tar.gz
+          tar -xzf wasi-sdk.tar.gz
+          echo "WASI_SDK_PATH=$(pwd)/wasi-sdk-${WASI_VERSION}.0" >> $GITHUB_ENV
+
+      - name: Cache deps directory (output/)
+        id: cache-deps-wasi
+        uses: actions/cache@v4
+        with:
+          path: output
+          key: "${{ runner.os }}-deps-wasi"
+
+      - name: Build dependencies
+        if: steps.cache-deps-wasi.outputs.cache-hit != 'true'
+        env:
+          CC: "${{ env.WASI_SDK_PATH }}/bin/clang"
+          AR: "${{ env.WASI_SDK_PATH }}/bin/llvm-ar"
+          RANLIB: "${{ env.WASI_SDK_PATH }}/bin/llvm-ranlib"
+          CFLAGS: "--sysroot=${{ env.WASI_SDK_PATH }}/share/wasi-sysroot -flto"
+          HOST: "wasm32-wasi"
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          bash build.sh
+
+      - name: Add wasm32-wasi Rust target
+        run: rustup target add wasm32-wasip1
+
+      - name: Build & Test Rust (WASI)
+        env:
+          GF2POLY_STATIC_LIB: "1"
+          GF2POLY_LIBRARY_PATH: "${{ github.workspace }}/output/lib"
+        run: |
+          cd delsum-lib
+          cargo build --target wasm32-wasi --profile=dist
+
+      - name: Upload WASI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: delsum-wasi
+          path: delsum-lib/target/wasm32-wasi/release/*.wasm
