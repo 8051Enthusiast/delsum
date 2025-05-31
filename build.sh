@@ -1,22 +1,23 @@
 #!/usr/bin/env bash
 # buildscript for the ci in order to build the
 # static libraries
-# (only for x64 linux)
 set -eu -o pipefail
 
-GF2X_VERSION=1.3.0
-GF2X_LINK="https://gitlab.inria.fr/gf2x/gf2x/uploads/c46b1047ba841c20d1225ae73ad6e4cd/gf2x-$GF2X_VERSION.tar.gz"
+GF2X_VERSION=1c4974a44bc69a5a5111b44871d96c0cc16c0144
+GF2X_REPO="https://gitlab.inria.fr/gf2x/gf2x"
 
 TMP_DIR="$(mktemp -d)"
 PREFIX="$PWD/output"
 echo Using PREFIX="$PREFIX"
-pushd "$TMP_DIR"
+cd "$TMP_DIR"
 mkdir -p "$PREFIX"
-wget "$GF2X_LINK"
-tar xf gf2x-$GF2X_VERSION.tar.gz
-cd gf2x-$GF2X_VERSION
-# westmere is the first one with clmul
-./configure CFLAGS=-march=westmere --disable-shared --enable-static --prefix="$PREFIX"
+git clone "$GF2X_REPO"
+cd gf2x
+git checkout "$GF2X_VERSION"
+autoreconf --install
+if [ -n "${HOST-}" ]; then
+  HOST_ARG="--host=$HOST"
+fi
+./configure --host=wasm32 --disable-shared --enable-static --prefix="$PREFIX"
 make -j "$(nproc)"
 make install
-cd ..
