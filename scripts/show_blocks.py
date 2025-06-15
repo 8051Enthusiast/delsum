@@ -145,9 +145,9 @@ class Chain:
             return True
         match chain_score:
             case "count":
-                return self.current_score > other.current_score
+                return self.current_score >= other.current_score
             case "size":
-                return self.end + self.current_score > other.end + other.current_score
+                return self.end + self.current_score >= other.end + other.current_score
 
     def score(self, start: int) -> int:
         match chain_score:
