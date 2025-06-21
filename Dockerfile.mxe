@@ -1,0 +1,26 @@
+FROM ubuntu:24.04
+ENV DEBIAN_FRONTEND=noninteractive
+ENV MXE_VERSION=f7068741
+ENV GF2X_VERSION=1c4974a4
+RUN apt update \
+ && apt install -y build-essential wget git autoconf automake autopoint bison \
+                   flex gperf libtool lzip ruby unzip 7zip libtool \
+                   python3-mako intltool libgtk2.0-dev libtool-bin \
+                   python-is-python3 texinfo git curl rustup
+WORKDIR /opt
+RUN git clone https://github.com/mxe/mxe.git mxe
+WORKDIR /opt/mxe
+RUN git checkout $MXE_VERSION
+ENV PATH=$PATH:/opt/mxe/usr/bin
+RUN make MXE_TARGETS=x86_64-w64-mingw32.shared -j$(nproc) cc
+# HACK: rust has a forced link command that uses the wrong name
+RUN ln -s libpthread.dll.a usr/x86_64-w64-mingw32.shared/lib/libpthread.a
+WORKDIR /opt
+RUN git clone https://gitlab.inria.fr/gf2x/gf2x gf2x
+WORKDIR /opt/gf2x
+RUN git checkout $GF2X_VERSION
+RUN autoreconf --install
+ENV CFLAGS="-march=westmere"
+RUN ./configure --host=x86_64-w64-mingw32.shared --enable-static --disable-shared --prefix=/opt/mxe/usr
+RUN make -j$(nproc) && make install
+WORKDIR /opt
