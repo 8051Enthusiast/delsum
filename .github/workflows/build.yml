@@ -4,53 +4,30 @@ permissions:
   id-token: write
   contents: read
   attestations: write
+  packages: write
 jobs:
-  #  build_windows:
-  #    name: Build Windows Binary
-  #    runs-on: windows-latest
-  #    steps:
-  #      - uses: actions/checkout@v2    
-  #      - uses: actions-rs/toolchain@v1
-  #        with:
-  #          toolchain: stable
-  #          target: x86_64-pc-windows-gnu
-  #          default: true
-  #      - run: which cargo
-  #      - uses: msys2/setup-msys2@v2
-  #        with:
-  #          install: gcc make wget lzip m4
-  #      - name: Cache dependencies
-  #        id: cache-deps
-  #        uses: actions/cache@v2
-  #        with:
-  #          path: output
-  #          key: "${{ runner.os }}-deps"
-  #      - name: Build dependencies
-  #        if: steps.cache-deps.outputs.cache-hit != 'true'
-  #        shell: msys2 {0}
-  #        run: |
-  #          cd "$GITHUB_WORKSPACE"
-  #          bash build.sh
-  #      - uses: actions/cache@v2
-  #        with:
-  #          path: |
-  #            ~/.cargo/registry
-  #            ~/.cargo/git
-  #            target
-  #          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-  #      - shell: msys2 {0}
-  #        run: |
-  #          export PATH="/c/Rust/.cargo/bin/:$PATH"
-  #          export DELSUM_STATIC_LIBS=1
-  #          export DELSUM_NTL_LIB_PATH="$GITHUB_WORKSPACE\output\lib"
-  #          export DELSUM_NTL_INCLUDE="$GITHUB_WORKSPACE\output\include"
-  #          cargo build --release --target x86_64-pc-windows-gnu
-  #          cargo install cargo-strip
-  #          cargo strip --target x86_64-pc-windows-gnu
-  #      - uses: actions/upload-artifact@v2
-  #        with:
-  #          name: delsum_win
-  #          path: 'target\x86_64-pc-windows-gnu\release\delsum.exe'
+  build_windows:
+    name: Build and Tag MXE Build Docker
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Log into Container registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+      - name: Build or Pull MXE Docker image
+        run: |
+          COMMIT_SHA=$(sha1sum ./Dockerfile.mxe | cut -c1-7)
+          IMAGE_NAME=ghcr.io/${{ github.repository }}-mxe-build:$COMMIT_SHA
+          docker pull $IMAGE_NAME || (docker build -t $IMAGE_NAME -f Dockerfile.mxe . && docker push $IMAGE_NAME)
+      - name: Run Build in Docker image
+        run: |
+          COMMIT_SHA=$(sha1sum ./Dockerfile.mxe | cut -c1-7)
+          IMAGE_NAME=ghcr.io/${{ github.repository }}-mxe-build:$COMMIT_SHA
+          docker run -v $PWD:/src -w /src $IMAGE_NAME ./build_mxe.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: delsum_win
+          path: 'target/x86_64-pc-windows-gnu/dist/delsum.exe'
   build_linux:
     name: Build Linux Binary
     runs-on: ubuntu-latest
