@@ -17,12 +17,13 @@ jobs:
       - name: Build or Pull MXE Docker image
         run: |
           COMMIT_SHA=$(sha1sum ./Dockerfile.mxe | cut -c1-7)
-          IMAGE_NAME=ghcr.io/${{ github.repository }}-mxe-build:$COMMIT_SHA
+          IMAGE_NAME=$(echo ghcr.io/${{ github.repository }}-mxe-build:$COMMIT_SHA | tr '[:upper:]' '[:lower:]')
+
           docker pull $IMAGE_NAME || (docker build -t $IMAGE_NAME -f Dockerfile.mxe . && docker push $IMAGE_NAME)
       - name: Run Build in Docker image
         run: |
           COMMIT_SHA=$(sha1sum ./Dockerfile.mxe | cut -c1-7)
-          IMAGE_NAME=ghcr.io/${{ github.repository }}-mxe-build:$COMMIT_SHA
+          IMAGE_NAME=$(echo ghcr.io/${{ github.repository }}-mxe-build:$COMMIT_SHA | tr '[:upper:]' '[:lower:]')
           docker run -v $PWD:/src -w /src $IMAGE_NAME ./build_mxe.sh
       - uses: actions/upload-artifact@v4
         with:
