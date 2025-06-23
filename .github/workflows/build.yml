@@ -25,6 +25,11 @@ jobs:
           COMMIT_SHA=$(sha1sum ./Dockerfile.mxe | cut -c1-7)
           IMAGE_NAME=$(echo ghcr.io/${{ github.repository }}-mxe-build:$COMMIT_SHA | tr '[:upper:]' '[:lower:]')
           docker run -v $PWD:/src -w /src $IMAGE_NAME ./build_mxe.sh
+      - name: Generate artifact attestation
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'target/x86_64-pc-windows-gnu/dist/delsum.exe'
       - uses: actions/upload-artifact@v4
         with:
           name: delsum_win
