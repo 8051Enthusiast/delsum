@@ -192,7 +192,6 @@ Some (incomplete) explanation of the algorithms used is found [here](algorithms.
 Installing
 ----------
 There is a linux build which has the gf2x library compiled in [here](https://github.com/8051Enthusiast/delsum/releases), but keep in mind that it is compiled without most modern x86 extensions and therefore can't take advantage of some optimized routines in `gf2x` which makes CRC reversing a lot faster.
-I'm also too dumb for doing a Windows build, so sorry for that.
 
 This program links against the [`gf2x`](https://gitlab.inria.fr/gf2x/gf2x) library.
 
@@ -214,6 +213,8 @@ cargo install delsum
 ```
 
 If you want to link the gf2x library statically, you can set the environment variable `GF2POLY_STATIC_LIB=1` when running `cargo`.
+
+At present, building on Windows is unsupported. However, it is possible to cross-compile using [the MXE cross build environment](https://mxe.cc/). There is an [included Dockerfile](./Dockerfile.mxe) designed to make this much easier. (It is hoped, but not verifed, that this will also work with Docker Desktop on Windows.)
 
 Acknowledgements
 ----------------

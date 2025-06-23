@@ -1,0 +1,22 @@
+name: Check MXE Docker Cache
+on: [push]
+branches: [main]
+permissions:
+  id-token: write
+  contents: read
+  packages: write
+jobs:
+  build_docker:
+    name: Build and Tag MXE Build Docker
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Log into Container registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+      - name: Build or Pull MXE Docker image
+        run: |
+          COMMIT_SHA=$(sha1sum ./Dockerfile.mxe | cut -c1-7)
+          IMAGE_NAME=$(echo ghcr.io/${{ github.repository }}-mxe-build:$COMMIT_SHA | tr '[:upper:]' '[:lower:]')
+
+          docker pull $IMAGE_NAME || (docker build -t $IMAGE_NAME -f Dockerfile.mxe . && docker push $IMAGE_NAME)
