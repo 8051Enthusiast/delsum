@@ -6,7 +6,7 @@ permissions:
   attestations: write
 jobs:
   build_windows:
-    name: Build and Tag MXE Build Docker
+    name: Build Windows Binary
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
