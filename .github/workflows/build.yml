@@ -4,7 +4,6 @@ permissions:
   id-token: write
   contents: read
   attestations: write
-  packages: write
 jobs:
   build_windows:
     name: Build and Tag MXE Build Docker
@@ -19,7 +18,7 @@ jobs:
           COMMIT_SHA=$(sha1sum ./Dockerfile.mxe | cut -c1-7)
           IMAGE_NAME=$(echo ghcr.io/${{ github.repository }}-mxe-build:$COMMIT_SHA | tr '[:upper:]' '[:lower:]')
 
-          docker pull $IMAGE_NAME || (docker build -t $IMAGE_NAME -f Dockerfile.mxe . && docker push $IMAGE_NAME)
+          docker pull $IMAGE_NAME || (docker build -t $IMAGE_NAME -f Dockerfile.mxe .)
       - name: Run Build in Docker image
         run: |
           COMMIT_SHA=$(sha1sum ./Dockerfile.mxe | cut -c1-7)
